@@ -7,13 +7,10 @@ from pathlib import Path
 
 from .agent_loop import AgentRunner
 from .config import AppConfig
-from .context import ContextManager
-from .events import AgentEvent, EventBus, EventStore
-from .model import OpenAICompatibleModelClient, ToolCall
-from .permissions import PermissionPolicy, PermissionResult
-from .session import AgentState
-from .tool_executor import ToolExecutor
-from .tools import ToolRegistry, Workspace, register_filesystem_tools, register_shell_tools
+from .events import AgentEvent
+from .model import ToolCall
+from .permissions import PermissionResult
+from .runtime import create_runtime
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,39 +33,16 @@ async def _run(args: argparse.Namespace) -> int:
         print("Missing CODE_HELPER_API_KEY. Configure it as an environment variable.")
         return 2
 
-    workspace = Workspace(args.workspace)
-    state = AgentState.create(
-        max_steps=config.max_steps,
+    runtime = create_runtime(
+        config=config,
+        workspace_path=args.workspace,
         mode=args.mode,
-        reasoning_mode=config.reasoning_effort,
-    )
-    event_store = EventStore(
-        workspace.root / ".code-helper" / "sessions", state.session_id
-    )
-    event_bus = EventBus(event_store)
-    event_bus.subscribe(_print_event)
-
-    registry = ToolRegistry()
-    register_filesystem_tools(registry, workspace)
-    register_shell_tools(
-        registry, workspace, default_timeout=config.command_timeout
-    )
-
-    model_client = OpenAICompatibleModelClient(
-        api_key=config.api_key,
-        base_url=config.base_url,
-        model=config.model,
-        timeout=config.request_timeout,
-    )
-    runner = AgentRunner(
-        model_client=model_client,
-        context_manager=ContextManager(),
-        registry=registry,
-        tool_executor=ToolExecutor(registry),
-        permission_policy=PermissionPolicy(),
-        event_bus=event_bus,
         approval_handler=_ask_for_approval,
+        event_listener=_print_event,
     )
+    workspace = runtime.workspace
+    state = runtime.state
+    runner = runtime.runner
 
     print(f"Code Helper | workspace: {workspace.root} | mode: {state.mode}")
     print("Commands: /exit, /mode ask|plan|act")
@@ -124,4 +98,3 @@ def _print_event(event: AgentEvent) -> None:
 def main() -> None:
     args = build_parser().parse_args()
     raise SystemExit(asyncio.run(_run(args)))
-

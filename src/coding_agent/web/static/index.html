@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Code Helper</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">CH</div>
+          <div>
+            <h1>Code Helper</h1>
+            <p>Local coding agent · traceable by design</p>
+          </div>
+        </div>
+        <div class="health" id="healthBadge">
+          <span class="health-dot"></span>
+          <span>正在检查服务</span>
+        </div>
+      </header>
+
+      <section class="workspace-bar panel">
+        <label class="field grow">
+          <span>工作目录</span>
+          <input id="workspaceInput" placeholder="D:\\path\\to\\project" />
+        </label>
+        <label class="field compact">
+          <span>模式</span>
+          <select id="modeSelect">
+            <option value="act">Act</option>
+            <option value="plan">Plan</option>
+            <option value="ask">Ask</option>
+          </select>
+        </label>
+        <button class="button primary" id="createSessionButton">打开项目</button>
+      </section>
+
+      <main class="workspace-grid">
+        <section class="conversation panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">CONVERSATION</span>
+              <h2>任务与结果</h2>
+            </div>
+            <span class="status-pill" id="runStatus">未连接</span>
+          </div>
+          <div class="message-list" id="messageList">
+            <div class="empty-state" id="emptyState">
+              <div class="empty-icon">⌁</div>
+              <h3>先选择一个本地项目</h3>
+              <p>Agent 只会在指定工作目录内读取、修改和执行命令。</p>
+            </div>
+          </div>
+          <div class="composer">
+            <textarea
+              id="messageInput"
+              rows="3"
+              placeholder="例如：修复失败测试，并说明修改内容"
+              disabled
+            ></textarea>
+            <div class="composer-actions">
+              <span class="shortcut">Ctrl + Enter 发送</span>
+              <button class="button danger ghost" id="cancelButton" disabled>停止</button>
+              <button class="button primary" id="sendButton" disabled>发送任务</button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-column">
+          <section class="panel activity-panel">
+            <div class="panel-heading small">
+              <div>
+                <span class="eyebrow">LIVE TRACE</span>
+                <h2>执行轨迹</h2>
+              </div>
+              <span class="step-counter" id="stepCounter">Step 0</span>
+            </div>
+            <div class="activity-list" id="activityList">
+              <p class="muted">工具调用和验证结果将在这里实时出现。</p>
+            </div>
+          </section>
+
+          <section class="panel changes-panel">
+            <div class="panel-heading small">
+              <div>
+                <span class="eyebrow">WORKTREE</span>
+                <h2>文件变化</h2>
+              </div>
+              <button class="text-button" id="refreshDiffButton" disabled>刷新 Diff</button>
+            </div>
+            <pre class="diff-view" id="diffView">暂无变更</pre>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div class="approval-backdrop hidden" id="approvalBackdrop">
+      <div class="approval-dialog panel">
+        <span class="eyebrow warning">APPROVAL REQUIRED</span>
+        <h2 id="approvalTitle">Agent 请求执行操作</h2>
+        <p id="approvalReason"></p>
+        <pre id="approvalArguments"></pre>
+        <div class="approval-actions">
+          <button class="button ghost" id="denyButton">拒绝</button>
+          <button class="button primary" id="approveButton">仅允许本次</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
+
