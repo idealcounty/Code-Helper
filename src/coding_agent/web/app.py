@@ -14,9 +14,11 @@ from pydantic import BaseModel, Field
 
 from ..agent_loop import AgentRunResult
 from ..config import AppConfig
+from ..events import AgentEvent
 from ..model import ModelClient, ToolCall
 from ..permissions import PermissionResult
 from ..runtime import AgentRuntime, create_runtime
+from ..tools.base import ToolError
 
 
 class CreateSessionRequest(BaseModel):
@@ -244,6 +246,38 @@ def create_app(
             "diff": stdout.decode(errors="replace")[:100_000],
             "error": stderr.decode(errors="replace")[:2_000],
         }
+
+    @app.get("/api/sessions/{session_id}/checkpoint")
+    async def get_checkpoint(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        state = session.runtime.state
+        return {
+            "turn_id": state.turn_id,
+            "files": session.runtime.checkpoint_manager.list_files(state.turn_id),
+        }
+
+    @app.post("/api/sessions/{session_id}/restore")
+    async def restore_checkpoint(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        if session.running:
+            raise HTTPException(status_code=409, detail="Cannot restore while Agent is running")
+        state = session.runtime.state
+        try:
+            restored = session.runtime.checkpoint_manager.restore(state.turn_id)
+        except ToolError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        state.changed_files.clear()
+        state.last_mutation_sequence = 0
+        state.last_successful_verification_sequence = 0
+        await session.runtime.event_bus.publish(
+            AgentEvent(
+                type="checkpoint_restored",
+                session_id=state.session_id,
+                turn_id=state.turn_id,
+                payload={"files": restored},
+            )
+        )
+        return {"restored": restored}
 
     @app.websocket("/ws/sessions/{session_id}")
     async def session_events(websocket: WebSocket, session_id: str) -> None:

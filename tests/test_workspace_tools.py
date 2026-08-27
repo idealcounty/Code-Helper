@@ -93,3 +93,18 @@ def test_patch_requires_unique_match(
 
     assert result.ok is False
     assert result.code == "EDIT_NOT_UNIQUE"
+
+
+def test_runtime_directory_is_reserved(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    result = asyncio.run(
+        executor.execute(
+            "write_file",
+            {"path": ".code-helper/injected.txt", "content": "blocked"},
+        )
+    )
+
+    assert result.ok is False
+    assert result.code == "RESERVED_PATH"

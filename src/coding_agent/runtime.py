@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_loop import AgentRunner, ApprovalHandler
+from .checkpoints import CheckpointManager
 from .config import AppConfig
 from .context import ContextManager
 from .events import EventBus, EventListener, EventStore
@@ -22,6 +23,7 @@ class AgentRuntime:
     event_store: EventStore
     event_bus: EventBus
     registry: ToolRegistry
+    checkpoint_manager: CheckpointManager
     runner: AgentRunner
 
 
@@ -60,6 +62,7 @@ def create_runtime(
         model=config.model,
         timeout=config.request_timeout,
     )
+    checkpoint_manager = CheckpointManager(workspace)
     runner = AgentRunner(
         model_client=client,
         context_manager=ContextManager(),
@@ -68,6 +71,7 @@ def create_runtime(
         permission_policy=PermissionPolicy(),
         event_bus=event_bus,
         approval_handler=approval_handler,
+        checkpoint_manager=checkpoint_manager,
     )
     return AgentRuntime(
         config=config,
@@ -76,6 +80,6 @@ def create_runtime(
         event_store=event_store,
         event_bus=event_bus,
         registry=registry,
+        checkpoint_manager=checkpoint_manager,
         runner=runner,
     )
-

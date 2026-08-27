@@ -19,6 +19,7 @@ const elements = {
   cancelButton: document.querySelector("#cancelButton"),
   activityList: document.querySelector("#activityList"),
   refreshDiffButton: document.querySelector("#refreshDiffButton"),
+  restoreButton: document.querySelector("#restoreButton"),
   diffView: document.querySelector("#diffView"),
   approvalBackdrop: document.querySelector("#approvalBackdrop"),
   approvalTitle: document.querySelector("#approvalTitle"),
@@ -75,6 +76,7 @@ async function createSession() {
     elements.messageInput.disabled = false;
     elements.sendButton.disabled = false;
     elements.refreshDiffButton.disabled = false;
+    elements.restoreButton.disabled = false;
     elements.emptyState?.remove();
     elements.messageList.innerHTML = "";
     elements.activityList.innerHTML = "";
@@ -161,6 +163,21 @@ async function refreshDiff() {
   }
 }
 
+async function restoreCheckpoint() {
+  if (!state.sessionId || state.running) return;
+  const confirmed = window.confirm("恢复本轮任务开始前的文件状态？此操作会覆盖 Agent 的修改。");
+  if (!confirmed) return;
+  try {
+    const result = await api(`/api/sessions/${state.sessionId}/restore`, {
+      method: "POST",
+    });
+    showToast(`已恢复 ${result.restored.length} 个文件`);
+    await refreshDiff();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function handleEvent(event) {
   const payload = event.payload || {};
   switch (event.type) {
@@ -197,6 +214,12 @@ function handleEvent(event) {
       break;
     case "verification_required":
       addActivity("需要验证", payload.reason, "failure");
+      break;
+    case "checkpoint_created":
+      addActivity("创建检查点", payload.path, "success");
+      break;
+    case "checkpoint_restored":
+      addActivity("已回滚本轮修改", (payload.files || []).join(", "), "success");
       break;
     case "turn_finished":
       setRunning(false);
@@ -274,6 +297,7 @@ elements.createSessionButton.addEventListener("click", createSession);
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
 elements.refreshDiffButton.addEventListener("click", refreshDiff);
+elements.restoreButton.addEventListener("click", restoreCheckpoint);
 elements.approveButton.addEventListener("click", () => resolveApproval(true));
 elements.denyButton.addEventListener("click", () => resolveApproval(false));
 elements.messageInput.addEventListener("keydown", (event) => {
@@ -295,4 +319,3 @@ elements.modeSelect.addEventListener("change", async () => {
 });
 
 checkHealth();
-

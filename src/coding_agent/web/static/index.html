@@ -89,7 +89,10 @@
                 <span class="eyebrow">WORKTREE</span>
                 <h2>文件变化</h2>
               </div>
-              <button class="text-button" id="refreshDiffButton" disabled>刷新 Diff</button>
+              <div class="inline-actions">
+                <button class="text-button danger-text" id="restoreButton" disabled>回滚本轮</button>
+                <button class="text-button" id="refreshDiffButton" disabled>刷新 Diff</button>
+              </div>
             </div>
             <pre class="diff-view" id="diffView">暂无变更</pre>
           </section>
@@ -114,4 +117,3 @@
     <script src="/static/app.js" defer></script>
   </body>
 </html>
-

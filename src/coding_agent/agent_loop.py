@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .checkpoints import CheckpointManager
 from .context import ContextManager
 from .events import AgentEvent, EventBus
 from .model import ModelClient, ModelError, ModelResponse, ToolCall
@@ -40,6 +41,7 @@ class AgentRunner:
         verifier: Verifier | None = None,
         stuck_detector: StuckDetector | None = None,
         approval_handler: ApprovalHandler | None = None,
+        checkpoint_manager: CheckpointManager | None = None,
     ) -> None:
         self.model_client = model_client
         self.context_manager = context_manager
@@ -50,6 +52,7 @@ class AgentRunner:
         self.verifier = verifier or Verifier()
         self.stuck_detector = stuck_detector or StuckDetector()
         self.approval_handler = approval_handler
+        self.checkpoint_manager = checkpoint_manager
 
     async def run_turn(
         self, state: AgentState, user_message: str | None = None
@@ -268,6 +271,29 @@ class AgentRunner:
         return None
 
     async def _execute_and_observe(self, state: AgentState, call: ToolCall) -> None:
+        spec = self.registry.get(call.name)
+        if spec.risk is ToolRisk.WRITE and self.checkpoint_manager is not None:
+            path = call.arguments.get("path")
+            if isinstance(path, str):
+                try:
+                    capture = self.checkpoint_manager.capture(state.turn_id, path)
+                except ToolError as exc:
+                    await self._record_tool_result(
+                        state,
+                        call,
+                        ToolResult.failure(exc.code, exc.message, data=exc.data),
+                    )
+                    return
+                if capture.created:
+                    await self._emit(
+                        state,
+                        "checkpoint_created",
+                        {
+                            "turn_id": state.turn_id,
+                            "path": capture.path,
+                            "existed": capture.existed,
+                        },
+                    )
         state.status = AgentStatus.EXECUTING_TOOL
         await self._emit(
             state,
@@ -358,4 +384,3 @@ class AgentRunner:
 
 def _serialize_call(call: ToolCall) -> dict[str, Any]:
     return {"id": call.id, "name": call.name, "arguments": call.arguments}
-

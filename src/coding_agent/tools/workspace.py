@@ -66,6 +66,12 @@ class Workspace:
                 "PATH_OUTSIDE_WORKSPACE", f"Path is outside workspace: {user_path}"
             )
 
+        runtime_root = (self.root / ".code-helper").resolve()
+        if resolved == runtime_root or runtime_root in resolved.parents:
+            raise ToolError(
+                "RESERVED_PATH", "The .code-helper runtime directory is not user-editable"
+            )
+
         if not allow_sensitive and self.is_sensitive(resolved):
             raise ToolError("SENSITIVE_PATH", f"Access denied for sensitive path: {user_path}")
         return resolved
@@ -117,4 +123,3 @@ def _file_observation(path: Path) -> FileObservation:
         size=len(data),
         modified_ns=stat.st_mtime_ns,
     )
-

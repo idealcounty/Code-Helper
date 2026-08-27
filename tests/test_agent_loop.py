@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from coding_agent.agent_loop import AgentRunner
+from coding_agent.checkpoints import CheckpointManager
 from coding_agent.context import ContextManager
 from coding_agent.events import EventBus, EventStore
 from coding_agent.model import ModelResponse, ToolCall
@@ -64,6 +65,7 @@ def _make_runner(
         permission_policy=PermissionPolicy(),
         event_bus=EventBus(store),
         approval_handler=approval_handler,
+        checkpoint_manager=CheckpointManager(workspace),
     )
     return runner, store
 
@@ -111,7 +113,9 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     assert (tmp_path / "sample.py").read_text(encoding="utf-8") == "value = 2\n"
     assert state.verification_is_fresh is True
     assert "sample.py" in state.changed_files
-    assert any(event["type"] == "tool_result" for event in store.load())
+    event_types = [event["type"] for event in store.load()]
+    assert "checkpoint_created" in event_types
+    assert "tool_result" in event_types
 
 
 def test_agent_does_not_finish_with_stale_verification(tmp_path: Path) -> None:

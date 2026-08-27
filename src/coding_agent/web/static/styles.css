@@ -430,6 +430,16 @@ textarea:disabled {
   opacity: 0.4;
 }
 
+.inline-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
 .diff-view {
   height: calc(100% - 68px);
   min-height: 220px;
@@ -520,4 +530,3 @@ textarea:disabled {
     grid-template-rows: 440px;
   }
 }
-
