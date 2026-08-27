@@ -100,4 +100,3 @@ class EventBus:
     def _load_last_sequence(self) -> int:
         events = self.store.load()
         return int(events[-1].get("sequence", 0)) if events else 0
-

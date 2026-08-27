@@ -253,4 +253,3 @@ def _schema(
         "required": required or [],
         "additionalProperties": False,
     }
-

@@ -31,4 +31,3 @@ class ToolExecutor:
             )
         result.metadata.setdefault("duration_ms", round((perf_counter() - started) * 1000))
         return result
-

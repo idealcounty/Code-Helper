@@ -47,4 +47,3 @@ def test_first_snapshot_wins_for_multiple_edits(tmp_path: Path) -> None:
     assert first.created is True
     assert second.created is False
     assert path.read_text(encoding="utf-8") == "original\n"
-

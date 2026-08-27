@@ -76,4 +76,3 @@ class AgentState:
             and self.last_successful_verification_sequence
             > self.last_mutation_sequence
         )
-

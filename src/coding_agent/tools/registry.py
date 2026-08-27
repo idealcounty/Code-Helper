@@ -26,4 +26,3 @@ class ToolRegistry:
 
     def names(self) -> set[str]:
         return set(self._tools)
-

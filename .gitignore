@@ -15,4 +15,3 @@ build/
 *.egg-info/
 .code-helper/
 *.spec.bak
-

@@ -43,4 +43,3 @@ No existing coding-agent product is invoked or wrapped. No agent framework or ag
 ## Core execution contract
 
 The model may request an action, but it never directly accesses the machine. Every action passes through parameter validation, workspace policy, optional user approval, execution, result normalization, and event logging. A code-changing task is complete only when a successful verification occurs after the latest mutation.
-

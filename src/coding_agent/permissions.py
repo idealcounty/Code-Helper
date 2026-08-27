@@ -68,4 +68,3 @@ class PermissionPolicy:
                 "File changes require explicit user approval",
             )
         return PermissionResult(PermissionDecision.DENY, "Unsupported risk classification")
-

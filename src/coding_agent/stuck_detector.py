@@ -16,4 +16,3 @@ class StuckDetector:
             (item.get("signature"), item.get("result_code")) for item in window
         }
         return len(signatures) == 1
-

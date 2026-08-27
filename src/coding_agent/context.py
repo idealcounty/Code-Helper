@@ -43,4 +43,3 @@ class ContextManager:
             messages=[{"role": "system", "content": system}, *state.messages],
             allowed_tools=tool_schemas,
         )
-

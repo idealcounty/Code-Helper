@@ -50,4 +50,3 @@ def test_normal_command_requires_approval() -> None:
         arguments={"command": "pytest -q"},
     )
     assert result.decision is PermissionDecision.ASK
-

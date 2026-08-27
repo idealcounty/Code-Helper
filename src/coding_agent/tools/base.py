@@ -134,4 +134,3 @@ def _matches_json_type(value: Any, expected: str) -> bool:
     if expected in {"integer", "number"} and isinstance(value, bool):
         return False
     return isinstance(value, wanted)
-

@@ -114,4 +114,3 @@ class CheckpointManager:
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         temporary.replace(path)
-

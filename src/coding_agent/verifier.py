@@ -54,4 +54,3 @@ class Verifier:
         if state.completion_rejections >= 3:
             return CompletionDecision(CompletionStatus.PARTIAL, reason)
         return CompletionDecision(CompletionStatus.CONTINUE, reason)
-

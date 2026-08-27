@@ -158,4 +158,3 @@ def _safe_error_detail(response: httpx.Response) -> str:
         return str(error)[:500]
     except (ValueError, TypeError):
         return response.text[:500]
-

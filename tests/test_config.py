@@ -31,4 +31,3 @@ def test_real_environment_overrides_local_file(tmp_path: Path, monkeypatch) -> N
     )
 
     assert AppConfig.from_env().api_key == "from-environment"
-

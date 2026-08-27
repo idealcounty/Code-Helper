@@ -27,4 +27,3 @@ def test_command_does_not_inherit_api_keys(tmp_path: Path, monkeypatch) -> None:
     assert result.ok is True
     assert result.data["stdout"].strip() == "not-present"
     assert "must-not-reach-child" not in result.data["stdout"]
-
