@@ -92,7 +92,10 @@ class WebSessionManager:
 
     def create(self, workspace: str, mode: str) -> WebSession:
         if not self.config.api_key:
-            raise ValueError("CODE_HELPER_API_KEY is not configured")
+            raise ValueError(
+                "API key is not configured; set DEEPSEEK_API_KEY or "
+                "CODE_HELPER_API_KEY"
+            )
         broker = ApprovalBroker()
         runtime = create_runtime(
             config=self.config,
@@ -129,7 +132,10 @@ def create_app(
         return {
             "ok": True,
             "api_key_configured": bool(manager.config.api_key),
+            "provider": manager.config.provider,
             "model": manager.config.model,
+            "thinking_mode": manager.config.thinking_mode,
+            "reasoning_effort": manager.config.reasoning_effort,
         }
 
     @app.post("/api/sessions")

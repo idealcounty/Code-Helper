@@ -5,11 +5,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+DEEPSEEK_PROVIDER = "deepseek"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     api_key: str = field(repr=False)
-    base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-4.1-mini"
+    provider: str = DEEPSEEK_PROVIDER
+    base_url: str = DEEPSEEK_BASE_URL
+    model: str = DEEPSEEK_DEFAULT_MODEL
+    thinking_mode: str | None = None
     reasoning_effort: str | None = None
     max_steps: int = 20
     request_timeout: float = 120.0
@@ -18,13 +25,26 @@ class AppConfig:
     @classmethod
     def from_env(cls) -> "AppConfig":
         _load_local_env(Path.cwd() / ".env")
+        provider = (
+            os.getenv("CODE_HELPER_PROVIDER", DEEPSEEK_PROVIDER).strip().lower()
+            or DEEPSEEK_PROVIDER
+        )
+        is_deepseek = provider == DEEPSEEK_PROVIDER
+        default_base_url = (
+            DEEPSEEK_BASE_URL if is_deepseek else "https://api.openai.com/v1"
+        )
+        default_model = DEEPSEEK_DEFAULT_MODEL if is_deepseek else "gpt-4.1-mini"
         api_key = os.getenv("CODE_HELPER_API_KEY", "").strip()
+        if not api_key and is_deepseek:
+            api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
         return cls(
             api_key=api_key,
-            base_url=os.getenv(
-                "CODE_HELPER_BASE_URL", "https://api.openai.com/v1"
-            ).rstrip("/"),
-            model=os.getenv("CODE_HELPER_MODEL", "gpt-4.1-mini"),
+            provider=provider,
+            base_url=os.getenv("CODE_HELPER_BASE_URL", default_base_url).rstrip("/"),
+            model=os.getenv("CODE_HELPER_MODEL", default_model),
+            thinking_mode=_optional_choice(
+                "CODE_HELPER_THINKING_MODE", {"enabled", "disabled"}
+            ),
             reasoning_effort=(
                 os.getenv("CODE_HELPER_REASONING_EFFORT", "").strip() or None
             ),
@@ -32,6 +52,16 @@ class AppConfig:
             request_timeout=_positive_float("CODE_HELPER_REQUEST_TIMEOUT", 120.0),
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
         )
+
+
+def _optional_choice(name: str, choices: set[str]) -> str | None:
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return None
+    if value not in choices:
+        allowed = ", ".join(sorted(choices))
+        raise ValueError(f"{name} must be one of: {allowed}")
+    return value
 
 
 def _positive_int(name: str, default: int) -> int:

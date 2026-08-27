@@ -21,6 +21,7 @@ def test_health_and_static_index() -> None:
 
     assert health.status_code == 200
     assert health.json()["api_key_configured"] is True
+    assert health.json()["provider"] == "deepseek"
     assert index.status_code == 200
     assert "Code Helper" in index.text
 

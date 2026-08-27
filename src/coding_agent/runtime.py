@@ -61,6 +61,8 @@ def create_runtime(
         base_url=config.base_url,
         model=config.model,
         timeout=config.request_timeout,
+        provider=config.provider,
+        thinking_mode=config.thinking_mode,
     )
     checkpoint_manager = CheckpointManager(workspace)
     runner = AgentRunner(

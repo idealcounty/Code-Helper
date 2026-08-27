@@ -47,7 +47,7 @@ async function checkHealth() {
     const health = await api("/api/health");
     elements.healthBadge.className = `health ${health.api_key_configured ? "ready" : "error"}`;
     elements.healthBadge.lastElementChild.textContent = health.api_key_configured
-      ? `服务就绪 · ${health.model}`
+      ? `服务就绪 · ${health.provider}/${health.model}`
       : "服务就绪 · 未配置 API Key";
   } catch (error) {
     elements.healthBadge.className = "health error";

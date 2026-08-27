@@ -38,6 +38,7 @@ class ModelResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     finish_reason: str | None = None
+    reasoning_content: str = field(default="", repr=False)
 
     def to_assistant_message(self) -> dict[str, Any]:
         message: dict[str, Any] = {
@@ -46,6 +47,10 @@ class ModelResponse:
         }
         if self.tool_calls:
             message["tool_calls"] = [call.to_message_dict() for call in self.tool_calls]
+        if self.reasoning_content:
+            # DeepSeek thinking-mode tool calls must return this protocol state on
+            # the next request. It stays internal and is never emitted to the UI.
+            message["reasoning_content"] = self.reasoning_content
         return message
 
 
@@ -69,13 +74,19 @@ class OpenAICompatibleModelClient:
         base_url: str,
         model: str,
         timeout: float = 120.0,
+        provider: str = "openai-compatible",
+        thinking_mode: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
-            raise ValueError("CODE_HELPER_API_KEY is required")
+            raise ValueError("An API key is required")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.provider = provider
+        self.thinking_mode = thinking_mode
+        self.transport = transport
 
     async def complete(
         self,
@@ -89,16 +100,21 @@ class OpenAICompatibleModelClient:
             "messages": messages,
             "tools": tools,
             "tool_choice": "auto",
+            "stream": False,
         }
         if reasoning_effort:
             body["reasoning_effort"] = reasoning_effort
+        if self.provider == "deepseek" and self.thinking_mode:
+            body["thinking"] = {"type": self.thinking_mode}
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout, transport=self.transport
+            ) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers,
@@ -146,6 +162,7 @@ def _parse_chat_completion(payload: dict[str, Any]) -> ModelResponse:
         tool_calls=calls,
         usage=payload.get("usage") or {},
         finish_reason=choice.get("finish_reason"),
+        reasoning_content=message.get("reasoning_content") or "",
     )
 
 

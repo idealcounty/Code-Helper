@@ -22,13 +22,30 @@ Code Helper 是一个从零实现的本地 Coding Agent。它通过模型原生 
 
 复制 `.env.example` 中的变量到系统环境变量或未入库的 `.env`。任何 API Key 都不得提交到仓库、README 或演示视频。
 
-至少设置：
+项目默认使用 DeepSeek 的 OpenAI 兼容 Chat Completions API。至少设置：
 
 ```text
-CODE_HELPER_API_KEY=你的模型服务密钥
-CODE_HELPER_BASE_URL=https://api.openai.com/v1
-CODE_HELPER_MODEL=支持原生 Tool Calling 的模型名称
+CODE_HELPER_PROVIDER=deepseek
+DEEPSEEK_API_KEY=你的 DeepSeek API Key
+CODE_HELPER_BASE_URL=https://api.deepseek.com
+CODE_HELPER_MODEL=deepseek-v4-flash
 ```
+
+`deepseek-v4-flash` 是默认模型；需要更强能力时可改为 `deepseek-v4-pro`。两者均支持原生 Tool Calling。
+
+### DeepSeek 思考模式
+
+```text
+# enabled / disabled；留空则使用服务端默认行为
+CODE_HELPER_THINKING_MODE=enabled
+
+# low / high / max；DeepSeek 也会把 medium、xhigh 映射为 high
+CODE_HELPER_REASONING_EFFORT=high
+```
+
+思考模式的 `reasoning_content` 只作为 DeepSeek 连续工具调用所需的内部协议状态保存并回传，不会展示在 CLI、Web UI 或事件日志中。关闭思考可降低响应延迟和输出 token 消耗。
+
+如需切换其他 OpenAI 兼容服务，可设置 `CODE_HELPER_PROVIDER=openai-compatible`，并用 `CODE_HELPER_API_KEY`、`CODE_HELPER_BASE_URL` 和 `CODE_HELPER_MODEL` 覆盖对应配置。Agent Loop 与模型服务保持解耦。
 
 ## 运行
 

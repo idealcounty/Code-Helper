@@ -30,7 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
 async def _run(args: argparse.Namespace) -> int:
     config = AppConfig.from_env()
     if not config.api_key:
-        print("Missing CODE_HELPER_API_KEY. Configure it as an environment variable.")
+        print(
+            "Missing API key. Set DEEPSEEK_API_KEY (DeepSeek) or "
+            "CODE_HELPER_API_KEY."
+        )
         return 2
 
     runtime = create_runtime(
@@ -44,7 +47,10 @@ async def _run(args: argparse.Namespace) -> int:
     state = runtime.state
     runner = runtime.runner
 
-    print(f"Code Helper | workspace: {workspace.root} | mode: {state.mode}")
+    print(
+        f"Code Helper | {config.provider}/{config.model} | "
+        f"workspace: {workspace.root} | mode: {state.mode}"
+    )
     print("Commands: /exit, /mode ask|plan|act")
     while True:
         try:
