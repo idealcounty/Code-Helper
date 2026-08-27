@@ -25,7 +25,7 @@ def register_shell_tools(
             cwd=workspace.root,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
+            env=_sanitized_environment(),
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -99,3 +99,11 @@ def _decode_and_truncate(data: bytes, limit: int = 12_000) -> tuple[str, bool]:
     tail = text[-4_000:]
     return f"{head}\n\n[... output truncated ...]\n\n{tail}", True
 
+
+def _sanitized_environment() -> dict[str, str]:
+    sensitive_markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not any(marker in name.upper() for marker in sensitive_markers)
+    }

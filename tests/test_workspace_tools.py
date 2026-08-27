@@ -108,3 +108,19 @@ def test_runtime_directory_is_reserved(
 
     assert result.ok is False
     assert result.code == "RESERVED_PATH"
+
+
+def test_git_metadata_is_reserved(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("private metadata", encoding="utf-8")
+
+    result = asyncio.run(
+        executor.execute("read_file", {"path": ".git/config"})
+    )
+
+    assert result.ok is False
+    assert result.code == "RESERVED_PATH"

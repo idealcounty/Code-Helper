@@ -72,6 +72,12 @@ class Workspace:
                 "RESERVED_PATH", "The .code-helper runtime directory is not user-editable"
             )
 
+        relative_parts = resolved.relative_to(self.root).parts
+        if any(part in DEFAULT_IGNORED_DIRECTORIES for part in relative_parts):
+            raise ToolError(
+                "RESERVED_PATH", f"Access denied for ignored runtime path: {user_path}"
+            )
+
         if not allow_sensitive and self.is_sensitive(resolved):
             raise ToolError("SENSITIVE_PATH", f"Access denied for sensitive path: {user_path}")
         return resolved
