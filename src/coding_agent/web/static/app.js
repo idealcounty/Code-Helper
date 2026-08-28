@@ -311,9 +311,17 @@ function renderFile(file) {
   elements.fileSize.textContent = formatBytes(file.size);
   elements.copyFileButton.disabled = false;
   elements.reloadFileButton.disabled = false;
+  elements.codeScroll.classList.toggle("markdown-mode", file.language === "markdown");
+  if (file.language === "markdown") {
+    elements.codeLines.innerHTML = `<article class="markdown-document">${CodeHelperRendering.renderMarkdown(file.content)}</article>`;
+    elements.codeScroll.scrollTop = 0;
+    elements.codeScroll.scrollLeft = 0;
+    return;
+  }
   const lines = file.content.split("\n");
   const maxLines = 8000;
-  elements.codeLines.innerHTML = lines.slice(0, maxLines).map((line, index) => `<div class="code-line"><span class="line-number">${index + 1}</span><code>${escapeHtml(line) || " "}</code></div>`).join("");
+  const highlightedLines = CodeHelperRendering.highlightCode(lines.slice(0, maxLines).join("\n"), file.language).split("\n");
+  elements.codeLines.innerHTML = highlightedLines.map((line, index) => `<div class="code-line"><span class="line-number">${index + 1}</span><code>${line || " "}</code></div>`).join("");
   if (lines.length > maxLines) elements.codeLines.insertAdjacentHTML("beforeend", `<div class="code-limit">为保证性能，仅显示前 ${maxLines} 行。</div>`);
   elements.codeScroll.scrollTop = 0;
   elements.codeScroll.scrollLeft = 0;
@@ -333,6 +341,7 @@ function resetEditor() {
 function showEditorEmpty() {
   elements.editorEmpty.classList.remove("hidden");
   elements.codeScroll.classList.add("hidden");
+  elements.codeScroll.classList.remove("markdown-mode");
   elements.editorBreadcrumbs.textContent = "选择左侧文件以预览代码";
   elements.editorLanguage.textContent = "—";
   elements.copyFileButton.disabled = true;
@@ -445,7 +454,11 @@ function handleEvent(event) {
 function finishAssistantResponse(payload) {
   if (streamingAgentMessage) {
     const body = streamingAgentMessage.querySelector(".message-body");
-    if (payload.content && body) body.textContent = payload.content;
+    if (body) {
+      const finalContent = payload.content || streamingAgentMessage.dataset.rawContent || "";
+      streamingAgentMessage.dataset.rawContent = finalContent;
+      renderMessageBody(body, finalContent, "agent");
+    }
     streamingAgentMessage.classList.remove("streaming");
     streamingAgentMessage = null;
   } else if (payload.content) addMessage("agent", payload.content);
@@ -458,7 +471,8 @@ function addMessage(role, content) {
   const message = document.createElement("article");
   message.className = `message ${role}`;
   message.innerHTML = `<div class="message-meta"><span>${role === "user" ? "YOU" : "CODE HELPER"}</span><time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div><div class="message-body"></div>`;
-  message.querySelector(".message-body").textContent = content;
+  message.dataset.rawContent = content;
+  renderMessageBody(message.querySelector(".message-body"), content, role);
   elements.messageList.append(message);
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
   return message;
@@ -478,8 +492,21 @@ function appendStreamingAgentText(content) {
     }
   }
   streamingAgentMessage.classList.add("streaming");
-  streamingAgentMessage.querySelector(".message-body").textContent += content;
+  const rawContent = `${streamingAgentMessage.dataset.rawContent || ""}${content}`;
+  streamingAgentMessage.dataset.rawContent = rawContent;
+  streamingAgentMessage.querySelector(".message-body").textContent = rawContent;
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
+}
+
+function renderMessageBody(body, content, role) {
+  if (!body) return;
+  if (role === "agent") {
+    body.classList.add("markdown-body");
+    body.innerHTML = CodeHelperRendering.renderMarkdown(content);
+  } else {
+    body.classList.remove("markdown-body");
+    body.textContent = content;
+  }
 }
 
 function addActivity(title, detail, className = "") {

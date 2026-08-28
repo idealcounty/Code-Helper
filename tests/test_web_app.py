@@ -19,6 +19,7 @@ def test_health_and_static_index() -> None:
         health = client.get("/api/health")
         index = client.get("/")
         modern_styles = client.get("/static/modern.css")
+        rendering_script = client.get("/static/rendering.js")
 
     assert health.status_code == 200
     assert health.json()["api_key_configured"] is True
@@ -26,10 +27,14 @@ def test_health_and_static_index() -> None:
     assert index.status_code == 200
     assert "Code Helper" in index.text
     assert 'href="/static/modern.css"' in index.text
+    assert 'src="/static/rendering.js"' in index.text
     assert "浏览文件夹" in index.text
     assert "代码编辑区" in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
+    assert rendering_script.status_code == 200
+    assert "renderMarkdown" in rendering_script.text
+    assert "highlightCode" in rendering_script.text
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:
