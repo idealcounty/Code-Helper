@@ -39,7 +39,11 @@ async function api(path, options = {}) {
     ...options,
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(body.detail || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -263,6 +267,25 @@ async function openFile(path, force = false) {
     renderEditorTabs();
     renderFile(file);
   } catch (error) {
+    if (error.status === 415) {
+      const file = {
+        path,
+        name: path.split("/").at(-1),
+        content: "",
+        size: 0,
+        line_count: 0,
+        language: "binary",
+        truncated: false,
+        binary: true,
+        previewMessage: error.message,
+      };
+      state.fileCache.set(path, file);
+      if (!state.openFiles.includes(path)) state.openFiles.push(path);
+      state.activeFilePath = path;
+      renderEditorTabs();
+      renderFile(file);
+      return;
+    }
     elements.fileStatus.textContent = "ERROR";
     showToast(error.message);
   }
@@ -306,6 +329,18 @@ function renderFile(file) {
   elements.codeScroll.classList.remove("hidden");
   elements.editorBreadcrumbs.innerHTML = file.path.split("/").map((part) => `<span>${escapeHtml(part)}</span>`).join('<b>›</b>');
   elements.editorLanguage.textContent = file.language;
+  if (file.binary) {
+    elements.fileStatus.textContent = "BINARY";
+    elements.filePosition.textContent = "不可预览";
+    elements.fileSize.textContent = "—";
+    elements.copyFileButton.disabled = true;
+    elements.reloadFileButton.disabled = false;
+    elements.codeScroll.classList.remove("markdown-mode");
+    elements.codeLines.innerHTML = `<div class="file-preview-notice"><span class="preview-file-icon" aria-hidden="true">01</span><h2>这是一个二进制文件</h2><p>${escapeHtml(file.previewMessage || "该文件不能作为文本安全地显示。")}</p><small>${escapeHtml(file.path)}</small></div>`;
+    elements.codeScroll.scrollTop = 0;
+    elements.codeScroll.scrollLeft = 0;
+    return;
+  }
   elements.fileStatus.textContent = file.truncated ? "TRUNCATED" : "READY";
   elements.filePosition.textContent = `${file.line_count} lines`;
   elements.fileSize.textContent = formatBytes(file.size);

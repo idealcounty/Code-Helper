@@ -20,14 +20,16 @@ def test_health_and_static_index() -> None:
         index = client.get("/")
         modern_styles = client.get("/static/modern.css")
         rendering_script = client.get("/static/rendering.js")
+        frontend_bundle = client.get("/assets/app.bundle.js")
 
     assert health.status_code == 200
     assert health.json()["api_key_configured"] is True
     assert health.json()["provider"] == "deepseek"
     assert index.status_code == 200
     assert "Code Helper" in index.text
-    assert 'href="/static/modern.css"' in index.text
-    assert 'src="/static/rendering.js"' in index.text
+    assert 'href="/static/modern.css?v=' in index.text
+    assert 'src="/assets/app.bundle.js?v=' in index.text
+    assert index.headers["cache-control"] == "no-store, max-age=0"
     assert "浏览文件夹" in index.text
     assert "代码编辑区" in index.text
     assert modern_styles.status_code == 200
@@ -35,6 +37,10 @@ def test_health_and_static_index() -> None:
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text
+    assert frontend_bundle.status_code == 200
+    assert frontend_bundle.headers["cache-control"] == "no-store, max-age=0"
+    assert frontend_bundle.text.index("CodeHelperRendering") < frontend_bundle.text.index("const state")
+    assert "file-preview-notice" in frontend_bundle.text
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:
@@ -138,6 +144,22 @@ def test_workspace_file_endpoint_returns_text_content(tmp_path: Path) -> None:
         "language": "python",
         "truncated": False,
     }
+
+
+def test_binary_workspace_file_returns_previewable_status(tmp_path: Path) -> None:
+    (tmp_path / "sample.bin").write_bytes(b"header\x00payload")
+
+    with TestClient(create_app(_config())) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = created.json()["session_id"]
+        response = client.get(
+            f"/api/sessions/{session_id}/file", params={"path": "sample.bin"}
+        )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "二进制文件暂不支持文本预览"
 
 
 def test_directory_browser_and_workspace_session_listing(tmp_path: Path) -> None:

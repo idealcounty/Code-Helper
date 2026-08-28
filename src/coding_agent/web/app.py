@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -466,7 +466,7 @@ def create_app(
                 status_code=400, detail=f"Cannot read file: {exc}"
             ) from exc
         if b"\x00" in raw[:4096]:
-            raise HTTPException(status_code=415, detail="Binary files cannot be previewed")
+            raise HTTPException(status_code=415, detail="二进制文件暂不支持文本预览")
         content = raw.decode("utf-8", errors="replace")
         limit = 300_000
         truncated = len(content) > limit
@@ -698,7 +698,21 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
-        return FileResponse(static_root / "index.html")
+        return FileResponse(
+            static_root / "index.html",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/assets/app.bundle.js", include_in_schema=False)
+    async def frontend_bundle() -> Response:
+        """Serve renderer and application atomically to prevent cache skew."""
+        renderer = (static_root / "rendering.js").read_text(encoding="utf-8")
+        application = (static_root / "app.js").read_text(encoding="utf-8")
+        return Response(
+            f"{renderer}\n;{application}",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
 
     app.mount("/static", StaticFiles(directory=static_root), name="static")
     app.state.session_manager = manager
