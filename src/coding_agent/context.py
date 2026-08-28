@@ -22,6 +22,8 @@ or explain precisely why it is only partially complete.
 class ModelContext:
     messages: list[dict[str, Any]]
     allowed_tools: list[dict[str, Any]]
+    estimated_chars: int = 0
+    truncated: bool = False
 
 
 class ContextManager:
@@ -33,12 +35,14 @@ class ContextManager:
         skill_library: SkillLibrary | None = None,
         max_messages: int = 48,
         max_message_chars: int = 20_000,
+        max_context_chars: int = 80_000,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
         self.skill_library = skill_library
         self.max_messages = max_messages
         self.max_message_chars = max_message_chars
+        self.max_context_chars = max_context_chars
 
     def build(
         self,
@@ -60,10 +64,14 @@ class ContextManager:
         skills = self._skills_summary()
         if skills:
             system += "\n\nAvailable project skills (call load_skill only when applicable):\n" + skills
-        messages = self._bounded_messages(state.messages)
+        messages, summary, truncated = self._bounded_messages(state.messages)
+        state.context_summary = summary
+        estimated_chars = sum(len(str(item.get("content", ""))) for item in messages)
         return ModelContext(
             messages=[{"role": "system", "content": system}, *messages],
             allowed_tools=tool_schemas,
+            estimated_chars=estimated_chars + len(system),
+            truncated=truncated,
         )
 
     def _project_rules(self) -> str:
@@ -92,21 +100,32 @@ class ContextManager:
             for item in self.skill_library.list_summaries()
         )
 
-    def _bounded_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _bounded_messages(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str, bool]:
         if not messages:
-            return []
+            return [], "", False
         kept = messages[-self.max_messages:]
         dropped = len(messages) - len(kept)
         bounded: list[dict[str, Any]] = []
+        summary = ""
         if dropped:
-            bounded.append({"role": "system", "content": f"Earlier context omitted: {dropped} messages. Use current files and tool results as source of truth."})
+            snippets = []
+            for item in messages[:dropped][-12:]:
+                content = str(item.get("content", "")).replace("\n", " ").strip()
+                if content:
+                    snippets.append(f"{item.get('role', 'message')}: {content[:180]}")
+            summary = f"Earlier context summary ({dropped} messages omitted): " + " | ".join(snippets)
+            bounded.append({"role": "system", "content": summary})
         for message in kept:
             item = dict(message)
             content = item.get("content")
             if isinstance(content, str) and len(content) > self.max_message_chars:
                 item["content"] = content[: self.max_message_chars // 2] + "\n...[message clipped]...\n" + content[-self.max_message_chars // 2 :]
             bounded.append(item)
-        return bounded
+        total = sum(len(str(item.get("content", ""))) for item in bounded)
+        while total > self.max_context_chars and len(bounded) > 1:
+            removed = bounded.pop(1)
+            total -= len(str(removed.get("content", "")))
+        return bounded, summary, dropped > 0 or len(bounded) < len(kept) + (1 if dropped else 0)
 
 
 def _find_agent_rule_files(workspace: Workspace) -> list[Path]:

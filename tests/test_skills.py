@@ -94,8 +94,9 @@ def test_context_manager_bounds_history() -> None:
     state = AgentState.create()
     state.messages = [{"role": "user", "content": str(index)} for index in range(5)]
     context = ContextManager(max_messages=2).build(state, [])
-    assert context.messages[1]["content"].startswith("Earlier context omitted")
+    assert context.messages[1]["content"].startswith("Earlier context summary")
     assert [item["content"] for item in context.messages[-2:]] == ["3", "4"]
+    assert context.truncated and state.context_summary
 
 
 def test_tool_executor_persists_full_output_reference(tmp_path: Path) -> None:

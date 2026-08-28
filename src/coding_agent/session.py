@@ -41,6 +41,7 @@ class AgentState:
     cancel_requested: bool = False
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_stats: dict[str, dict[str, int]] = field(default_factory=dict)
+    context_summary: str = ""
 
     @classmethod
     def create(
