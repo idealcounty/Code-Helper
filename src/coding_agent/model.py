@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -160,6 +161,7 @@ class OpenAICompatibleModelClient:
         reasoning: list[str] = []
         calls: dict[int, dict[str, str]] = {}
         usage: dict[str, Any] = {}
+        finish_reason: str | None = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 async with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=body) as response:
@@ -175,7 +177,9 @@ class OpenAICompatibleModelClient:
                         except json.JSONDecodeError:
                             continue
                         usage.update(chunk.get("usage") or {})
-                        delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
+                        choice = (chunk.get("choices") or [{}])[0]
+                        finish_reason = choice.get("finish_reason") or finish_reason
+                        delta = choice.get("delta") or {}
                         piece = delta.get("content") or ""
                         if piece:
                             content.append(piece)
@@ -184,28 +188,102 @@ class OpenAICompatibleModelClient:
                                 await callback_result
                         if delta.get("reasoning_content"):
                             reasoning.append(delta["reasoning_content"])
-                        for index, raw_call in enumerate(delta.get("tool_calls") or []):
+                        for position, raw_call in enumerate(delta.get("tool_calls") or []):
+                            raw_index = raw_call.get("index", position)
+                            try:
+                                index = int(raw_index)
+                            except (TypeError, ValueError):
+                                index = position
                             item = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
-                            item["id"] += str(raw_call.get("id") or "")
+                            item["id"] = _merge_stream_piece(
+                                item["id"], str(raw_call.get("id") or "")
+                            )
                             function = raw_call.get("function") or {}
-                            item["name"] += str(function.get("name") or "")
-                            item["arguments"] += str(function.get("arguments") or "")
+                            item["name"] = _merge_stream_piece(
+                                item["name"], str(function.get("name") or "")
+                            )
+                            item["arguments"] = _merge_stream_piece(
+                                item["arguments"], str(function.get("arguments") or "")
+                            )
         except httpx.TimeoutException as exc:
             raise ModelError("Model request timed out") from exc
         except httpx.HTTPStatusError as exc:
             raise ModelError(f"Model API returned HTTP {exc.response.status_code}: {_safe_error_detail(exc.response)}") from exc
         except httpx.HTTPError as exc:
             raise ModelError(f"Model request failed: {exc}") from exc
-        parsed_calls: list[ToolCall] = []
-        for item in calls.values():
+        try:
+            parsed_calls = _parse_streamed_tool_calls(calls)
+        except ModelProtocolError:
+            # Providers document that models may occasionally emit invalid JSON.
+            # Retry once without streaming: the complete response often contains
+            # a coherent tool call and prevents a recoverable formatting glitch
+            # from terminating the whole Agent turn.
             try:
-                arguments = json.loads(item["arguments"] or "{}")
-            except json.JSONDecodeError as exc:
-                raise ModelProtocolError("Invalid streamed tool call arguments") from exc
-            parsed_calls.append(ToolCall(item["id"], item["name"], arguments))
+                return await self.complete(
+                    messages=messages,
+                    tools=tools,
+                    reasoning_effort=reasoning_effort,
+                )
+            except ModelError as fallback_error:
+                raise ModelProtocolError(
+                    "Model returned invalid tool call arguments after one retry"
+                ) from fallback_error
         if not usage:
             usage = {}
-        return ModelResponse("".join(content), parsed_calls, usage, reasoning_content="".join(reasoning))
+        return ModelResponse(
+            "".join(content),
+            parsed_calls,
+            usage,
+            finish_reason=finish_reason,
+            reasoning_content="".join(reasoning),
+        )
+
+
+def _merge_stream_piece(current: str, incoming: str) -> str:
+    """Merge fragment-style and cumulative-style streaming fields."""
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    if incoming == current or current.endswith(incoming):
+        return current
+    if incoming.startswith(current):
+        return incoming
+    return current + incoming
+
+
+def _parse_streamed_tool_calls(
+    calls: dict[int, dict[str, str]],
+) -> list[ToolCall]:
+    parsed: list[ToolCall] = []
+    for index in sorted(calls):
+        item = calls[index]
+        if not item["id"] or not item["name"]:
+            raise ModelProtocolError("Streamed tool call is missing id or name")
+        arguments = _decode_tool_arguments(item["arguments"])
+        parsed.append(ToolCall(item["id"], item["name"], arguments))
+    return parsed
+
+
+def _decode_tool_arguments(raw: str) -> dict[str, Any]:
+    """Decode JSON with only conservative, non-semantic repairs."""
+    candidate = (raw or "{}").strip()
+    if candidate.startswith("```") and candidate.endswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.I)
+    candidates = [candidate]
+    without_trailing_commas = re.sub(r",\s*([}\]])", r"\1", candidate)
+    if without_trailing_commas != candidate:
+        candidates.append(without_trailing_commas)
+    for value in candidates:
+        try:
+            decoded = json.loads(value)
+            if isinstance(decoded, str):
+                decoded = json.loads(decoded)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(decoded, dict):
+            return decoded
+    raise ModelProtocolError("Invalid streamed tool call arguments")
 
 
 def _parse_chat_completion(payload: dict[str, Any]) -> ModelResponse:

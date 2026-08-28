@@ -130,3 +130,108 @@ def test_streaming_client_emits_text_deltas() -> None:
     assert captured["body"]["stream"] is True
     assert deltas == ["hel", "lo"]
     assert response.content == "hello"
+
+
+def test_streaming_client_merges_interleaved_tool_calls_by_protocol_index() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        lines = "\n".join([
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","function":{"name":"read_file","arguments":"{\\"path\\":\\""}}]}}]}',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_1","function":{"name":"search_text","arguments":"{\\"query\\":\\""}}]}}]}',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"app.py\\"}"}},{"index":1,"function":{"arguments":"TODO\\"}"}}]},"finish_reason":"tool_calls"}]}',
+            "data: [DONE]",
+            "",
+        ])
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=lines.encode(),
+        )
+
+    client = OpenAICompatibleModelClient(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="test",
+        transport=httpx.MockTransport(handler),
+    )
+    response = asyncio.run(
+        client.complete_stream(messages=[], tools=[], on_delta=lambda _: None)
+    )
+
+    assert response.finish_reason == "tool_calls"
+    assert [(call.id, call.name, call.arguments) for call in response.tool_calls] == [
+        ("call_0", "read_file", {"path": "app.py"}),
+        ("call_1", "search_text", {"query": "TODO"}),
+    ]
+
+
+def test_streaming_client_conservatively_repairs_trailing_comma() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        lines = "\n".join([
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","function":{"name":"list_files","arguments":"{\\"path\\":\\".\\",}"}}]},"finish_reason":"tool_calls"}]}',
+            "data: [DONE]",
+            "",
+        ])
+        return httpx.Response(200, content=lines.encode())
+
+    client = OpenAICompatibleModelClient(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="test",
+        transport=httpx.MockTransport(handler),
+    )
+    response = asyncio.run(
+        client.complete_stream(messages=[], tools=[], on_delta=lambda _: None)
+    )
+
+    assert response.tool_calls[0].arguments == {"path": "."}
+
+
+def test_streaming_client_retries_invalid_arguments_without_streaming() -> None:
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if body["stream"]:
+            lines = "\n".join([
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_bad","function":{"name":"read_file","arguments":"{not-json"}}]},"finish_reason":"tool_calls"}]}',
+                "data: [DONE]",
+                "",
+            ])
+            return httpx.Response(200, content=lines.encode())
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_retry",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": '{"path":"app.py"}',
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = OpenAICompatibleModelClient(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="test",
+        transport=httpx.MockTransport(handler),
+    )
+    response = asyncio.run(
+        client.complete_stream(messages=[], tools=[], on_delta=lambda _: None)
+    )
+
+    assert [request["stream"] for request in requests] == [True, False]
+    assert response.tool_calls[0].id == "call_retry"
+    assert response.tool_calls[0].arguments == {"path": "app.py"}
