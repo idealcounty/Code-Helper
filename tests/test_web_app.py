@@ -26,6 +26,8 @@ def test_health_and_static_index() -> None:
     assert index.status_code == 200
     assert "Code Helper" in index.text
     assert 'href="/static/modern.css"' in index.text
+    assert "浏览文件夹" in index.text
+    assert "代码编辑区" in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
 
@@ -106,6 +108,52 @@ def test_file_explorer_cannot_escape_workspace(tmp_path: Path) -> None:
         )
 
     assert response.status_code == 400
+
+
+def test_workspace_file_endpoint_returns_text_content(tmp_path: Path) -> None:
+    source = tmp_path / "hello.py"
+    source.write_bytes(b"print('hello')\n")
+
+    with TestClient(create_app(_config())) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = created.json()["session_id"]
+        response = client.get(
+            f"/api/sessions/{session_id}/file", params={"path": "hello.py"}
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "name": "hello.py",
+        "path": "hello.py",
+        "content": "print('hello')\n",
+        "size": 15,
+        "line_count": 1,
+        "language": "python",
+        "truncated": False,
+    }
+
+
+def test_directory_browser_and_workspace_session_listing(tmp_path: Path) -> None:
+    child = tmp_path / "project"
+    child.mkdir()
+
+    with TestClient(create_app(_config())) as client:
+        browsed = client.get("/api/fs/browse", params={"path": str(tmp_path)})
+        created = client.post(
+            "/api/sessions", json={"workspace": str(child), "mode": "act"}
+        )
+        sessions = client.get(
+            "/api/workspaces/sessions", params={"workspace": str(child)}
+        )
+
+    assert browsed.status_code == 200
+    assert browsed.json()["entries"] == [
+        {"name": "project", "path": str(child), "kind": "directory"}
+    ]
+    assert sessions.status_code == 200
+    assert sessions.json()["sessions"][0]["session_id"] == created.json()["session_id"]
 
 
 class FinalAnswerModel:

@@ -1,79 +1,36 @@
 const state = {
   sessionId: null,
+  workspace: null,
   socket: null,
   running: false,
   pendingApproval: null,
-  provider: null,
-  workspace: null,
+  seenSequences: new Set(),
+  selectedFilePath: null,
   selectedFileRow: null,
-  layout: {
-    leftOpen: true,
-    leftView: "explorer",
-    inspectorOpen: true,
-    inspectorTab: "trace",
-    terminalOpen: false,
-    compact: false,
-  },
+  openFiles: [],
+  fileCache: new Map(),
+  activeFilePath: null,
+  browserPath: "",
+  browserParent: null,
+  browserSelection: null,
+  activeView: "chat",
 };
 
-const elements = {
-  healthBadge: document.querySelector("#healthBadge"),
-  providerLabel: document.querySelector("#providerLabel"),
-  connectionLabel: document.querySelector("#connectionLabel"),
-  workspaceTitle: document.querySelector("#workspaceTitle"),
-  workspaceInput: document.querySelector("#workspaceInput"),
-  modeSelect: document.querySelector("#modeSelect"),
-  createSessionButton: document.querySelector("#createSessionButton"),
-  runStatus: document.querySelector("#runStatus"),
-  stepCounter: document.querySelector("#stepCounter"),
-  messageList: document.querySelector("#messageList"),
-  emptyState: document.querySelector("#emptyState"),
-  messageInput: document.querySelector("#messageInput"),
-  sendButton: document.querySelector("#sendButton"),
-  cancelButton: document.querySelector("#cancelButton"),
-  activityList: document.querySelector("#activityList"),
-  refreshDiffButton: document.querySelector("#refreshDiffButton"),
-  restoreButton: document.querySelector("#restoreButton"),
-  diffView: document.querySelector("#diffView"),
-  approvalBackdrop: document.querySelector("#approvalBackdrop"),
-  approvalTitle: document.querySelector("#approvalTitle"),
-  approvalReason: document.querySelector("#approvalReason"),
-  approvalArguments: document.querySelector("#approvalArguments"),
-  approveButton: document.querySelector("#approveButton"),
-  denyButton: document.querySelector("#denyButton"),
-  toast: document.querySelector("#toast"),
-  leftDock: document.querySelector("#leftDock"),
-  explorerView: document.querySelector("#explorerView"),
-  settingsView: document.querySelector("#settingsView"),
-  explorerRoot: document.querySelector("#explorerRoot"),
-  refreshFilesButton: document.querySelector("#refreshFilesButton"),
-  explorerRailButton: document.querySelector("#explorerRailButton"),
-  traceRailButton: document.querySelector("#traceRailButton"),
-  terminalRailButton: document.querySelector("#terminalRailButton"),
-  diffRailButton: document.querySelector("#diffRailButton"),
-  settingsRailButton: document.querySelector("#settingsRailButton"),
-  terminalDock: document.querySelector("#terminalDock"),
-  terminalOutput: document.querySelector("#terminalOutput"),
-  clearTerminalButton: document.querySelector("#clearTerminalButton"),
-  copyTerminalButton: document.querySelector("#copyTerminalButton"),
-  closeTerminalButton: document.querySelector("#closeTerminalButton"),
-  inspector: document.querySelector("#inspector"),
-  traceTab: document.querySelector("#traceTab"),
-  planTab: document.querySelector("#planTab"),
-  diffTab: document.querySelector("#diffTab"),
-  tracePane: document.querySelector("#tracePane"),
-  planPane: document.querySelector("#planPane"),
-  diffPane: document.querySelector("#diffPane"),
-  planList: document.querySelector("#planList"),
-  planProgress: document.querySelector("#planProgress"),
-  closeInspectorButton: document.querySelector("#closeInspectorButton"),
-  toggleInspector: document.querySelector("#toggleInspector"),
-  toggleTerminal: document.querySelector("#toggleTerminal"),
-  compactDensity: document.querySelector("#compactDensity"),
-  resetLayoutButton: document.querySelector("#resetLayoutButton"),
-};
-
-const LAYOUT_STORAGE_KEY = "code-helper-layout-v1";
+const elements = Object.fromEntries([
+  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput",
+  "browseWorkspaceButton", "createSessionButton", "modeSelect",
+  "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
+  "editorTabs", "editorBreadcrumbs", "editorLanguage", "copyFileButton",
+  "reloadFileButton", "editorEmpty", "codeScroll", "codeLines", "fileStatus",
+  "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
+  "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
+  "stepCounter", "activityList", "planProgress", "planList", "diffView",
+  "refreshDiffButton", "restoreButton", "terminalOutput", "copyTerminalButton",
+  "browserBackdrop", "browserPath", "browserUpButton", "browserList",
+  "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
+  "approvalBackdrop", "approvalTitle", "approvalReason", "approvalArguments",
+  "approveButton", "denyButton", "toast",
+].map((id) => [id, document.querySelector(`#${id}`)]));
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -81,90 +38,310 @@ async function api(path, options = {}) {
     ...options,
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(body.detail || `HTTP ${response.status}`);
-  }
+  if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
   return body;
 }
 
 async function checkHealth() {
   try {
     const health = await api("/api/health");
-    state.provider = `${health.provider}/${health.model}`;
+    const model = `${health.provider}/${health.model}`;
     elements.healthBadge.className = `health ${health.api_key_configured ? "ready" : "error"}`;
-    elements.healthBadge.lastElementChild.textContent = health.api_key_configured
-      ? `服务就绪 · ${state.provider}`
-      : "服务就绪 · 未配置 API Key";
-    elements.providerLabel.textContent = `MODEL · ${state.provider.toUpperCase()}`;
-  } catch (error) {
+    elements.healthBadge.lastElementChild.textContent = health.api_key_configured ? "服务就绪" : "缺少 API Key";
+    elements.providerLabel.textContent = `MODEL · ${model.toUpperCase()}`;
+  } catch {
     elements.healthBadge.className = "health error";
-    elements.healthBadge.lastElementChild.textContent = "服务不可用";
+    elements.healthBadge.lastElementChild.textContent = "服务离线";
     elements.providerLabel.textContent = "MODEL · OFFLINE";
   }
 }
 
-async function createSession() {
-  const workspace = elements.workspaceInput.value.trim();
-  if (!workspace) {
-    showToast("请先输入工作目录");
-    return;
-  }
+function workspaceName(path) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
+}
+
+async function openWorkspace(workspace, sessionId = null, preserveEditor = false) {
+  const candidate = String(workspace || "").trim();
+  if (!candidate) return showToast("请选择一个本地文件夹");
   try {
     const result = await api("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ workspace, mode: elements.modeSelect.value }),
+      body: JSON.stringify({ workspace: candidate, mode: elements.modeSelect.value, session_id: sessionId }),
     });
     closeSocket();
     state.sessionId = result.session_id;
     state.workspace = result.workspace;
     state.running = false;
+    state.seenSequences.clear();
+    state.pendingApproval = null;
     elements.workspaceInput.value = result.workspace;
-    elements.workspaceInput.disabled = true;
-    elements.createSessionButton.querySelector("span").textContent = "项目已打开";
-    elements.createSessionButton.disabled = true;
-    elements.messageInput.disabled = false;
-    elements.sendButton.disabled = false;
-    elements.refreshDiffButton.disabled = false;
-    elements.restoreButton.disabled = false;
-    elements.refreshFilesButton.disabled = false;
     elements.workspaceTitle.textContent = workspaceName(result.workspace);
-    elements.connectionLabel.textContent = `SESSION · ${result.session_id.slice(0, 8).toUpperCase()}`;
-    elements.emptyState?.remove();
-    elements.messageList.innerHTML = "";
-    elements.activityList.innerHTML = "";
-    setStatus("就绪", false);
+    elements.explorerPath.textContent = result.workspace;
+    enableWorkspaceControls(true);
+    resetConversationSurface();
+    if (!preserveEditor) resetEditor();
+    setRunning(false);
     connectSocket();
-    await loadRootFiles();
-    showToast("项目已安全打开，文件树与 Agent 已连接");
+    await Promise.all([loadRootFiles(), loadWorkspaceSessions()]);
+    showToast(sessionId ? "已切换对话" : "工作区已打开");
   } catch (error) {
     showToast(error.message);
   }
 }
 
-function workspaceName(path) {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts.at(-1) || path;
+function enableWorkspaceControls(enabled) {
+  elements.messageInput.disabled = !enabled;
+  elements.sendButton.disabled = !enabled;
+  elements.refreshFilesButton.disabled = !enabled;
+  elements.refreshDiffButton.disabled = !enabled;
+  elements.restoreButton.disabled = !enabled;
+  elements.newSessionButton.disabled = !enabled;
+}
+
+function resetConversationSurface() {
+  elements.messageList.innerHTML = '<div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>开始一段新的对话</h3><p>描述你希望理解、修改或验证的任务。</p></div>';
+  elements.activityList.innerHTML = '<div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div>';
+  elements.planList.innerHTML = '<div class="view-empty">当前会话还没有执行计划。</div>';
+  elements.planProgress.textContent = "0 / 0";
+  elements.stepCounter.textContent = "STEP 0";
+  elements.diffView.textContent = "暂无变更";
+  elements.terminalOutput.innerHTML = '<div class="terminal-line dim">Agent 执行的命令和输出将在这里镜像显示。</div>';
+  streamingAgentMessage = null;
 }
 
 function connectSocket() {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/sessions/${state.sessionId}`);
+  const sessionId = state.sessionId;
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/sessions/${sessionId}`);
   state.socket = socket;
-  socket.onmessage = (message) => handleEvent(JSON.parse(message.data));
+  socket.onmessage = (message) => {
+    if (state.sessionId === sessionId) handleEvent(JSON.parse(message.data));
+  };
   socket.onclose = () => {
-    if (state.socket === socket && state.sessionId) {
-      setTimeout(connectSocket, 1200);
-    }
+    if (state.socket === socket && state.sessionId === sessionId) setTimeout(connectSocket, 1200);
   };
 }
 
 function closeSocket() {
-  if (state.socket) {
-    const socket = state.socket;
-    state.socket = null;
-    socket.onclose = null;
-    socket.close();
+  if (!state.socket) return;
+  state.socket.onclose = null;
+  state.socket.close();
+  state.socket = null;
+}
+
+async function loadWorkspaceSessions() {
+  if (!state.workspace) return;
+  try {
+    const params = new URLSearchParams({ workspace: state.workspace });
+    const result = await api(`/api/workspaces/sessions?${params}`);
+    renderSessionList(result.sessions || []);
+  } catch (error) {
+    elements.sessionList.innerHTML = `<div class="thread-empty">${escapeHtml(error.message)}</div>`;
   }
+}
+
+function renderSessionList(sessions) {
+  elements.sessionList.innerHTML = "";
+  if (!sessions.length) {
+    elements.sessionList.innerHTML = '<div class="thread-empty">还没有保存的对话</div>';
+    return;
+  }
+  sessions.forEach((session) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `thread-item ${session.session_id === state.sessionId ? "active" : ""}`;
+    button.innerHTML = `<span class="thread-state ${escapeHtml(session.status)}"></span><span class="thread-copy"><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.preview)}</small></span><time>${formatRelativeTime(session.updated_at)}</time>`;
+    button.addEventListener("click", () => {
+      if (session.session_id !== state.sessionId && !state.running) {
+        openWorkspace(state.workspace, session.session_id, true);
+      }
+    });
+    elements.sessionList.append(button);
+  });
+}
+
+function formatRelativeTime(value) {
+  const delta = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(delta)) return "";
+  if (delta < 60_000) return "刚刚";
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
+  return `${Math.floor(delta / 86_400_000)}d`;
+}
+
+async function loadRootFiles() {
+  if (!state.sessionId) return;
+  elements.explorerRoot.innerHTML = '<div class="tree-loading">正在读取工作区…</div>';
+  try {
+    const result = await listFiles(".");
+    elements.explorerRoot.innerHTML = "";
+    renderFileEntries(result.entries, elements.explorerRoot, 0);
+    if (!result.entries.length) elements.explorerRoot.innerHTML = '<div class="tree-loading">工作区为空</div>';
+  } catch (error) {
+    elements.explorerRoot.innerHTML = `<div class="tree-loading error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function listFiles(path) {
+  return api(`/api/sessions/${state.sessionId}/files?${new URLSearchParams({ path })}`);
+}
+
+function renderFileEntries(entries, container, depth) {
+  entries.forEach((entry) => {
+    const group = document.createElement("div");
+    group.className = "tree-group";
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "tree-row";
+    row.style.setProperty("--depth", depth);
+    row.title = entry.path;
+    row.innerHTML = entry.kind === "directory"
+      ? `${iconSvg("chevron")} ${iconSvg("folder")}<span>${escapeHtml(entry.name)}</span>`
+      : `${iconSvg("blank")} ${iconSvg("file")}<span>${escapeHtml(entry.name)}</span>`;
+    group.append(row);
+    container.append(group);
+    row.addEventListener("click", async () => {
+      if (entry.kind === "file") {
+        selectFileRow(row, entry.path);
+        await openFile(entry.path);
+        return;
+      }
+      const existing = group.querySelector(":scope > .tree-children");
+      if (existing) {
+        existing.classList.toggle("hidden");
+        row.classList.toggle("expanded", !existing.classList.contains("hidden"));
+        return;
+      }
+      row.classList.add("expanded");
+      const children = document.createElement("div");
+      children.className = "tree-children";
+      children.innerHTML = '<div class="tree-loading nested">读取中…</div>';
+      group.append(children);
+      try {
+        const result = await listFiles(entry.path);
+        children.innerHTML = "";
+        renderFileEntries(result.entries, children, depth + 1);
+        if (!result.entries.length) children.innerHTML = '<div class="tree-loading nested">空目录</div>';
+      } catch (error) {
+        children.innerHTML = `<div class="tree-loading nested error">${escapeHtml(error.message)}</div>`;
+      }
+    });
+  });
+}
+
+function selectFileRow(row, path) {
+  state.selectedFileRow?.classList.remove("selected");
+  state.selectedFileRow = row;
+  state.selectedFilePath = path;
+  row.classList.add("selected");
+  elements.insertFileButton.disabled = false;
+}
+
+async function openFile(path, force = false) {
+  if (!state.sessionId) return;
+  elements.fileStatus.textContent = "LOADING";
+  try {
+    let file = state.fileCache.get(path);
+    if (!file || force) {
+      file = await api(`/api/sessions/${state.sessionId}/file?${new URLSearchParams({ path })}`);
+      state.fileCache.set(path, file);
+    }
+    if (!state.openFiles.includes(path)) state.openFiles.push(path);
+    state.activeFilePath = path;
+    renderEditorTabs();
+    renderFile(file);
+  } catch (error) {
+    elements.fileStatus.textContent = "ERROR";
+    showToast(error.message);
+  }
+}
+
+function renderEditorTabs() {
+  elements.editorTabs.innerHTML = "";
+  if (!state.openFiles.length) {
+    elements.editorTabs.innerHTML = '<div class="editor-tab-placeholder">没有打开的文件</div>';
+    return;
+  }
+  state.openFiles.forEach((path) => {
+    const tab = document.createElement("div");
+    tab.className = `editor-tab ${path === state.activeFilePath ? "active" : ""}`;
+    tab.innerHTML = `${iconSvg("file")}<button class="tab-label" type="button">${escapeHtml(path.split("/").at(-1))}</button><button class="tab-close" type="button" aria-label="关闭 ${escapeHtml(path)}">×</button>`;
+    tab.querySelector(".tab-label").addEventListener("click", () => {
+      state.activeFilePath = path;
+      renderEditorTabs();
+      renderFile(state.fileCache.get(path));
+    });
+    tab.querySelector(".tab-close").addEventListener("click", () => closeFile(path));
+    elements.editorTabs.append(tab);
+  });
+}
+
+function closeFile(path) {
+  const index = state.openFiles.indexOf(path);
+  if (index < 0) return;
+  state.openFiles.splice(index, 1);
+  if (state.activeFilePath === path) {
+    state.activeFilePath = state.openFiles[Math.min(index, state.openFiles.length - 1)] || null;
+  }
+  renderEditorTabs();
+  if (state.activeFilePath) renderFile(state.fileCache.get(state.activeFilePath));
+  else showEditorEmpty();
+}
+
+function renderFile(file) {
+  if (!file) return showEditorEmpty();
+  elements.editorEmpty.classList.add("hidden");
+  elements.codeScroll.classList.remove("hidden");
+  elements.editorBreadcrumbs.innerHTML = file.path.split("/").map((part) => `<span>${escapeHtml(part)}</span>`).join('<b>›</b>');
+  elements.editorLanguage.textContent = file.language;
+  elements.fileStatus.textContent = file.truncated ? "TRUNCATED" : "READY";
+  elements.filePosition.textContent = `${file.line_count} lines`;
+  elements.fileSize.textContent = formatBytes(file.size);
+  elements.copyFileButton.disabled = false;
+  elements.reloadFileButton.disabled = false;
+  const lines = file.content.split("\n");
+  const maxLines = 8000;
+  elements.codeLines.innerHTML = lines.slice(0, maxLines).map((line, index) => `<div class="code-line"><span class="line-number">${index + 1}</span><code>${escapeHtml(line) || " "}</code></div>`).join("");
+  if (lines.length > maxLines) elements.codeLines.insertAdjacentHTML("beforeend", `<div class="code-limit">为保证性能，仅显示前 ${maxLines} 行。</div>`);
+  elements.codeScroll.scrollTop = 0;
+  elements.codeScroll.scrollLeft = 0;
+}
+
+function resetEditor() {
+  state.openFiles = [];
+  state.fileCache.clear();
+  state.activeFilePath = null;
+  state.selectedFilePath = null;
+  state.selectedFileRow = null;
+  elements.insertFileButton.disabled = true;
+  renderEditorTabs();
+  showEditorEmpty();
+}
+
+function showEditorEmpty() {
+  elements.editorEmpty.classList.remove("hidden");
+  elements.codeScroll.classList.add("hidden");
+  elements.editorBreadcrumbs.textContent = "选择左侧文件以预览代码";
+  elements.editorLanguage.textContent = "—";
+  elements.copyFileButton.disabled = true;
+  elements.reloadFileButton.disabled = true;
+  elements.fileStatus.textContent = "READY";
+  elements.filePosition.textContent = "Ln 1, Col 1";
+  elements.fileSize.textContent = "0 bytes";
+}
+
+function formatBytes(size) {
+  if (size < 1024) return `${size} bytes`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function insertSelectedFile() {
+  if (!state.selectedFilePath) return;
+  const existing = elements.messageInput.value.trim();
+  elements.messageInput.value = `${existing}${existing ? " " : ""}@${state.selectedFilePath} `;
+  elements.messageInput.focus();
+  setAssistantView("chat");
 }
 
 async function sendMessage() {
@@ -173,14 +350,11 @@ async function sendMessage() {
   if (!content) return;
   elements.messageInput.value = "";
   try {
-    await api(`/api/sessions/${state.sessionId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    });
+    await api(`/api/sessions/${state.sessionId}/messages`, { method: "POST", body: JSON.stringify({ content }) });
     setRunning(true);
   } catch (error) {
-    showToast(error.message);
     elements.messageInput.value = content;
+    showToast(error.message);
   }
 }
 
@@ -189,26 +363,7 @@ async function cancelRun() {
   try {
     await api(`/api/sessions/${state.sessionId}/cancel`, { method: "POST" });
     showToast("已请求停止 Agent");
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function resolveApproval(approved) {
-  if (!state.pendingApproval) return;
-  try {
-    await api(`/api/sessions/${state.sessionId}/approval`, {
-      method: "POST",
-      body: JSON.stringify({
-        tool_call_id: state.pendingApproval.id,
-        approved,
-      }),
-    });
-    elements.approvalBackdrop.classList.add("hidden");
-    state.pendingApproval = null;
-  } catch (error) {
-    showToast(error.message);
-  }
+  } catch (error) { showToast(error.message); }
 }
 
 async function refreshDiff() {
@@ -217,281 +372,114 @@ async function refreshDiff() {
   try {
     const result = await api(`/api/sessions/${state.sessionId}/diff`);
     elements.diffView.textContent = result.diff || result.error || "暂无变更";
-  } catch (error) {
-    elements.diffView.textContent = error.message;
-  }
+  } catch (error) { elements.diffView.textContent = error.message; }
 }
 
 async function restoreCheckpoint() {
   if (!state.sessionId || state.running) return;
-  const confirmed = window.confirm("恢复本轮任务开始前的文件状态？此操作会覆盖 Agent 的修改。");
-  if (!confirmed) return;
+  if (!window.confirm("恢复本轮任务开始前的文件状态？此操作会覆盖 Agent 的修改。")) return;
   try {
-    const result = await api(`/api/sessions/${state.sessionId}/restore`, {
-      method: "POST",
-    });
+    const result = await api(`/api/sessions/${state.sessionId}/restore`, { method: "POST" });
+    state.fileCache.clear();
     showToast(`已恢复 ${result.restored.length} 个文件`);
     await Promise.all([refreshDiff(), loadRootFiles()]);
-  } catch (error) {
-    showToast(error.message);
-  }
+    if (state.activeFilePath) await openFile(state.activeFilePath, true);
+  } catch (error) { showToast(error.message); }
 }
 
-async function loadRootFiles() {
-  if (!state.sessionId) return;
-  elements.explorerRoot.innerHTML = '<span class="tree-status">正在读取工作区…</span>';
+async function resolveApproval(approved) {
+  if (!state.pendingApproval) return;
   try {
-    const result = await listFiles(".");
-    elements.explorerRoot.innerHTML = "";
-    renderFileEntries(result.entries, elements.explorerRoot);
-    if (!result.entries.length) {
-      elements.explorerRoot.innerHTML = '<span class="tree-status">工作区为空</span>';
-    }
-  } catch (error) {
-    elements.explorerRoot.textContent = error.message;
-    elements.explorerRoot.classList.add("tree-status");
-  }
-}
-
-function listFiles(path) {
-  const params = new URLSearchParams({ path });
-  return api(`/api/sessions/${state.sessionId}/files?${params}`);
-}
-
-function renderFileEntries(entries, container) {
-  for (const entry of entries) {
-    const group = document.createElement("div");
-    group.className = "tree-group";
-    const row = document.createElement("button");
-    row.className = "tree-row";
-    row.type = "button";
-    row.title = entry.path;
-
-    if (entry.kind === "directory") {
-      row.append(makeIcon("chevron", "m9 6 6 6-6 6"));
-      row.append(makeIcon("folder", "M3.5 6.5h6l2 2h9v10h-17z"));
-    } else {
-      row.append(makeIcon("chevron", ""));
-      row.append(makeIcon("file", "M6 3.5h8l4 4v13H6zM14 3.5v4h4"));
-    }
-    const label = document.createElement("span");
-    label.className = "tree-label";
-    label.textContent = entry.name;
-    row.append(label);
-    group.append(row);
-    container.append(group);
-
-    row.addEventListener("click", async () => {
-      if (entry.kind === "file") {
-        selectFileRow(row, entry.path);
-        return;
-      }
-      const existing = group.querySelector(":scope > .tree-children");
-      if (existing) {
-        const hidden = existing.classList.toggle("hidden");
-        row.classList.toggle("expanded", !hidden);
-        return;
-      }
-      row.classList.add("expanded");
-      const children = document.createElement("div");
-      children.className = "tree-children";
-      const loading = document.createElement("span");
-      loading.className = "tree-status";
-      loading.textContent = "读取中…";
-      children.append(loading);
-      group.append(children);
-      try {
-        const result = await listFiles(entry.path);
-        children.innerHTML = "";
-        renderFileEntries(result.entries, children);
-        if (!result.entries.length) {
-          loading.textContent = "空目录";
-          children.append(loading);
-        }
-      } catch (error) {
-        loading.textContent = error.message;
-      }
-    });
-  }
-}
-
-function makeIcon(className, pathData) {
-  const namespace = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(namespace, "svg");
-  svg.classList.add(className);
-  svg.setAttribute("viewBox", "0 0 24 24");
-  if (pathData) {
-    const path = document.createElementNS(namespace, "path");
-    path.setAttribute("d", pathData);
-    svg.append(path);
-  }
-  return svg;
-}
-
-function selectFileRow(row, path) {
-  state.selectedFileRow?.classList.remove("selected");
-  state.selectedFileRow = row;
-  row.classList.add("selected");
-  if (!state.sessionId) {
-    showToast("请先打开项目");
-    return;
-  }
-  const prefix = elements.messageInput.value.trim();
-  elements.messageInput.value = `${prefix}${prefix ? " " : ""}@${path} `;
-  elements.messageInput.focus();
-  showToast(`已将 ${path} 添加到任务`);
+    await api(`/api/sessions/${state.sessionId}/approval`, { method: "POST", body: JSON.stringify({ tool_call_id: state.pendingApproval.id, approved }) });
+    elements.approvalBackdrop.classList.add("hidden");
+    state.pendingApproval = null;
+  } catch (error) { showToast(error.message); }
 }
 
 function handleEvent(event) {
+  if (event.sequence && state.seenSequences.has(event.sequence)) return;
+  if (event.sequence) state.seenSequences.add(event.sequence);
   const payload = event.payload || {};
   switch (event.type) {
-    case "turn_started":
-      addMessage("user", payload.message);
-      setRunning(true);
-      break;
-    case "step_started":
-      elements.stepCounter.textContent = `STEP ${payload.step}`;
-      addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型");
-      break;
-    case "context_compacted":
-      addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符，保留摘要继续执行`, "warning");
-      break;
-    case "model_started":
-      addActivity("模型处理中", "等待模型选择下一步操作");
-      break;
-    case "assistant_response":
-      streamingAgentMessage = null;
-      if (payload.content) addMessage("agent", payload.content);
-      if (payload.tool_calls?.length) {
-        addActivity("模型选择工具", payload.tool_calls.map((call) => call.name).join(", "));
-      }
-      break;
-    case "assistant_delta":
-      appendStreamingAgentText(payload.content || "");
-      break;
-    case "tool_started":
-      addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments));
-      if (payload.name === "run_command") {
-        appendTerminal(`❯ ${payload.arguments.command}`, "command");
-      }
-      break;
+    case "turn_started": addMessage("user", payload.message); setRunning(true); break;
+    case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
+    case "context_compacted": addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning"); break;
+    case "model_started": addActivity("模型处理中", "正在选择下一步操作"); break;
+    case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
+    case "assistant_response": finishAssistantResponse(payload); break;
+    case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;
     case "tool_result": {
-      const result = payload.result;
-      addActivity(
-        `${result.ok ? "完成" : "失败"} ${payload.name}`,
-        `${result.code} · ${result.message}`,
-        result.ok ? "success" : "failure",
-      );
-      if (payload.name === "run_command") {
-        mirrorCommandResult(result);
-      }
-      if (result.metadata?.mutated_files?.length) {
-        refreshDiff();
-        loadRootFiles();
-      }
+      const result = payload.result || {};
+      addActivity(`${result.ok ? "完成" : "失败"} ${payload.name}`, `${result.code || ""} · ${result.message || ""}`, result.ok ? "success" : "failure");
+      if (payload.name === "run_command") mirrorCommandResult(result);
+      if (result.metadata?.mutated_files?.length) { state.fileCache.clear(); refreshDiff(); loadRootFiles(); if (state.activeFilePath) openFile(state.activeFilePath, true); }
       break;
     }
-    case "plan_updated":
-      renderPlan(payload.plan || []);
-      addActivity("计划已更新", payload.reason || "Agent 调整了执行步骤", "success");
-      break;
-    case "approval_requested":
-      showApproval(payload);
-      addActivity(`等待批准 ${payload.name}`, payload.reason);
-      break;
-    case "verification_required":
-      addActivity("需要验证", payload.reason, "failure");
-      break;
-    case "repair_attempt":
-      addActivity(`自动修复尝试 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning");
-      break;
-    case "checkpoint_created":
-      addActivity("创建检查点", payload.path, "success");
-      break;
-    case "checkpoint_restored":
-      addActivity("已回滚本轮修改", (payload.files || []).join(", "), "success");
-      loadRootFiles();
-      break;
-    case "turn_finished":
-      setRunning(false);
-      setStatus(statusLabel(payload.status), false);
-      addActivity(
-        `任务 ${statusLabel(payload.status)}`,
-        payload.message,
-        payload.status === "completed" ? "success" : "failure",
-      );
-      refreshDiff();
-      break;
-    default:
-      break;
+    case "plan_updated": renderPlan(payload.plan || []); addActivity("计划已更新", payload.reason || "执行步骤发生变化", "success"); break;
+    case "approval_requested": showApproval(payload); addActivity(`等待批准 ${payload.name}`, payload.reason, "warning"); break;
+    case "verification_required": addActivity("需要验证", payload.reason, "failure"); break;
+    case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
+    case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
+    case "checkpoint_restored": addActivity("已回滚本轮修改", (payload.files || []).join(", "), "success"); break;
+    case "turn_finished": setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); break;
+    default: break;
   }
 }
 
-function statusLabel(status) {
-  return {
-    completed: "已完成",
-    partial: "部分完成",
-    failed: "失败",
-    cancelled: "已停止",
-    ready: "就绪",
-  }[status] || status;
-}
-
-function renderPlan(plan) {
-  const items = Array.isArray(plan) ? plan : [];
-  const completed = items.filter((item) => item.status === "completed").length;
-  elements.planProgress.textContent = `${completed} / ${items.length}`;
-  if (!items.length) return;
-  elements.planList.innerHTML = items.map((item, index) => {
-    const status = item.status || "pending";
-    const icon = status === "completed" ? "✓" : status === "in_progress" ? "●" : `${index + 1}`;
-    return `<div class="plan-item ${status}"><span class="plan-marker">${icon}</span><span>${escapeHtml(item.step || "")}</span></div>`;
-  }).join("");
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[char]));
+function finishAssistantResponse(payload) {
+  if (streamingAgentMessage) {
+    const body = streamingAgentMessage.querySelector(".message-body");
+    if (payload.content && body) body.textContent = payload.content;
+    streamingAgentMessage.classList.remove("streaming");
+    streamingAgentMessage = null;
+  } else if (payload.content) addMessage("agent", payload.content);
+  if (payload.tool_calls?.length) addActivity("模型选择工具", payload.tool_calls.map((call) => call.name).join(", "));
 }
 
 function addMessage(role, content) {
   if (!content) return;
-  const message = document.createElement("div");
-  message.className = `message ${role === "user" ? "user" : "agent"}`;
-  const label = document.createElement("span");
-  label.className = "role";
-  label.textContent = role === "user" ? "YOU · REQUEST" : "CODE HELPER · RESPONSE";
-  const body = document.createElement("div");
-  body.textContent = content;
-  message.append(label, body);
+  elements.messageList.querySelector(".chat-empty")?.remove();
+  const message = document.createElement("article");
+  message.className = `message ${role}`;
+  message.innerHTML = `<div class="message-meta"><span>${role === "user" ? "YOU" : "CODE HELPER"}</span><time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div><div class="message-body"></div>`;
+  message.querySelector(".message-body").textContent = content;
   elements.messageList.append(message);
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
+  return message;
 }
 
 let streamingAgentMessage = null;
 function appendStreamingAgentText(content) {
   if (!content) return;
   if (!streamingAgentMessage) {
-    streamingAgentMessage = document.createElement("div");
-    streamingAgentMessage.className = "message agent streaming";
-    elements.messageList.appendChild(streamingAgentMessage);
+    streamingAgentMessage = addMessage("agent", "");
+    if (!streamingAgentMessage) {
+      elements.messageList.querySelector(".chat-empty")?.remove();
+      streamingAgentMessage = document.createElement("article");
+      streamingAgentMessage.className = "message agent streaming";
+      streamingAgentMessage.innerHTML = '<div class="message-meta"><span>CODE HELPER</span><time>LIVE</time></div><div class="message-body"></div>';
+      elements.messageList.append(streamingAgentMessage);
+    }
   }
-  streamingAgentMessage.textContent += content;
+  streamingAgentMessage.classList.add("streaming");
+  streamingAgentMessage.querySelector(".message-body").textContent += content;
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
 function addActivity(title, detail, className = "") {
-  elements.activityList.querySelector(".inspector-empty")?.remove();
+  elements.activityList.querySelector(".view-empty")?.remove();
   const item = document.createElement("div");
   item.className = `activity-item ${className}`;
-  const heading = document.createElement("strong");
-  heading.textContent = title;
-  const body = document.createElement("span");
-  body.textContent = detail || "";
-  item.append(heading, body);
+  item.innerHTML = `<i></i><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail || "")}</span></div>`;
   elements.activityList.append(item);
   elements.activityList.scrollTop = elements.activityList.scrollHeight;
+}
+
+function renderPlan(plan) {
+  const items = Array.isArray(plan) ? plan : [];
+  const completed = items.filter((item) => item.status === "completed").length;
+  elements.planProgress.textContent = `${completed} / ${items.length}`;
+  elements.planList.innerHTML = items.length ? items.map((item, index) => `<div class="plan-item ${escapeHtml(item.status || "pending")}"><span>${item.status === "completed" ? "✓" : index + 1}</span><p>${escapeHtml(item.step || "")}</p></div>`).join("") : '<div class="view-empty">当前会话还没有执行计划。</div>';
 }
 
 function showApproval(payload) {
@@ -503,21 +491,14 @@ function showApproval(payload) {
   elements.denyButton.focus();
 }
 
-function summarizeArguments(args = {}) {
-  const value = args.path || args.command || args.query || args.pattern;
-  if (value) return String(value).slice(0, 180);
-  return JSON.stringify(args).slice(0, 180);
-}
+function summarizeArguments(args = {}) { return String(args.path || args.command || args.query || args.pattern || JSON.stringify(args)).slice(0, 180); }
+function statusLabel(status) { return ({ completed: "已完成", partial: "部分完成", failed: "失败", cancelled: "已停止" })[status] || status; }
 
 function mirrorCommandResult(result) {
   const data = result.data || {};
-  if (data.stdout) appendTerminal(data.stdout.replace(/\s+$/, ""), "");
+  if (data.stdout) appendTerminal(data.stdout.replace(/\s+$/, ""));
   if (data.stderr) appendTerminal(data.stderr.replace(/\s+$/, ""), "stderr");
-  const exitCode = Number.isInteger(data.exit_code) ? data.exit_code : "?";
-  appendTerminal(
-    `[exit ${exitCode}] ${result.message}`,
-    result.ok ? "success" : "failure",
-  );
+  appendTerminal(`[exit ${Number.isInteger(data.exit_code) ? data.exit_code : "?"}] ${result.message || ""}`, result.ok ? "success" : "failure");
 }
 
 function appendTerminal(text, className = "") {
@@ -535,107 +516,86 @@ function setRunning(running) {
   elements.sendButton.disabled = running || !state.sessionId;
   elements.cancelButton.disabled = !running;
   elements.messageInput.disabled = running || !state.sessionId;
-  setStatus(running ? "运行中" : "就绪", running);
-}
-
-function setStatus(text, running) {
-  elements.runStatus.querySelector("strong").textContent = text;
+  elements.newSessionButton.disabled = running || !state.workspace;
   elements.runStatus.classList.toggle("running", running);
+  elements.runStatus.querySelector("span").textContent = running ? "Agent 运行中" : state.sessionId ? "就绪" : "未连接";
 }
 
-function showLeftView(view) {
-  if (state.layout.leftOpen && state.layout.leftView === view) {
-    state.layout.leftOpen = false;
-  } else {
-    state.layout.leftOpen = true;
-    state.layout.leftView = view;
-  }
-  applyLayout();
+function setAssistantView(view) {
+  state.activeView = view;
+  document.querySelectorAll(".assistant-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
+  const ids = { chat: "chatView", trace: "traceView", plan: "planView", diff: "diffViewPane", terminal: "terminalView" };
+  document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[view]));
+  if (view === "diff") refreshDiff();
 }
 
-function showInspector(tab) {
-  state.layout.inspectorOpen = true;
-  state.layout.inspectorTab = tab;
-  applyLayout();
-  if (tab === "diff") refreshDiff();
-  if (tab === "plan" && state.sessionId) api(`/api/sessions/${state.sessionId}`).then((data) => renderPlan(data.plan || [])).catch(() => {});
-}
-
-function setInspectorTab(tab) {
-  state.layout.inspectorTab = tab;
-  elements.traceTab.classList.toggle("active", tab === "trace");
-  elements.planTab.classList.toggle("active", tab === "plan");
-  elements.diffTab.classList.toggle("active", tab === "diff");
-  elements.traceTab.setAttribute("aria-selected", String(tab === "trace"));
-  elements.planTab.setAttribute("aria-selected", String(tab === "plan"));
-  elements.diffTab.setAttribute("aria-selected", String(tab === "diff"));
-  elements.tracePane.classList.toggle("hidden", tab !== "trace");
-  elements.planPane.classList.toggle("hidden", tab !== "plan");
-  elements.diffPane.classList.toggle("hidden", tab !== "diff");
-}
-
-function applyLayout({ persist = true } = {}) {
-  document.body.classList.toggle("left-closed", !state.layout.leftOpen);
-  document.body.classList.toggle("inspector-closed", !state.layout.inspectorOpen);
-  document.body.classList.toggle("compact", state.layout.compact);
-  elements.explorerView.classList.toggle("hidden", state.layout.leftView !== "explorer");
-  elements.settingsView.classList.toggle("hidden", state.layout.leftView !== "settings");
-  elements.terminalDock.classList.toggle("hidden", !state.layout.terminalOpen);
-  elements.toggleInspector.checked = state.layout.inspectorOpen;
-  elements.toggleTerminal.checked = state.layout.terminalOpen;
-  elements.compactDensity.checked = state.layout.compact;
-  setInspectorTab(state.layout.inspectorTab);
-  updateRailState(elements.explorerRailButton, state.layout.leftOpen && state.layout.leftView === "explorer");
-  updateRailState(elements.settingsRailButton, state.layout.leftOpen && state.layout.leftView === "settings");
-  updateRailState(elements.terminalRailButton, state.layout.terminalOpen);
-  updateRailState(
-    elements.traceRailButton,
-    state.layout.inspectorOpen && state.layout.inspectorTab === "trace",
-  );
-  updateRailState(
-    elements.diffRailButton,
-    state.layout.inspectorOpen && state.layout.inspectorTab === "diff",
-  );
-  if (persist) saveLayout();
-}
-
-function updateRailState(button, active) {
-  button.classList.toggle("active", active);
-  button.setAttribute("aria-pressed", String(active));
-}
-
-function saveLayout() {
-  localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
-}
-
-function loadLayout() {
+async function browseWorkspace() {
   try {
-    const saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY));
-    if (saved && typeof saved === "object") {
-      state.layout = { ...state.layout, ...saved };
+    const picker = window.pywebview?.api?.pick_folder;
+    if (picker) {
+      const selected = await picker();
+      if (selected) await openWorkspace(selected);
+      return;
     }
-  } catch {
-    localStorage.removeItem(LAYOUT_STORAGE_KEY);
-  }
-  if (window.matchMedia("(max-width: 760px)").matches) {
-    state.layout.leftOpen = false;
-    state.layout.inspectorOpen = false;
-    state.layout.terminalOpen = false;
-  }
-  applyLayout({ persist: false });
+  } catch (error) { showToast(`原生选择器不可用：${error.message}`); }
+  elements.browserBackdrop.classList.remove("hidden");
+  await browseTo(state.workspace || "");
 }
 
-function resetLayout() {
-  state.layout = {
-    leftOpen: true,
-    leftView: "explorer",
-    inspectorOpen: true,
-    inspectorTab: "trace",
-    terminalOpen: false,
-    compact: false,
+async function browseTo(path) {
+  elements.browserList.innerHTML = '<div class="folder-loading">正在读取目录…</div>';
+  try {
+    const result = await api(`/api/fs/browse?${new URLSearchParams({ path: path || "" })}`);
+    state.browserPath = result.path;
+    state.browserParent = result.parent;
+    state.browserSelection = result.path || null;
+    elements.browserPath.textContent = result.path || "此电脑";
+    elements.browserPath.title = result.path || "此电脑";
+    elements.browserUpButton.disabled = !result.parent && !result.path;
+    elements.chooseWorkspaceButton.disabled = !state.browserSelection;
+    renderBrowserList(result.entries || []);
+  } catch (error) {
+    elements.browserList.innerHTML = `<div class="folder-loading error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderBrowserList(entries) {
+  elements.browserList.innerHTML = "";
+  if (!entries.length) elements.browserList.innerHTML = '<div class="folder-loading">此文件夹中没有子文件夹</div>';
+  entries.forEach((entry) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "folder-row";
+    row.innerHTML = `${iconSvg(entry.kind === "drive" ? "drive" : "folder")}<span><strong>${escapeHtml(entry.name)}</strong><small>${escapeHtml(entry.path)}</small></span><b>›</b>`;
+    row.addEventListener("click", () => {
+      elements.browserList.querySelector(".folder-row.selected")?.classList.remove("selected");
+      row.classList.add("selected");
+      state.browserSelection = entry.path;
+      elements.chooseWorkspaceButton.disabled = false;
+    });
+    row.addEventListener("dblclick", () => browseTo(entry.path));
+    elements.browserList.append(row);
+  });
+}
+
+function closeBrowser() {
+  elements.browserBackdrop.classList.add("hidden");
+  state.browserSelection = null;
+}
+
+function iconSvg(kind) {
+  const paths = {
+    chevron: '<path d="m9 6 6 6-6 6"/>',
+    folder: '<path d="M3.5 6h6l2 2h9v10.5h-17z"/>',
+    file: '<path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4"/>',
+    drive: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M7 15h.1M11 15h6"/>',
+    blank: "",
   };
-  applyLayout();
-  showToast("已恢复默认布局");
+  return `<svg class="tree-icon ${kind}" viewBox="0 0 24 24" aria-hidden="true">${paths[kind] || ""}</svg>`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
 
 let toastTimer;
@@ -646,87 +606,32 @@ function showToast(message) {
   toastTimer = setTimeout(() => elements.toast.classList.add("hidden"), 3200);
 }
 
-elements.createSessionButton.addEventListener("click", createSession);
+elements.createSessionButton.addEventListener("click", () => openWorkspace(elements.workspaceInput.value));
+elements.workspaceInput.addEventListener("keydown", (event) => { if (event.key === "Enter") openWorkspace(elements.workspaceInput.value); });
+elements.browseWorkspaceButton.addEventListener("click", browseWorkspace);
+document.querySelector("#emptyBrowseButton").addEventListener("click", browseWorkspace);
+elements.refreshFilesButton.addEventListener("click", loadRootFiles);
+elements.insertFileButton.addEventListener("click", insertSelectedFile);
+elements.reloadFileButton.addEventListener("click", () => state.activeFilePath && openFile(state.activeFilePath, true));
+elements.copyFileButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(state.fileCache.get(state.activeFilePath)?.content || ""); showToast("文件内容已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });
+elements.newSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
+elements.messageInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.ctrlKey) { event.preventDefault(); sendMessage(); } });
+elements.modeSelect.addEventListener("change", async () => { if (!state.sessionId || state.running) return; try { await api(`/api/sessions/${state.sessionId}/mode`, { method: "POST", body: JSON.stringify({ mode: elements.modeSelect.value }) }); showToast(`已切换为 ${elements.modeSelect.value.toUpperCase()} 模式`); } catch (error) { showToast(error.message); } });
+document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
 elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
-elements.refreshFilesButton.addEventListener("click", loadRootFiles);
+elements.copyTerminalButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(elements.terminalOutput.innerText); showToast("终端输出已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });
 elements.approveButton.addEventListener("click", () => resolveApproval(true));
 elements.denyButton.addEventListener("click", () => resolveApproval(false));
-elements.explorerRailButton.addEventListener("click", () => showLeftView("explorer"));
-elements.settingsRailButton.addEventListener("click", () => showLeftView("settings"));
-elements.traceRailButton.addEventListener("click", () => showInspector("trace"));
-elements.diffRailButton.addEventListener("click", () => showInspector("diff"));
-elements.terminalRailButton.addEventListener("click", () => {
-  state.layout.terminalOpen = !state.layout.terminalOpen;
-  applyLayout();
-});
-elements.traceTab.addEventListener("click", () => showInspector("trace"));
-elements.planTab.addEventListener("click", () => showInspector("plan"));
-elements.diffTab.addEventListener("click", () => showInspector("diff"));
-elements.closeInspectorButton.addEventListener("click", () => {
-  state.layout.inspectorOpen = false;
-  applyLayout();
-});
-elements.closeTerminalButton.addEventListener("click", () => {
-  state.layout.terminalOpen = false;
-  applyLayout();
-});
-elements.clearTerminalButton.addEventListener("click", () => {
-  elements.terminalOutput.innerHTML =
-    '<div class="terminal-line dim">终端输出已清空。</div>';
-});
-elements.copyTerminalButton.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(elements.terminalOutput.innerText);
-    showToast("终端输出已复制");
-  } catch {
-    showToast("浏览器未授予剪贴板权限");
-  }
-});
-elements.toggleInspector.addEventListener("change", () => {
-  state.layout.inspectorOpen = elements.toggleInspector.checked;
-  applyLayout();
-});
-elements.toggleTerminal.addEventListener("change", () => {
-  state.layout.terminalOpen = elements.toggleTerminal.checked;
-  applyLayout();
-});
-elements.compactDensity.addEventListener("change", () => {
-  state.layout.compact = elements.compactDensity.checked;
-  applyLayout();
-});
-elements.resetLayoutButton.addEventListener("click", resetLayout);
-elements.messageInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && event.ctrlKey) {
-    event.preventDefault();
-    sendMessage();
-  }
-});
-elements.modeSelect.addEventListener("change", async () => {
-  if (!state.sessionId || state.running) return;
-  try {
-    await api(`/api/sessions/${state.sessionId}/mode`, {
-      method: "POST",
-      body: JSON.stringify({ mode: elements.modeSelect.value }),
-    });
-    showToast(`已切换为 ${elements.modeSelect.value.toUpperCase()} 模式`);
-  } catch (error) {
-    showToast(error.message);
-  }
-});
-document.querySelectorAll("[data-prompt]").forEach((button) => {
-  button.addEventListener("click", () => {
-    if (!state.sessionId) {
-      showToast("请先打开一个本地项目");
-      elements.workspaceInput.focus();
-      return;
-    }
-    elements.messageInput.value = button.dataset.prompt;
-    elements.messageInput.focus();
-  });
-});
+elements.closeBrowserButton.addEventListener("click", closeBrowser);
+elements.cancelBrowserButton.addEventListener("click", closeBrowser);
+elements.browserBackdrop.addEventListener("click", (event) => { if (event.target === elements.browserBackdrop) closeBrowser(); });
+elements.browserUpButton.addEventListener("click", () => browseTo(state.browserParent || ""));
+elements.chooseWorkspaceButton.addEventListener("click", async () => { const selected = state.browserSelection; if (!selected) return; closeBrowser(); elements.workspaceInput.value = selected; await openWorkspace(selected); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !elements.browserBackdrop.classList.contains("hidden")) closeBrowser(); });
 
-loadLayout();
+resetEditor();
+setAssistantView("chat");
 checkHealth();

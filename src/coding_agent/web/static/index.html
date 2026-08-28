@@ -3,248 +3,82 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f7f7f5" />
+    <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/styles.css" />
     <link rel="stylesheet" href="/static/modern.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand" aria-label="Code Helper">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M7.5 8.5 4 12l3.5 3.5M16.5 8.5 20 12l-3.5 3.5M14.5 5l-5 14" /></svg>
-          </div>
-          <div class="brand-copy">
-            <strong>CODE HELPER</strong>
-            <span>Agent Workspace</span>
-          </div>
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6.5 3.5 12 8 17.5M16 6.5l4.5 5.5-4.5 5.5M14 4l-4 16" /></svg></span>
+          <span class="brand-name">Code Helper</span>
         </div>
-        <div class="topbar-center">
-          <span class="context-mark"></span>
-          <span id="workspaceTitle">未打开工作区</span>
+        <div class="workspace-switcher">
+          <button class="folder-trigger" id="browseWorkspaceButton" type="button"><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z" /></svg><span>浏览文件夹</span></button>
+          <input id="workspaceInput" aria-label="工作区路径" placeholder="选择文件夹，或粘贴本地路径" autocomplete="off" />
+          <button class="open-button" id="createSessionButton" type="button">打开工作区</button>
         </div>
-        <div class="health" id="healthBadge" role="status">
-          <span class="health-dot"></span>
-          <span>正在检查服务</span>
+        <div class="topbar-actions">
+          <label class="mode-control"><span>权限</span><select id="modeSelect" aria-label="Agent 权限模式"><option value="act">Act</option><option value="plan">Plan</option><option value="ask">Ask</option></select></label>
+          <div class="health" id="healthBadge" role="status"><i></i><span>检查服务</span></div>
         </div>
       </header>
 
-      <section class="project-strip" aria-label="工作区设置">
-        <label class="path-control">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z" /></svg>
-          <span class="sr-only">工作目录</span>
-          <input id="workspaceInput" placeholder="输入本地项目的绝对路径" autocomplete="off" />
-        </label>
-        <label class="mode-control">
-          <span>模式</span>
-          <select id="modeSelect" aria-label="Agent 模式">
-            <option value="act">ACT · 执行</option>
-            <option value="plan">PLAN · 规划</option>
-            <option value="ask">ASK · 问答</option>
-          </select>
-        </label>
-        <button class="button primary" id="createSessionButton">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          <span>打开项目</span>
-        </button>
-      </section>
-
-      <div class="workbench">
-        <nav class="activity-rail" aria-label="工作台面板">
-          <button class="rail-button active" id="explorerRailButton" aria-label="资源管理器" aria-pressed="true">
-            <svg viewBox="0 0 24 24"><path d="M4 5.5h6l2 2h8v11H4z" /></svg>
-            <span>资源管理器</span>
-          </button>
-          <button class="rail-button" id="traceRailButton" aria-label="执行轨迹" aria-pressed="false">
-            <svg viewBox="0 0 24 24"><path d="M5 6h5M5 12h9M5 18h13" /><circle cx="18" cy="6" r="2" /></svg>
-            <span>执行轨迹</span>
-          </button>
-          <button class="rail-button" id="terminalRailButton" aria-label="终端" aria-pressed="false">
-            <svg viewBox="0 0 24 24"><path d="m5 7 4 4-4 4M11 16h7" /></svg>
-            <span>终端</span>
-          </button>
-          <button class="rail-button" id="diffRailButton" aria-label="文件变化" aria-pressed="false">
-            <svg viewBox="0 0 24 24"><path d="M7 4v16M17 4v16M4 8h6M14 16h6" /></svg>
-            <span>文件变化</span>
-          </button>
-          <div class="rail-spacer"></div>
-          <button class="rail-button" id="settingsRailButton" aria-label="布局设置" aria-pressed="false">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2-.7-.7-1.7.9-1.9-2.1-2.1-1.9.9-1.7-.7-.7-2h-3l-.7 2-1.7.7-1.9-.9-2.1 2.1.9 1.9-.7 1.7-2 .7v3l2 .7.7 1.7-.9 1.9 2.1 2.1 1.9-.9 1.7.7.7 2h3l.7-2 1.7-.7 1.9.9 2.1-2.1-.9-1.9.7-1.7z" /></svg>
-            <span>布局设置</span>
-          </button>
-        </nav>
-
-        <aside class="left-dock" id="leftDock">
-          <section class="dock-view" id="explorerView">
-            <div class="dock-heading">
-              <div>
-                <span class="section-kicker">WORKSPACE</span>
-                <h2>资源管理器</h2>
-              </div>
-              <button class="icon-button" id="refreshFilesButton" aria-label="刷新文件树" disabled>
-                <svg viewBox="0 0 24 24"><path d="M19 8a7 7 0 1 0 1 6M19 4v4h-4" /></svg>
-              </button>
-            </div>
-            <div class="explorer-root" id="explorerRoot">
-              <span class="tree-status">打开项目后显示文件</span>
-            </div>
-            <p class="dock-hint">单击文件可将路径插入任务输入框。</p>
-          </section>
-
-          <section class="dock-view hidden" id="settingsView">
-            <div class="dock-heading">
-              <div>
-                <span class="section-kicker">APPEARANCE</span>
-                <h2>布局设置</h2>
-              </div>
-            </div>
-            <div class="settings-list">
-              <label class="setting-row">
-                <span><strong>右侧检查器</strong><small>轨迹与文件差异</small></span>
-                <input type="checkbox" id="toggleInspector" checked />
-              </label>
-              <label class="setting-row">
-                <span><strong>终端面板</strong><small>显示 Agent 命令输出</small></span>
-                <input type="checkbox" id="toggleTerminal" />
-              </label>
-              <label class="setting-row">
-                <span><strong>紧凑密度</strong><small>减少面板留白</small></span>
-                <input type="checkbox" id="compactDensity" />
-              </label>
-              <button class="button secondary full-width" id="resetLayoutButton">恢复默认布局</button>
-            </div>
-          </section>
-        </aside>
-
-        <main class="center-stack">
-          <section class="conversation surface">
-            <div class="surface-heading">
-              <div class="heading-copy">
-                <span class="section-kicker">AGENT THREAD</span>
-                <h1>任务与结果</h1>
-              </div>
-              <div class="run-indicator" id="runStatus">
-                <span></span>
-                <strong>未连接</strong>
-              </div>
-            </div>
-
-            <div class="message-list" id="messageList">
-              <div class="empty-state" id="emptyState">
-                <div class="empty-sigil" aria-hidden="true"><span></span><span></span><span></span></div>
-                <span class="section-kicker">LOCAL · TRACEABLE · CONTROLLED</span>
-                <h3>从一个具体的开发任务开始</h3>
-                <p>选择本地项目，Agent 会在权限边界内读取、修改并验证代码。</p>
-                <div class="prompt-suggestions" aria-label="任务示例">
-                  <button data-prompt="阅读项目结构并给出改进建议">分析项目结构</button>
-                  <button data-prompt="运行测试，定位失败原因并修复">修复失败测试</button>
-                  <button data-prompt="检查当前 Git Diff，说明改动风险">审查当前改动</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="composer">
-              <div class="composer-frame">
-                <textarea id="messageInput" rows="3" placeholder="描述目标，或从文件树添加路径…" disabled></textarea>
-                <div class="composer-toolbar">
-                  <span class="shortcut"><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span>
-                  <button class="button subtle danger" id="cancelButton" disabled>
-                    <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1" /></svg>
-                    停止
-                  </button>
-                  <button class="button primary send" id="sendButton" disabled>
-                    发送任务
-                    <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="terminal-dock surface hidden" id="terminalDock" aria-label="Agent 终端">
-            <div class="terminal-heading">
-              <div class="terminal-tab"><span></span>AGENT TERMINAL</div>
-              <div class="terminal-actions">
-                <button class="text-button" id="copyTerminalButton">复制</button>
-                <button class="text-button" id="clearTerminalButton">清空</button>
-                <button class="icon-button small" id="closeTerminalButton" aria-label="关闭终端">
-                  <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg>
-                </button>
-              </div>
-            </div>
-            <div class="terminal-output" id="terminalOutput" role="log" aria-live="polite">
-              <div class="terminal-line dim">Agent 执行的命令和输出将在这里镜像显示。</div>
-            </div>
-          </section>
-        </main>
-
-        <aside class="inspector surface" id="inspector">
-          <div class="inspector-heading">
-            <div class="inspector-tabs" role="tablist">
-              <button class="active" id="traceTab" role="tab" aria-selected="true">执行轨迹</button>
-              <button id="planTab" role="tab" aria-selected="false">任务计划</button>
-              <button id="diffTab" role="tab" aria-selected="false">文件变化</button>
-            </div>
-            <button class="icon-button small" id="closeInspectorButton" aria-label="关闭检查器">
-              <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg>
-            </button>
+      <main class="workbench">
+        <aside class="pane explorer-pane" aria-label="资源管理器">
+          <div class="pane-titlebar">
+            <div><span class="eyebrow">WORKSPACE</span><h1 id="workspaceTitle">资源管理器</h1></div>
+            <button class="icon-button" id="refreshFilesButton" type="button" aria-label="刷新文件树" disabled><svg viewBox="0 0 24 24"><path d="M19 8a7 7 0 1 0 1 6M19 4v4h-4" /></svg></button>
           </div>
-
-          <section class="inspector-pane" id="tracePane" role="tabpanel">
-            <div class="pane-meta">
-              <span>LIVE TRACE</span>
-              <span class="step-counter" id="stepCounter">STEP 0</span>
-            </div>
-            <div class="activity-list" id="activityList">
-              <div class="inspector-empty">
-                <span class="pulse-ring"></span>
-                <p>等待 Agent 开始执行</p>
-                <small>模型请求、工具调用和验证结果会实时出现。</small>
-              </div>
-            </div>
-          </section>
-
-          <section class="inspector-pane hidden" id="planPane" role="tabpanel">
-            <div class="pane-meta"><span>EXECUTION PLAN</span><span id="planProgress">0 / 0</span></div>
-            <div class="plan-list" id="planList"><div class="inspector-empty"><p>尚未生成任务计划</p><small>复杂任务开始后，Agent 会在这里展示并更新执行步骤。</small></div></div>
-          </section>
-
-          <section class="inspector-pane hidden" id="diffPane" role="tabpanel">
-            <div class="pane-meta">
-              <span>GIT DIFF</span>
-              <div class="inline-actions">
-                <button class="text-button danger-text" id="restoreButton" disabled>回滚本轮</button>
-                <button class="text-button" id="refreshDiffButton" disabled>刷新</button>
-              </div>
-            </div>
-            <pre class="diff-view" id="diffView">暂无变更</pre>
-          </section>
+          <div class="explorer-toolbar"><span id="explorerPath">尚未打开文件夹</span><button class="text-button" id="insertFileButton" type="button" disabled>引用文件</button></div>
+          <div class="file-tree" id="explorerRoot">
+            <div class="empty-compact"><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z" /></svg><p>打开一个本地文件夹</p><button class="inline-link" id="emptyBrowseButton" type="button">浏览文件夹</button></div>
+          </div>
+          <div class="pane-footer"><span>受保护文件自动隐藏</span><span>LOCAL</span></div>
         </aside>
-      </div>
 
-      <footer class="statusbar">
-        <div><span class="status-light"></span><span id="connectionLabel">LOCAL SESSION</span></div>
-        <div><span id="providerLabel">MODEL · CHECKING</span><span>UTF-8</span><span>TRACE ON</span></div>
-      </footer>
+        <section class="pane editor-pane" aria-label="代码编辑区">
+          <div class="editor-tabbar" id="editorTabs"><div class="editor-tab-placeholder">没有打开的文件</div></div>
+          <div class="editor-toolbar">
+            <div class="breadcrumbs" id="editorBreadcrumbs">选择左侧文件以预览代码</div>
+            <div class="editor-actions"><span class="language-badge" id="editorLanguage">—</span><button class="icon-button" id="copyFileButton" type="button" aria-label="复制文件内容" disabled><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V5H5v11h3" /></svg></button><button class="icon-button" id="reloadFileButton" type="button" aria-label="重新加载文件" disabled><svg viewBox="0 0 24 24"><path d="M19 8a7 7 0 1 0 1 6M19 4v4h-4" /></svg></button></div>
+          </div>
+          <div class="editor-stage" id="editorStage">
+            <div class="editor-empty" id="editorEmpty"><div class="editor-symbol" aria-hidden="true"><span>&lt;</span><i>/</i><span>&gt;</span></div><h2>代码将在这里打开</h2><p>从左侧资源管理器选择文件。你可以同时打开多个文件，并通过标签页切换。</p><div class="editor-shortcuts"><kbd>Ctrl</kbd><span>+</span><kbd>P</kbd><em>快速打开（规划中）</em></div></div>
+            <div class="code-scroll hidden" id="codeScroll"><div class="code-lines" id="codeLines"></div></div>
+          </div>
+          <div class="editor-statusbar"><span id="fileStatus">READY</span><div><span id="fileEncoding">UTF-8</span><span id="filePosition">Ln 1, Col 1</span><span id="fileSize">0 bytes</span></div></div>
+        </section>
+
+        <aside class="pane assistant-pane" aria-label="Agent 对话">
+          <div class="assistant-header"><div><span class="eyebrow">AGENT THREADS</span><h2>会话与执行</h2></div><button class="new-thread-button" id="newSessionButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>新对话</button></div>
+          <div class="thread-strip" id="sessionList"><div class="thread-empty">打开工作区后显示历史对话</div></div>
+          <nav class="assistant-tabs" aria-label="Agent 面板"><button class="active" data-view="chat" type="button">对话</button><button data-view="trace" type="button">轨迹</button><button data-view="plan" type="button">计划</button><button data-view="diff" type="button">差异</button><button data-view="terminal" type="button">终端</button></nav>
+          <div class="assistant-content">
+            <section class="assistant-view chat-view active" id="chatView"><div class="message-list" id="messageList"><div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>和你的代码一起思考</h3><p>选择工作区后，描述你希望理解、修改或验证的任务。</p></div></div><div class="composer"><textarea id="messageInput" rows="3" placeholder="向 Agent 提问，使用 @path 引用文件…" disabled></textarea><div class="composer-footer"><span><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span><div><button class="stop-button" id="cancelButton" type="button" disabled>停止</button><button class="send-button" id="sendButton" type="button" disabled aria-label="发送任务"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5" /></svg></button></div></div></div></section>
+            <section class="assistant-view" id="traceView"><div class="view-toolbar"><span>LIVE TRACE</span><strong id="stepCounter">STEP 0</strong></div><div class="activity-list" id="activityList"><div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div></div></section>
+            <section class="assistant-view" id="planView"><div class="view-toolbar"><span>EXECUTION PLAN</span><strong id="planProgress">0 / 0</strong></div><div class="plan-list" id="planList"><div class="view-empty">当前会话还没有执行计划。</div></div></section>
+            <section class="assistant-view" id="diffViewPane"><div class="view-toolbar"><span>GIT DIFF</span><div><button class="text-button danger" id="restoreButton" type="button" disabled>回滚本轮</button><button class="text-button" id="refreshDiffButton" type="button" disabled>刷新</button></div></div><pre class="diff-view" id="diffView">暂无变更</pre></section>
+            <section class="assistant-view" id="terminalView"><div class="view-toolbar"><span>AGENT TERMINAL</span><button class="text-button" id="copyTerminalButton" type="button">复制</button></div><div class="terminal-output" id="terminalOutput"><div class="terminal-line dim">Agent 执行的命令和输出将在这里镜像显示。</div></div></section>
+          </div>
+          <div class="assistant-status"><div class="run-status" id="runStatus"><i></i><span>未连接</span></div><span id="providerLabel">MODEL · CHECKING</span></div>
+        </aside>
+      </main>
     </div>
 
-    <div class="approval-backdrop hidden" id="approvalBackdrop">
-      <div class="approval-dialog surface" role="dialog" aria-modal="true" aria-labelledby="approvalTitle">
-        <div class="approval-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M12 3 3.5 19h17zM12 9v4M12 16.5v.1" /></svg>
-        </div>
-        <span class="section-kicker warning">APPROVAL REQUIRED</span>
-        <h2 id="approvalTitle">Agent 请求执行操作</h2>
-        <p id="approvalReason"></p>
-        <pre id="approvalArguments"></pre>
-        <div class="approval-actions">
-          <button class="button secondary" id="denyButton">拒绝操作</button>
-          <button class="button primary" id="approveButton">仅允许本次</button>
-        </div>
+    <div class="modal-backdrop hidden" id="browserBackdrop">
+      <div class="folder-dialog" role="dialog" aria-modal="true" aria-labelledby="folderDialogTitle">
+        <header><div><span class="eyebrow">LOCAL FILESYSTEM</span><h2 id="folderDialogTitle">打开文件夹</h2></div><button class="icon-button" id="closeBrowserButton" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
+        <div class="folder-location"><button class="icon-button" id="browserUpButton" type="button" aria-label="返回上级目录"><svg viewBox="0 0 24 24"><path d="m7 14 5-5 5 5" /></svg></button><span id="browserPath">此电脑</span></div>
+        <div class="folder-list" id="browserList"><div class="folder-loading">正在读取目录…</div></div>
+        <footer><span>双击进入文件夹</span><div><button class="dialog-secondary" id="cancelBrowserButton" type="button">取消</button><button class="dialog-primary" id="chooseWorkspaceButton" type="button" disabled>选择并打开</button></div></footer>
       </div>
     </div>
 
+    <div class="modal-backdrop hidden" id="approvalBackdrop">
+      <div class="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approvalTitle"><div class="approval-icon"><svg viewBox="0 0 24 24"><path d="M12 3 3.5 19h17zM12 9v4M12 16.5v.1" /></svg></div><span class="eyebrow warning">APPROVAL REQUIRED</span><h2 id="approvalTitle">Agent 请求执行操作</h2><p id="approvalReason"></p><pre id="approvalArguments"></pre><div class="approval-actions"><button class="dialog-secondary" id="denyButton" type="button">拒绝操作</button><button class="dialog-primary" id="approveButton" type="button">仅允许本次</button></div></div>
+    </div>
     <div class="toast hidden" id="toast" role="status"></div>
     <script src="/static/app.js" defer></script>
   </body>

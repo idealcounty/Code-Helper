@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Literal
@@ -19,6 +22,98 @@ from ..model import ModelClient, ToolCall
 from ..permissions import PermissionResult
 from ..runtime import AgentRuntime, create_runtime
 from ..tools.base import ToolError
+
+
+def _drive_roots() -> list[Path]:
+    if os.name == "nt":
+        return [
+            Path(f"{letter}:\\")
+            for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            if Path(f"{letter}:\\").exists()
+        ]
+    return [Path("/")]
+
+
+def _directory_entries(directory: Path) -> list[Path]:
+    ignored = {"$recycle.bin", "system volume information"}
+    return sorted(
+        (
+            child
+            for child in directory.iterdir()
+            if child.name.casefold() not in ignored and child.is_dir()
+        ),
+        key=lambda child: child.name.casefold(),
+    )
+
+
+def _load_event_file(path: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    events.append(json.loads(line))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return events
+
+
+def _session_summary(
+    session_id: str, events: list[dict[str, Any]], updated_at: str
+) -> dict[str, Any]:
+    first_message = "新对话"
+    preview = "尚未发送消息"
+    status = "ready"
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("type") == "turn_started" and payload.get("message"):
+            message = str(payload["message"]).strip()
+            first_message = message[:42]
+            preview = message[:72]
+            break
+    for event in reversed(events):
+        payload = event.get("payload") or {}
+        if event.get("type") == "assistant_response" and payload.get("content"):
+            preview = str(payload["content"]).strip()[:72]
+            break
+    for event in reversed(events):
+        if event.get("type") == "turn_finished":
+            status = str((event.get("payload") or {}).get("status", "ready"))
+            break
+    return {
+        "session_id": session_id,
+        "title": first_message,
+        "preview": preview,
+        "status": status,
+        "updated_at": updated_at,
+    }
+
+
+def _language_from_path(path: Path) -> str:
+    return {
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+        ".jsx": "javascriptreact",
+        ".html": "html",
+        ".css": "css",
+        ".scss": "scss",
+        ".json": "json",
+        ".md": "markdown",
+        ".toml": "toml",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".sh": "shell",
+        ".ps1": "powershell",
+        ".java": "java",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".h": "c",
+        ".hpp": "cpp",
+        ".rs": "rust",
+        ".go": "go",
+    }.get(path.suffix.casefold(), "plaintext")
 
 
 class CreateSessionRequest(BaseModel):
@@ -142,6 +237,65 @@ def create_app(
             "reasoning_effort": manager.config.reasoning_effort,
         }
 
+    @app.get("/api/fs/browse")
+    async def browse_directories(path: str = "") -> dict[str, Any]:
+        if not path:
+            return {
+                "path": "",
+                "parent": None,
+                "entries": [
+                    {"name": str(root), "path": str(root), "kind": "drive"}
+                    for root in _drive_roots()
+                ],
+            }
+        try:
+            directory = Path(path).expanduser().resolve(strict=True)
+            if not directory.is_dir():
+                raise ValueError("Path is not a directory")
+            entries = _directory_entries(directory)[:300]
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Cannot browse directory: {exc}"
+            ) from exc
+        parent = directory.parent if directory.parent != directory else None
+        return {
+            "path": str(directory),
+            "parent": str(parent) if parent else None,
+            "entries": [
+                {"name": child.name, "path": str(child), "kind": "directory"}
+                for child in entries
+            ],
+        }
+
+    @app.get("/api/workspaces/sessions")
+    async def list_workspace_sessions(workspace: str) -> dict[str, Any]:
+        try:
+            root = Path(workspace).expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not root.is_dir():
+            raise HTTPException(status_code=400, detail="Workspace is not a directory")
+
+        summaries: dict[str, dict[str, Any]] = {}
+        session_root = root / ".code-helper" / "sessions"
+        if session_root.exists():
+            for event_path in session_root.glob("*.jsonl"):
+                stat = event_path.stat()
+                updated = datetime.fromtimestamp(stat.st_mtime, UTC).isoformat()
+                summaries[event_path.stem] = _session_summary(
+                    event_path.stem, _load_event_file(event_path), updated
+                )
+        for session_id, session in manager.sessions.items():
+            if session.runtime.workspace.root != root or session_id in summaries:
+                continue
+            summaries[session_id] = _session_summary(
+                session_id, [], datetime.now(UTC).isoformat()
+            )
+        sessions = sorted(
+            summaries.values(), key=lambda item: item["updated_at"], reverse=True
+        )[:50]
+        return {"workspace": str(root), "sessions": sessions}
+
     @app.post("/api/sessions")
     async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
         try:
@@ -161,6 +315,7 @@ def create_app(
         state = session.runtime.state
         return {
             "session_id": state.session_id,
+            "workspace": str(session.runtime.workspace.root),
             "turn_id": state.turn_id,
             "status": state.status,
             "mode": state.mode,
@@ -171,6 +326,39 @@ def create_app(
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "last_error": session.last_error,
+        }
+
+    @app.get("/api/sessions/{session_id}/file")
+    async def read_workspace_file(session_id: str, path: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        workspace = session.runtime.workspace
+        try:
+            target = workspace.resolve(path, must_exist=True)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not target.is_file():
+            raise HTTPException(status_code=400, detail="Path is not a file")
+        try:
+            raw = target.read_bytes()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Cannot read file: {exc}"
+            ) from exc
+        if b"\x00" in raw[:4096]:
+            raise HTTPException(status_code=415, detail="Binary files cannot be previewed")
+        content = raw.decode("utf-8", errors="replace")
+        limit = 300_000
+        truncated = len(content) > limit
+        if truncated:
+            content = content[:limit]
+        return {
+            "name": target.name,
+            "path": workspace.relative(target),
+            "content": content,
+            "size": len(raw),
+            "line_count": len(content.splitlines()),
+            "language": _language_from_path(target),
+            "truncated": truncated,
         }
 
     @app.post("/api/sessions/{session_id}/messages", status_code=202)
