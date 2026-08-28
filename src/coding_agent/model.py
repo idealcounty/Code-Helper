@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
@@ -61,6 +62,15 @@ class ModelClient(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         reasoning_effort: str | None = None,
+    ) -> ModelResponse: ...
+
+    async def complete_stream(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+        on_delta: Callable[[str], Awaitable[None] | None],
     ) -> ModelResponse: ...
 
 
@@ -131,6 +141,71 @@ class OpenAICompatibleModelClient:
             raise ModelError(f"Model request failed: {exc}") from exc
 
         return _parse_chat_completion(response.json())
+
+    async def complete_stream(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+        on_delta: Callable[[str], Awaitable[None] | None],
+    ) -> ModelResponse:
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "tools": tools, "tool_choice": "auto", "stream": True}
+        if reasoning_effort:
+            body["reasoning_effort"] = reasoning_effort
+        if self.provider == "deepseek" and self.thinking_mode:
+            body["thinking"] = {"type": self.thinking_mode}
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        content: list[str] = []
+        reasoning: list[str] = []
+        calls: dict[int, dict[str, str]] = {}
+        usage: dict[str, Any] = {}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+                async with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=body) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        usage.update(chunk.get("usage") or {})
+                        delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
+                        piece = delta.get("content") or ""
+                        if piece:
+                            content.append(piece)
+                            callback_result = on_delta(piece)
+                            if hasattr(callback_result, "__await__"):
+                                await callback_result
+                        if delta.get("reasoning_content"):
+                            reasoning.append(delta["reasoning_content"])
+                        for index, raw_call in enumerate(delta.get("tool_calls") or []):
+                            item = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                            item["id"] += str(raw_call.get("id") or "")
+                            function = raw_call.get("function") or {}
+                            item["name"] += str(function.get("name") or "")
+                            item["arguments"] += str(function.get("arguments") or "")
+        except httpx.TimeoutException as exc:
+            raise ModelError("Model request timed out") from exc
+        except httpx.HTTPStatusError as exc:
+            raise ModelError(f"Model API returned HTTP {exc.response.status_code}: {_safe_error_detail(exc.response)}") from exc
+        except httpx.HTTPError as exc:
+            raise ModelError(f"Model request failed: {exc}") from exc
+        parsed_calls: list[ToolCall] = []
+        for item in calls.values():
+            try:
+                arguments = json.loads(item["arguments"] or "{}")
+            except json.JSONDecodeError as exc:
+                raise ModelProtocolError("Invalid streamed tool call arguments") from exc
+            parsed_calls.append(ToolCall(item["id"], item["name"], arguments))
+        if not usage:
+            usage = {}
+        return ModelResponse("".join(content), parsed_calls, usage, reasoning_content="".join(reasoning))
 
 
 def _parse_chat_completion(payload: dict[str, Any]) -> ModelResponse:

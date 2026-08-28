@@ -106,3 +106,27 @@ def test_thinking_switch_is_not_sent_to_other_compatible_providers() -> None:
     asyncio.run(client.complete(messages=[], tools=[]))
 
     assert "thinking" not in captured_body
+
+
+def test_streaming_client_emits_text_deltas() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        lines = "\n".join([
+            'data: {"choices":[{"delta":{"content":"hel"}}]}',
+            'data: {"choices":[{"delta":{"content":"lo"}}]}',
+            "data: [DONE]",
+            "",
+        ])
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=lines.encode())
+
+    client = OpenAICompatibleModelClient(
+        api_key="test-key", base_url="https://api.example/v1", model="test",
+        transport=httpx.MockTransport(handler),
+    )
+    deltas: list[str] = []
+    response = asyncio.run(client.complete_stream(messages=[], tools=[], on_delta=deltas.append))
+    assert captured["body"]["stream"] is True
+    assert deltas == ["hel", "lo"]
+    assert response.content == "hello"

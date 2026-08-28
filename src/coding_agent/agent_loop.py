@@ -127,11 +127,13 @@ class AgentRunner:
             state.status = AgentStatus.CALLING_MODEL
             await self._emit(state, "model_started", {"step": state.step})
             try:
-                response = await self.model_client.complete(
-                    messages=context.messages,
-                    tools=context.allowed_tools,
-                    reasoning_effort=state.reasoning_mode,
-                )
+                stream_method = getattr(self.model_client, "complete_stream", None)
+                if callable(stream_method):
+                    async def on_delta(delta: str) -> None:
+                        await self._emit(state, "assistant_delta", {"content": delta})
+                    response = await stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta)
+                else:
+                    response = await self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode)
             except ModelError as exc:
                 return await self._finish(state, AgentStatus.FAILED, str(exc))
 

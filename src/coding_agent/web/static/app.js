@@ -357,10 +357,14 @@ function handleEvent(event) {
       addActivity("模型处理中", "等待模型选择下一步操作");
       break;
     case "assistant_response":
+      streamingAgentMessage = null;
       if (payload.content) addMessage("agent", payload.content);
       if (payload.tool_calls?.length) {
         addActivity("模型选择工具", payload.tool_calls.map((call) => call.name).join(", "));
       }
+      break;
+    case "assistant_delta":
+      appendStreamingAgentText(payload.content || "");
       break;
     case "tool_started":
       addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments));
@@ -456,6 +460,18 @@ function addMessage(role, content) {
   body.textContent = content;
   message.append(label, body);
   elements.messageList.append(message);
+  elements.messageList.scrollTop = elements.messageList.scrollHeight;
+}
+
+let streamingAgentMessage = null;
+function appendStreamingAgentText(content) {
+  if (!content) return;
+  if (!streamingAgentMessage) {
+    streamingAgentMessage = document.createElement("div");
+    streamingAgentMessage.className = "message agent streaming";
+    elements.messageList.appendChild(streamingAgentMessage);
+  }
+  streamingAgentMessage.textContent += content;
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
