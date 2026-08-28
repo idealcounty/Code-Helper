@@ -260,6 +260,13 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .repo-rank li { display: grid; grid-template-columns: minmax(0, 1fr) 22px; align-items: center; gap: 6px; min-height: 22px; border-top: 1px solid #eceeee; color: var(--ink-soft); font-family: var(--mono); font-size: 8px; }
 .repo-rank li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-rank li b { color: var(--muted); font-weight: 600; text-align: right; }
+.memory-list { margin: 9px 0 0; padding: 0; list-style: none; }
+.memory-list li { min-height: 31px; display: grid; grid-template-columns: minmax(0, 1fr) 20px; align-items: center; gap: 6px; padding: 5px 4px; border-top: 1px solid #eceeee; color: var(--ink-soft); }
+.memory-list li.recalled { margin-inline: -4px; padding-inline: 8px; border-color: #cfe0e4; border-radius: 5px; background: var(--accent-soft); }
+.memory-list li span { min-width: 0; overflow: hidden; font-size: 8.5px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.memory-list li span b { margin-right: 6px; color: var(--accent); font-family: var(--mono); font-size: 7px; font-weight: 700; text-transform: uppercase; }
+.memory-list li em { color: var(--faint); font-family: var(--mono); font-size: 8px; font-style: normal; text-align: right; }
+.memory-list li.empty { display: block; color: var(--muted); }
 .skill-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .skill-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: #f2f4f4; font-family: var(--mono); font-size: 7.5px; }
 .skill-badge i { width: 5px; height: 5px; border: 1px solid #8f999c; border-radius: 50%; }

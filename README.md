@@ -16,11 +16,13 @@ Code Helper 是一个从零实现的本地 Coding Agent。它通过模型原生 
 - [x] Repo Map Lite 与项目 `AGENTS.md` 规则注入
 - [x] 三个项目 Skills（bug-fix、add-feature、code-review）按需加载
 - [x] 动态计划工具与 Web 计划面板
-- [ ] Session 恢复
+- [x] Session 恢复
 - [x] 上下文压缩（长输出裁剪、完整结果引用、上下文预算、历史摘要和压缩事件）
 - [x] 会话恢复、证据化报告、可选桌面窗口与 PyInstaller onedir 规格
+- [x] 项目级跨对话记忆（持久存储、显式写入、自动召回和遗忘）
 
 详细设计见 [docs/architecture.md](docs/architecture.md)。
+记忆分层、边界与后续路线见 [docs/memory.md](docs/memory.md)。
 
 ## 本地配置
 

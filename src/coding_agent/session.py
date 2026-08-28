@@ -42,6 +42,7 @@ class AgentState:
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_stats: dict[str, dict[str, int]] = field(default_factory=dict)
     context_summary: str = ""
+    recalled_memories: list[dict[str, Any]] = field(default_factory=list)
     repair_attempts: int = 0
     max_repair_attempts: int = 3
 
@@ -74,6 +75,7 @@ class AgentState:
         self.completion_rejections = 0
         self.cancel_requested = False
         self.tool_stats.clear()
+        self.recalled_memories.clear()
         self.repair_attempts = 0
 
     @property
@@ -93,6 +95,7 @@ class AgentState:
         self.tool_stats.clear()
         self.pending_approval = None
         self.context_summary = ""
+        self.recalled_memories.clear()
         self.repair_attempts = 0
         for event in events:
             payload = event.get("payload") or {}

@@ -213,6 +213,35 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert details.json()["reasoning_profile"] == "fast"
 
 
+def test_intelligence_endpoint_exposes_project_memory(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        session = app.state.session_manager.get(session_id)
+        memory = session.runtime.memory_store.remember(
+            category="decision",
+            content="Use the local Web UI as the primary interface.",
+            keywords=["web", "ui"],
+            importance=4,
+            source_session_id="older-session",
+        )
+        session.runtime.state.messages.append(
+            {"role": "user", "content": "How should the web UI work?"}
+        )
+        session.runtime.context_manager.build(session.runtime.state, [])
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence")
+
+    body = intelligence.json()["memory"]
+    assert intelligence.status_code == 200
+    assert body["count"] == 1
+    assert body["categories"]["decision"] == 1
+    assert body["recent"][0]["id"] == memory.id
+    assert body["recalled"][0]["id"] == memory.id
+
+
 class FinalAnswerModel:
     async def complete(
         self,

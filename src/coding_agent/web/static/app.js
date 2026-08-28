@@ -634,12 +634,22 @@ function renderIntelligence(data) {
   const hooks = data.hooks || {};
   const outputs = data.outputs || {};
   const cache = data.cache || {};
+  const memory = data.memory || { count: 0, categories: {}, recent: [], recalled: [] };
+  const memoryCategories = memory.categories || {};
+  const recalledIds = new Set((memory.recalled || []).map((item) => item.id));
+  const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   elements.intelligenceContent.innerHTML = `
     <section class="intelligence-section context-section">
       <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>
       <div class="budget-track"><i style="width:${percent}%"></i></div>
       <div class="intel-facts"><span>${formatNumber(context.estimated_chars || 0)} / ${formatNumber(context.max_chars || 0)} chars</span><span>${context.messages || 0} 条消息</span><span>${context.compactions || 0} 次压缩</span></div>
       ${context.summary ? `<details><summary>查看历史摘要</summary><p>${escapeHtml(context.summary)}</p></details>` : '<p class="intel-note">尚未触发历史压缩，最近原始上下文会完整保留。</p>'}
+    </section>
+    <section class="intelligence-section memory-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">MEM</span><strong>跨对话项目记忆</strong></div><b>${memory.count || 0} 条</b></div>
+      <div class="intel-facts"><span>${memoryCategories.fact || 0} 事实</span><span>${memoryCategories.decision || 0} 决策</span><span>${memoryCategories.preference || 0} 偏好</span><span>${memoryCategories.task || 0} 待办</span></div>
+      <ul class="memory-list">${memoryRows || '<li class="empty"><span>尚未保存项目长期记忆</span></li>'}</ul>
+      <p class="intel-note">本轮自动召回 ${(memory.recalled || []).length} 条；高亮项已注入当前上下文。</p>
     </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>

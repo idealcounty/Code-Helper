@@ -431,6 +431,10 @@ def create_app(
                 "truncated": repo_map["truncated"],
             },
             "skills": {"available": skills, "loaded": loaded_skills},
+            "memory": {
+                **runtime.memory_store.stats(),
+                "recalled": state.recalled_memories,
+            },
             "cache": {
                 "file_summaries": len(runtime.workspace.summary_cache),
                 "observed_files": len(runtime.workspace.observations),

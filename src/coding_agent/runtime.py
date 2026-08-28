@@ -9,6 +9,7 @@ from .config import AppConfig
 from .context import ContextManager
 from .events import EventBus, EventListener, EventStore
 from .model import ModelClient, OpenAICompatibleModelClient
+from .memory import MemoryStore
 from .permissions import PermissionPolicy
 from .session import AgentState
 from .skills import SkillLibrary
@@ -22,6 +23,7 @@ from .tools import (
     register_shell_tools,
     register_plan_tools,
     register_skill_tools,
+    register_memory_tools,
 )
 
 
@@ -37,6 +39,7 @@ class AgentRuntime:
     context_manager: ContextManager
     tool_executor: ToolExecutor
     checkpoint_manager: CheckpointManager
+    memory_store: MemoryStore
     runner: AgentRunner
 
 
@@ -66,6 +69,7 @@ def create_runtime(
 
     registry = ToolRegistry()
     skill_library = SkillLibrary(Path(__file__).resolve().parents[2] / "skills")
+    memory_store = MemoryStore(workspace.root / ".code-helper" / "memory")
     register_filesystem_tools(registry, workspace)
     register_repo_map_tool(registry, workspace)
     register_git_tools(registry, workspace)
@@ -74,6 +78,7 @@ def create_runtime(
     )
     register_plan_tools(registry, state)
     register_skill_tools(registry, skill_library)
+    register_memory_tools(registry, memory_store, state)
     client = model_client or OpenAICompatibleModelClient(
         api_key=config.api_key,
         base_url=config.base_url,
@@ -83,7 +88,11 @@ def create_runtime(
         thinking_mode=config.thinking_mode,
     )
     checkpoint_manager = CheckpointManager(workspace)
-    context_manager = ContextManager(workspace=workspace, skill_library=skill_library)
+    context_manager = ContextManager(
+        workspace=workspace,
+        skill_library=skill_library,
+        memory_store=memory_store,
+    )
     tool_executor = ToolExecutor(
         registry, result_store=workspace.root / ".code-helper" / "tool-results"
     )
@@ -108,5 +117,6 @@ def create_runtime(
         context_manager=context_manager,
         tool_executor=tool_executor,
         checkpoint_manager=checkpoint_manager,
+        memory_store=memory_store,
         runner=runner,
     )

@@ -7,6 +7,7 @@ from .shell import register_shell_tools
 from .plan import register_plan_tools
 from .skills import register_skill_tools
 from .workspace import Workspace
+from .memory import register_memory_tools
 
 __all__ = [
     "ToolRegistry",
@@ -20,4 +21,5 @@ __all__ = [
     "register_shell_tools",
     "register_plan_tools",
     "register_skill_tools",
+    "register_memory_tools",
 ]
