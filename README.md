@@ -60,6 +60,9 @@ code-helper --workspace D:\path\to\project
 
 # 本地 Web UI
 code-helper-web
+
+# 可选桌面窗口（需要 desktop extras）
+code-helper-desktop
 ```
 
 Web 服务只监听 `127.0.0.1:8765`。打开页面后输入本地项目的绝对路径，写文件和执行命令时会要求用户批准。

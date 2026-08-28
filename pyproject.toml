@@ -27,6 +27,7 @@ desktop = [
 [project.scripts]
 code-helper = "coding_agent.cli:main"
 code-helper-web = "coding_agent.web.app:main"
+code-helper-desktop = "coding_agent.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
