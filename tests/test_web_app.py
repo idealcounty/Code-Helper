@@ -42,6 +42,17 @@ def test_create_session_for_local_workspace(tmp_path: Path) -> None:
     assert details.json()["running"] is False
 
 
+def test_session_report_exposes_completion_evidence(tmp_path: Path) -> None:
+    with TestClient(create_app(_config())) as client:
+        created = client.post("/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"})
+        session_id = created.json()["session_id"]
+        report = client.get(f"/api/sessions/{session_id}/report")
+    assert report.status_code == 200
+    body = report.json()
+    assert body["session_id"] == session_id
+    assert {"verification", "tool_stats", "plan"}.issubset(body)
+
+
 def test_missing_workspace_is_rejected(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist"
     with TestClient(create_app(_config())) as client:

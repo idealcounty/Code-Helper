@@ -237,6 +237,23 @@ def create_app(
     async def get_events(session_id: str) -> list[dict[str, Any]]:
         return manager.get(session_id).runtime.event_store.load()
 
+    @app.get("/api/sessions/{session_id}/report")
+    async def get_report(session_id: str) -> dict[str, Any]:
+        """Return an evidence-focused completion report for CLI/Web consumers."""
+        state = manager.get(session_id).runtime.state
+        return {
+            "session_id": state.session_id,
+            "turn_id": state.turn_id,
+            "status": state.status,
+            "changed_files": sorted(state.changed_files),
+            "plan": state.plan,
+            "verification": {"fresh": state.verification_is_fresh, "successful_sequence": state.last_successful_verification_sequence},
+            "repair_attempts": {"used": state.repair_attempts, "max": state.max_repair_attempts},
+            "token_usage": state.token_usage,
+            "tool_stats": state.tool_stats,
+            "context_summary": state.context_summary,
+        }
+
     @app.get("/api/sessions/{session_id}/files")
     async def list_workspace_files(
         session_id: str, path: str = "."
