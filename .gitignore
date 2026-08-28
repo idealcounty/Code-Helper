@@ -11,6 +11,7 @@ __pycache__/
 .coverage
 htmlcov/
 dist/
+dist-submission/
 build/
 *.egg-info/
 .code-helper/
