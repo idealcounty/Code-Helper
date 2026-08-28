@@ -123,6 +123,11 @@ class AgentRunner:
             schemas = self._allowed_tool_schemas(state.mode)
             context = self.context_manager.build(state, schemas)
             await self._emit(state, "step_started", {"step": state.step})
+            if context.truncated:
+                await self._emit(state, "context_compacted", {
+                    "estimated_chars": context.estimated_chars,
+                    "summary": state.context_summary,
+                })
 
             state.status = AgentStatus.CALLING_MODEL
             await self._emit(state, "model_started", {"step": state.step})

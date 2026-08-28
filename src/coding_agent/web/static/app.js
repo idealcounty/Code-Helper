@@ -353,6 +353,9 @@ function handleEvent(event) {
       elements.stepCounter.textContent = `STEP ${payload.step}`;
       addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型");
       break;
+    case "context_compacted":
+      addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符，保留摘要继续执行`, "warning");
+      break;
     case "model_started":
       addActivity("模型处理中", "等待模型选择下一步操作");
       break;

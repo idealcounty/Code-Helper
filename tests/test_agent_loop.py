@@ -118,6 +118,16 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     assert "tool_result" in event_types
 
 
+def test_agent_emits_context_compaction_event(tmp_path: Path) -> None:
+    model = ScriptedModel([ModelResponse(content="done")])
+    runner, store = _make_runner(tmp_path, model)
+    runner.context_manager = ContextManager(max_messages=1)
+    state = AgentState.create(session_id="session", max_steps=2)
+    state.messages = [{"role": "user", "content": str(index)} for index in range(4)]
+    asyncio.run(runner.run_turn(state))
+    assert "context_compacted" in [event["type"] for event in store.load()]
+
+
 def test_agent_does_not_finish_with_stale_verification(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
     model = ScriptedModel(
