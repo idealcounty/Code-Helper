@@ -6,17 +6,20 @@ from typing import Any
 
 from .tools.base import ToolError, ToolResult
 from .tools.registry import ToolRegistry
+from .hooks import HookManager
 
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(self, registry: ToolRegistry, hooks: HookManager | None = None) -> None:
         self.registry = registry
+        self.hooks = hooks or HookManager()
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         started = perf_counter()
         try:
             spec = self.registry.get(name)
             spec.validate(arguments)
+            await self.hooks.before(name, arguments)
             result = await asyncio.wait_for(spec.handler(arguments), timeout=spec.timeout)
         except ToolError as exc:
             result = ToolResult.failure(exc.code, exc.message, data=exc.data)
@@ -29,5 +32,6 @@ class ToolExecutor:
                 "TOOL_INTERNAL_ERROR",
                 f"{type(exc).__name__}: {exc}",
             )
+        result = await self.hooks.after(name, arguments, result)
         result.metadata.setdefault("duration_ms", round((perf_counter() - started) * 1000))
         return result

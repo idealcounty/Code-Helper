@@ -164,6 +164,8 @@ def create_app(
             "running": session.running,
             "changed_files": sorted(state.changed_files),
             "plan": state.plan,
+            "token_usage": state.token_usage,
+            "tool_stats": state.tool_stats,
             "last_error": session.last_error,
         }
 

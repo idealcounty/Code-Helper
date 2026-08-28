@@ -39,6 +39,7 @@ class AgentState:
     completion_rejections: int = 0
     cancel_requested: bool = False
     token_usage: dict[str, int] = field(default_factory=dict)
+    tool_stats: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -68,6 +69,7 @@ class AgentState:
         self.recent_actions.clear()
         self.completion_rejections = 0
         self.cancel_requested = False
+        self.tool_stats.clear()
 
     @property
     def verification_is_fresh(self) -> bool:

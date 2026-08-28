@@ -329,6 +329,12 @@ class AgentRunner:
             {"signature": signature, "result_code": result.code}
         )
         state.recent_actions[:] = state.recent_actions[-20:]
+        stats = state.tool_stats.setdefault(call.name, {"calls": 0, "successes": 0, "failures": 0, "duration_ms": 0})
+        stats["calls"] += 1
+        stats["successes" if result.ok else "failures"] += 1
+        duration = result.metadata.get("duration_ms", 0)
+        if isinstance(duration, int):
+            stats["duration_ms"] += duration
 
         mutated_files = result.metadata.get("mutated_files", []) if result.ok else []
         if mutated_files:
@@ -363,6 +369,13 @@ class AgentRunner:
                 "message": message,
                 "changed_files": sorted(state.changed_files),
                 "token_usage": state.token_usage,
+                "tool_stats": state.tool_stats,
+                "evidence": {
+                    "changed_files": sorted(state.changed_files),
+                    "plan": state.plan,
+                    "verification_fresh": state.verification_is_fresh,
+                    "successful_verification_sequence": state.last_successful_verification_sequence,
+                },
             },
         )
         return AgentRunResult(status, message, state)
