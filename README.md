@@ -17,7 +17,8 @@ Code Helper 是一个从零实现的本地 Coding Agent。它通过模型原生 
 - [x] 三个项目 Skills（bug-fix、add-feature、code-review）按需加载
 - [x] 动态计划工具与 Web 计划面板
 - [ ] Session 恢复
-- [ ] 上下文压缩（长输出裁剪已具备，完整历史摘要仍在规划）
+- [x] 上下文压缩（长输出裁剪、完整结果引用、上下文预算、历史摘要和压缩事件）
+- [x] 会话恢复、证据化报告、可选桌面窗口与 PyInstaller onedir 规格
 
 详细设计见 [docs/architecture.md](docs/architecture.md)。
 
