@@ -9,3 +9,5 @@ Code Helper 是一个不依赖 LangChain、LangGraph 或其他 Agent SDK 的本�
 演示任务：让 Agent 读取一个 Python 文件，将指定函数改为目标行为，运行测试并查看 Diff；Act 模式下写入和命令执行需要用户批准。
 
 仓库：https://github.com/idealcounty/Code-Helper
+
+提交材料整理：在仓库根目录执行 `powershell -File packaging/prepare-submission.ps1 -Name 你的姓名 -VideoPath 演示视频.mp4`，脚本会校验 MP4/200MB 限制并仅打包 README.txt 与视频。
