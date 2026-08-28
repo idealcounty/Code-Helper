@@ -458,6 +458,22 @@ function handleEvent(event) {
   const payload = event.payload || {};
   switch (event.type) {
     case "turn_started": addMessage("user", payload.message); setRunning(true); break;
+    case "run_budget_started":
+    case "run_budget_updated":
+      refreshIntelligenceIfVisible();
+      break;
+    case "run_cancel_requested":
+      addActivity("正在停止任务", "等待当前模型请求或工具进程安全退出", "warning");
+      refreshIntelligenceIfVisible();
+      break;
+    case "run_cancelled":
+      addActivity("任务已停止", cancellationReason(payload.reason), "failure");
+      refreshIntelligenceIfVisible();
+      break;
+    case "run_budget_exhausted":
+      addActivity("运行预算已耗尽", `${payload.code || "BUDGET_EXHAUSTED"} · ${payload.message || ""}`, "warning");
+      refreshIntelligenceIfVisible();
+      break;
     case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
     case "context_compacted":
       addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning");
@@ -571,6 +587,7 @@ function showApproval(payload) {
 
 function summarizeArguments(args = {}) { return String(args.path || args.command || args.query || args.pattern || JSON.stringify(args)).slice(0, 180); }
 function statusLabel(status) { return ({ completed: "已完成", partial: "部分完成", failed: "失败", cancelled: "已停止" })[status] || status; }
+function cancellationReason(reason) { return ({ user_requested: "用户主动停止", task_cancelled: "后台任务被中止", state_cancel_requested: "会话请求停止" })[reason] || reason || "运行已取消"; }
 
 function mirrorCommandResult(result) {
   const data = result.data || {};
@@ -619,6 +636,7 @@ function refreshIntelligenceIfVisible() {
 
 function renderIntelligence(data) {
   const context = data.context || {};
+  const budget = data.budget || {};
   const repo = data.repo_map || {};
   const totals = repo.totals || {};
   const skills = data.skills || { available: [], loaded: [] };
@@ -628,6 +646,15 @@ function renderIntelligence(data) {
   const percent = Math.min(100, Math.round(((context.estimated_chars || 0) / Math.max(context.max_chars || 1, 1)) * 100));
   const successRate = toolTotals.calls ? Math.round(((toolTotals.successes || 0) / toolTotals.calls) * 100) : 0;
   const tokenTotal = usage.total_tokens ?? ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
+  const elapsedSeconds = Number(budget.elapsed_seconds || 0);
+  const maxSeconds = Number(budget.max_seconds || 0);
+  const timePercent = maxSeconds ? Math.min(100, Math.round((elapsedSeconds / maxSeconds) * 100)) : 0;
+  const tokenLimit = Number(budget.token_limit || 0);
+  const consumedTokens = Number(budget.consumed_tokens || 0);
+  const tokenPercent = tokenLimit ? Math.min(100, Math.round((consumedTokens / tokenLimit) * 100)) : 0;
+  const stepLimit = Number(budget.max_steps || 0);
+  const currentStep = Number(data.step || 0);
+  const runBudgetState = timePercent >= 100 || tokenPercent >= 100 || (stepLimit && currentStep >= stepLimit) ? "warning" : "ready";
   const skillBadges = (skills.available || []).map((skill) => `<span class="skill-badge ${loaded.has(skill.name) ? "loaded" : ""}" title="${escapeHtml(skill.description || "")}"><i></i>${escapeHtml(skill.name)}</span>`).join("");
   const topFiles = (repo.top_files || []).slice(0, 5).map((file) => `<li><span>${escapeHtml(file.path)}</span><b>${file.score}</b></li>`).join("");
   const toolRows = Object.entries(data.tool_stats || {}).sort((a, b) => (b[1].calls || 0) - (a[1].calls || 0)).slice(0, 5).map(([name, stat]) => `<div class="metric-row"><span>${escapeHtml(name)}</span><b>${stat.successes || 0}/${stat.calls || 0}</b><em>${formatDuration(stat.duration_ms || 0)}</em></div>`).join("");
@@ -643,6 +670,16 @@ function renderIntelligence(data) {
   const candidateRows = (summaryMemory.candidates || []).map((item) => `<li class="memory-candidate"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">保留</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
   const userRows = (userMemory.recent || []).map((item) => `<li><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   elements.intelligenceContent.innerHTML = `
+    <section class="intelligence-section run-budget-section ${runBudgetState}">
+      <div class="intelligence-heading"><div><span class="intel-icon">RUN</span><strong>运行预算</strong></div><b>${runBudgetState === "warning" ? "LIMIT" : "ACTIVE"}</b></div>
+      <div class="run-budget-grid">
+        <div><span>STEP</span><strong>${currentStep}<em> / ${stepLimit || "∞"}</em></strong></div>
+        <div><span>TIME</span><strong>${formatDuration(elapsedSeconds * 1000)}<em> / ${maxSeconds ? formatDuration(maxSeconds * 1000) : "∞"}</em></strong></div>
+        <div><span>TOKENS</span><strong>${formatNumber(consumedTokens)}<em> / ${tokenLimit ? formatNumber(tokenLimit) : "∞"}</em></strong></div>
+      </div>
+      <div class="budget-meter-row"><span>时间</span><div class="budget-track"><i style="width:${timePercent}%"></i></div><b>${timePercent}%</b></div>
+      ${tokenLimit ? `<div class="budget-meter-row"><span>Token</span><div class="budget-track token"><i style="width:${tokenPercent}%"></i></div><b>${tokenPercent}%</b></div>` : '<p class="intel-note">Token 预算未设上限；仍会记录供应商返回的用量。</p>'}
+    </section>
     <section class="intelligence-section context-section">
       <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>
       <div class="budget-track"><i style="width:${percent}%"></i></div>

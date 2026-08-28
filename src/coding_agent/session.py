@@ -47,6 +47,7 @@ class AgentState:
     current_objective: str = ""
     repair_attempts: int = 0
     max_repair_attempts: int = 3
+    run_budget: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -81,6 +82,7 @@ class AgentState:
         self.recalled_user_memories.clear()
         self.current_objective = ""
         self.repair_attempts = 0
+        self.run_budget.clear()
 
     @property
     def verification_is_fresh(self) -> bool:
@@ -103,6 +105,7 @@ class AgentState:
         self.recalled_user_memories.clear()
         self.current_objective = ""
         self.repair_attempts = 0
+        self.run_budget.clear()
         for event in events:
             payload = event.get("payload") or {}
             event_type = event.get("type")
@@ -148,6 +151,8 @@ class AgentState:
                 self.context_summary = str(payload.get("summary") or "")
             elif event_type == "repair_attempt":
                 self.repair_attempts = max(self.repair_attempts, int(payload.get("attempt", 0)))
+            elif event_type in {"run_budget_started", "run_budget_updated", "run_budget_exhausted"}:
+                self.run_budget = dict(payload.get("budget") or self.run_budget)
             elif event_type == "turn_finished":
                 try:
                     self.status = AgentStatus(payload.get("status", self.status))

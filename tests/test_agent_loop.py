@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from coding_agent.agent_loop import AgentRunner
+from coding_agent.agent_loop import AgentRunResult, AgentRunner
+from coding_agent.budget import RunBudget
 from coding_agent.checkpoints import CheckpointManager
 from coding_agent.context import ContextManager
 from coding_agent.events import EventBus, EventStore
@@ -40,6 +41,27 @@ class ScriptedModel:
         if not self.responses:
             raise AssertionError("Scripted model ran out of responses")
         return self.responses.popleft()
+
+
+class BlockingModel:
+    def __init__(self, delay: float = 60.0) -> None:
+        self.delay = delay
+        self.started = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+    ) -> ModelResponse:
+        self.started.set()
+        try:
+            await asyncio.sleep(self.delay)
+            return ModelResponse(content="too late")
+        finally:
+            self.closed.set()
 
 
 async def _approve_all(*_: Any) -> bool:
@@ -223,3 +245,65 @@ def test_agent_can_suspend_and_resume_approval(tmp_path: Path) -> None:
 
     completed = asyncio.run(runner.resume_approval(state, approved=True))
     assert completed.status is AgentStatus.COMPLETED
+
+
+def test_shared_cancellation_interrupts_active_model_request(tmp_path: Path) -> None:
+    async def scenario() -> tuple[AgentRunResult, list[dict[str, Any]], bool]:
+        model = BlockingModel()
+        runner, store = _make_runner(tmp_path, model)  # type: ignore[arg-type]
+        state = AgentState.create(session_id="session", max_steps=5)
+        task = asyncio.create_task(runner.run_turn(state, "wait forever"))
+        await asyncio.wait_for(model.started.wait(), timeout=1)
+        runner.cancellation.cancel("test_cancel")
+        result = await asyncio.wait_for(task, timeout=1)
+        return result, store.load(), model.closed.is_set()
+
+    result, events, closed = asyncio.run(scenario())
+
+    assert result.status is AgentStatus.CANCELLED
+    assert result.message == "RUN_CANCELLED: test_cancel"
+    assert closed is True
+    event_types = [event["type"] for event in events]
+    assert "run_cancelled" in event_types
+    assert event_types[-1] == "turn_finished"
+
+
+def test_wall_time_budget_interrupts_active_operation(tmp_path: Path) -> None:
+    async def scenario() -> tuple[AgentRunResult, list[dict[str, Any]], bool]:
+        model = BlockingModel()
+        runner, store = _make_runner(tmp_path, model)  # type: ignore[arg-type]
+        runner.run_budget = RunBudget(max_seconds=0.05, max_steps=5)
+        state = AgentState.create(session_id="session", max_steps=5)
+        result = await asyncio.wait_for(runner.run_turn(state, "slow task"), timeout=1)
+        return result, store.load(), model.closed.is_set()
+
+    result, events, closed = asyncio.run(scenario())
+
+    assert result.status is AgentStatus.PARTIAL
+    assert result.message.startswith("TIME_BUDGET_EXHAUSTED")
+    assert closed is True
+    exhausted = next(event for event in events if event["type"] == "run_budget_exhausted")
+    assert exhausted["payload"]["code"] == "TIME_BUDGET_EXHAUSTED"
+
+
+def test_token_budget_stops_before_requested_tools_execute(tmp_path: Path) -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("1", "read_file", {"path": "missing.py"})],
+                usage={"total_tokens": 10},
+            )
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    runner.run_budget = RunBudget(token_limit=10, max_steps=5)
+    state = AgentState.create(session_id="session", max_steps=5)
+
+    result = asyncio.run(runner.run_turn(state, "do not exceed budget"))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert result.message.startswith("TOKEN_BUDGET_EXHAUSTED")
+    assert state.run_budget["consumed_tokens"] == 10
+    event_types = [event["type"] for event in store.load()]
+    assert "tool_started" not in event_types
+    assert "run_budget_exhausted" in event_types

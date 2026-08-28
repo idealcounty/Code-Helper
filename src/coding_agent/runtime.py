@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 
 from .agent_loop import AgentRunner, ApprovalHandler
+from .budget import RunBudget
+from .cancellation import CancellationToken
 from .checkpoints import CheckpointManager
 from .config import AppConfig
 from .context import ContextManager
@@ -46,6 +48,8 @@ class AgentRuntime:
     memory_store: MemoryStore
     summary_store: SessionSummaryStore
     user_memory: UserMemoryService
+    cancellation: CancellationToken
+    run_budget: RunBudget
     runner: AgentRunner
 
 
@@ -89,11 +93,20 @@ def create_runtime(
         user_memory_root,
         initially_enabled=config.user_memory_enabled,
     )
+    cancellation = CancellationToken()
+    run_budget = RunBudget(
+        max_seconds=config.run_timeout,
+        token_limit=config.token_budget,
+        max_steps=config.max_steps,
+    )
     register_filesystem_tools(registry, workspace)
     register_repo_map_tool(registry, workspace)
     register_git_tools(registry, workspace)
     register_shell_tools(
-        registry, workspace, default_timeout=config.command_timeout
+        registry,
+        workspace,
+        default_timeout=config.command_timeout,
+        cancellation=cancellation,
     )
     register_plan_tools(registry, state)
     register_skill_tools(registry, skill_library)
@@ -129,6 +142,8 @@ def create_runtime(
         turn_summarizer=lambda current_state, status, outcome: summary_store.create(
             current_state, status, outcome, memory_store
         ).to_dict(),
+        cancellation=cancellation,
+        run_budget=run_budget,
     )
     return AgentRuntime(
         config=config,
@@ -144,6 +159,8 @@ def create_runtime(
         memory_store=memory_store,
         summary_store=summary_store,
         user_memory=user_memory,
+        cancellation=cancellation,
+        run_budget=run_budget,
         runner=runner,
     )
 

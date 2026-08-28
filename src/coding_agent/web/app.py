@@ -25,6 +25,15 @@ from ..runtime import AgentRuntime, create_runtime
 from ..tools.base import ToolError
 
 
+def _budget_view(runtime: AgentRuntime) -> dict[str, Any]:
+    if runtime.state.run_budget:
+        return runtime.state.run_budget
+    return {
+        **runtime.run_budget.snapshot(),
+        "max_steps": runtime.state.max_steps,
+    }
+
+
 def _drive_roots() -> list[Path]:
     if os.name == "nt":
         return [
@@ -374,6 +383,7 @@ def create_app(
             "plan": state.plan,
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
+            "budget": _budget_view(session.runtime),
             "last_error": session.last_error,
         }
 
@@ -464,6 +474,8 @@ def create_app(
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "tool_totals": tool_totals,
+            "step": state.step,
+            "budget": _budget_view(runtime),
         }
 
     @app.post("/api/sessions/{session_id}/memory/candidates/{candidate_id}")
@@ -601,8 +613,18 @@ def create_app(
     async def cancel(session_id: str) -> dict[str, Any]:
         session = manager.get(session_id)
         session.runtime.state.cancel_requested = True
+        newly_requested = session.runtime.cancellation.cancel("user_requested")
         session.approval_broker.reject_all()
-        return {"cancel_requested": True}
+        if newly_requested:
+            await session.runtime.event_bus.publish(
+                AgentEvent(
+                    type="run_cancel_requested",
+                    session_id=session.runtime.state.session_id,
+                    turn_id=session.runtime.state.turn_id,
+                    payload={"reason": "user_requested"},
+                )
+            )
+        return {"cancel_requested": True, "already_requested": not newly_requested}
 
     @app.get("/api/sessions/{session_id}/events")
     async def get_events(session_id: str) -> list[dict[str, Any]]:
@@ -611,7 +633,8 @@ def create_app(
     @app.get("/api/sessions/{session_id}/report")
     async def get_report(session_id: str) -> dict[str, Any]:
         """Return an evidence-focused completion report for CLI/Web consumers."""
-        state = manager.get(session_id).runtime.state
+        runtime = manager.get(session_id).runtime
+        state = runtime.state
         return {
             "session_id": state.session_id,
             "turn_id": state.turn_id,
@@ -623,6 +646,7 @@ def create_app(
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "context_summary": state.context_summary,
+            "budget": _budget_view(runtime),
         }
 
     @app.get("/api/sessions/{session_id}/files")

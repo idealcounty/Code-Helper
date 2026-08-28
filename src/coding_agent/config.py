@@ -21,6 +21,8 @@ class AppConfig:
     max_steps: int = 20
     request_timeout: float = 120.0
     command_timeout: float = 60.0
+    run_timeout: float = 600.0
+    token_budget: int | None = None
     user_memory_enabled: bool = False
     user_memory_dir: Path | None = None
 
@@ -51,6 +53,8 @@ class AppConfig:
             max_steps=_positive_int("CODE_HELPER_MAX_STEPS", 20),
             request_timeout=_positive_float("CODE_HELPER_REQUEST_TIMEOUT", 120.0),
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
+            run_timeout=_positive_float("CODE_HELPER_RUN_TIMEOUT", 600.0),
+            token_budget=_optional_positive_int("CODE_HELPER_TOKEN_BUDGET"),
             user_memory_enabled=_boolean("CODE_HELPER_USER_MEMORY_ENABLED", False),
             user_memory_dir=_optional_path("CODE_HELPER_USER_MEMORY_DIR"),
         )
@@ -90,6 +94,16 @@ def _positive_float(name: str, default: float) -> float:
     if raw is None:
         return default
     value = float(raw)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _optional_positive_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    value = int(raw)
     if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value

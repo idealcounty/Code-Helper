@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from coding_agent.tool_executor import ToolExecutor
+from coding_agent.cancellation import CancellationToken
 from coding_agent.tools import ToolRegistry, Workspace, register_shell_tools
 
 
@@ -27,3 +28,54 @@ def test_command_does_not_inherit_api_keys(tmp_path: Path, monkeypatch) -> None:
     assert result.ok is True
     assert result.data["stdout"].strip() == "not-present"
     assert "must-not-reach-child" not in result.data["stdout"]
+
+
+def test_cancelled_command_terminates_child_process_tree(tmp_path: Path) -> None:
+    (tmp_path / "child.py").write_text(
+        "import time\nfrom pathlib import Path\ntime.sleep(1)\nPath('child-finished').write_text('unexpected')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parent.py").write_text(
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "subprocess.Popen([sys.executable, 'child.py'])\n"
+        "Path('parent-started').write_text('ready')\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    cancellation = CancellationToken()
+    registry = ToolRegistry()
+    register_shell_tools(
+        registry,
+        Workspace(tmp_path),
+        default_timeout=10,
+        cancellation=cancellation,
+    )
+    executor = ToolExecutor(registry)
+
+    async def scenario():
+        task = asyncio.create_task(
+            executor.execute(
+                "run_command",
+                {
+                    "command": f'"{sys.executable}" parent.py',
+                    "purpose": "inspect",
+                },
+            )
+        )
+        for _ in range(100):
+            if (tmp_path / "parent-started").exists():
+                break
+            await asyncio.sleep(0.02)
+        assert (tmp_path / "parent-started").exists()
+        cancellation.cancel("test_cancel")
+        result = await asyncio.wait_for(task, timeout=5)
+        await asyncio.sleep(1.2)
+        return result
+
+    result = asyncio.run(scenario())
+
+    assert result.code == "COMMAND_CANCELLED"
+    assert result.metadata["termination"] == "cancelled"
+    assert result.metadata["process_tree_terminated"] is True
+    assert not (tmp_path / "child-finished").exists()

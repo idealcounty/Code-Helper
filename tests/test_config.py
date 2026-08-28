@@ -12,6 +12,8 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_MODEL",
     "CODE_HELPER_THINKING_MODE",
     "CODE_HELPER_REASONING_EFFORT",
+    "CODE_HELPER_RUN_TIMEOUT",
+    "CODE_HELPER_TOKEN_BUDGET",
     "DEEPSEEK_API_KEY",
 }
 
@@ -82,3 +84,14 @@ def test_reasoning_profiles_are_normalized(monkeypatch) -> None:
     assert AppConfig.from_env().reasoning_effort == "high"
     monkeypatch.setenv("CODE_HELPER_REASONING_EFFORT", "auto")
     assert AppConfig.from_env().reasoning_effort is None
+
+
+def test_run_budget_settings_are_loaded(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
+    monkeypatch.setenv("CODE_HELPER_RUN_TIMEOUT", "45.5")
+    monkeypatch.setenv("CODE_HELPER_TOKEN_BUDGET", "12000")
+
+    config = AppConfig.from_env()
+
+    assert config.run_timeout == 45.5
+    assert config.token_budget == 12000

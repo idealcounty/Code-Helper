@@ -251,6 +251,18 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .intel-icon { width: 28px; height: 21px; display: grid; place-items: center; border: 1px solid #cad4d7; border-radius: 5px; color: #54737d; background: #edf3f4; font-family: var(--mono); font-size: 7px; font-weight: 750; letter-spacing: .03em; }
 .budget-track { height: 5px; margin: 11px 0 7px; overflow: hidden; border-radius: 6px; background: #e2e6e7; }
 .budget-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5c8d9b, var(--accent)); transition: width .25s ease; }
+.run-budget-section { border-color: #cbd8da; background: linear-gradient(145deg, #fbfcfc, #f2f6f6); }
+.run-budget-section.warning { border-color: #dfcaa2; background: linear-gradient(145deg, #fffdf8, #f7f2e8); }
+.run-budget-section.warning .intelligence-heading > b { color: var(--warning); }
+.run-budget-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--line); }
+.run-budget-grid > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 8px; background: rgba(255,255,255,.74); }
+.run-budget-grid span { color: var(--faint); font-family: var(--mono); font-size: 6.5px; font-weight: 700; letter-spacing: .1em; }
+.run-budget-grid strong { overflow: hidden; font-family: var(--mono); font-size: 10px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.run-budget-grid em { color: var(--muted); font-size: 7px; font-style: normal; font-weight: 500; }
+.budget-meter-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) 28px; align-items: center; gap: 7px; margin-top: 8px; color: var(--muted); font-family: var(--mono); font-size: 7px; }
+.budget-meter-row .budget-track { margin: 0; }
+.budget-meter-row > b { color: var(--ink-soft); font-size: 7px; font-weight: 650; text-align: right; }
+.budget-track.token i { background: linear-gradient(90deg, #758e94, #315f6b); }
 .intel-facts { display: flex; flex-wrap: wrap; gap: 5px 10px; color: var(--muted); font-family: var(--mono); font-size: 7.5px; }
 .intel-note { margin: 8px 0 0; color: var(--muted); font-size: 8.5px; line-height: 1.5; }
 .intelligence-section details { margin-top: 8px; color: var(--muted); font-size: 8.5px; }

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from .checkpoints import CheckpointManager
+from .budget import BudgetExceeded, RunBudget
+from .cancellation import CancellationToken, RunCancelled
 from .context import ContextManager
 from .events import AgentEvent, EventBus
 from .model import ModelClient, ModelError, ModelResponse, ToolCall
@@ -44,6 +48,8 @@ class AgentRunner:
         approval_handler: ApprovalHandler | None = None,
         checkpoint_manager: CheckpointManager | None = None,
         turn_summarizer: TurnSummarizer | None = None,
+        cancellation: CancellationToken | None = None,
+        run_budget: RunBudget | None = None,
     ) -> None:
         self.model_client = model_client
         self.context_manager = context_manager
@@ -56,6 +62,8 @@ class AgentRunner:
         self.approval_handler = approval_handler
         self.checkpoint_manager = checkpoint_manager
         self.turn_summarizer = turn_summarizer
+        self.cancellation = cancellation or CancellationToken()
+        self.run_budget = run_budget or RunBudget()
 
     async def run_turn(
         self, state: AgentState, user_message: str | None = None
@@ -75,7 +83,10 @@ class AgentRunner:
             state.messages.append({"role": "user", "content": user_message})
             await self._emit(state, "turn_started", {"message": user_message})
 
-        return await self._run_loop(state)
+        if user_message is not None or not self.run_budget.active:
+            await self._start_run_controls(state)
+
+        return await self._run_safely(state)
 
     async def resume_approval(
         self, state: AgentState, *, approved: bool
@@ -83,6 +94,20 @@ class AgentRunner:
         pending = state.pending_approval
         if state.status is not AgentStatus.WAITING_APPROVAL or pending is None:
             raise RuntimeError("There is no pending approval")
+        if not self.run_budget.active:
+            await self._start_run_controls(state)
+
+        return await self._run_safely(
+            state, self._resume_approval(state, pending, approved=approved)
+        )
+
+    async def _resume_approval(
+        self,
+        state: AgentState,
+        pending: dict[str, Any],
+        *,
+        approved: bool,
+    ) -> AgentRunResult:
 
         state.pending_approval = None
         call = ToolCall(
@@ -117,15 +142,80 @@ class AgentRunner:
                 return outcome
         return await self._run_loop(state)
 
+    async def _start_run_controls(self, state: AgentState) -> None:
+        self.cancellation.reset()
+        state.cancel_requested = False
+        self.run_budget.start(max_steps=state.max_steps)
+        state.run_budget = self.run_budget.snapshot()
+        await self._emit(
+            state,
+            "run_budget_started",
+            {"budget": state.run_budget},
+        )
+
+    async def _run_safely(
+        self,
+        state: AgentState,
+        operation: Awaitable[AgentRunResult] | None = None,
+    ) -> AgentRunResult:
+        try:
+            return await (operation if operation is not None else self._run_loop(state))
+        except RunCancelled as exc:
+            await self._emit(
+                state,
+                "run_cancelled",
+                {"reason": exc.reason, "budget": self._update_budget_state(state)},
+            )
+            return await self._finish(
+                state,
+                AgentStatus.CANCELLED,
+                f"RUN_CANCELLED: {exc.reason}",
+            )
+        except BudgetExceeded as exc:
+            await self._emit(
+                state,
+                "run_budget_exhausted",
+                {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "budget": self._update_budget_state(state),
+                },
+            )
+            return await self._finish(
+                state,
+                AgentStatus.PARTIAL,
+                f"{exc.code}: {exc.message}",
+            )
+        except asyncio.CancelledError:
+            self.cancellation.cancel("task_cancelled")
+            state.cancel_requested = True
+            current = asyncio.current_task()
+            while current is not None and current.cancelling():
+                current.uncancel()
+            await self._emit(
+                state,
+                "run_cancelled",
+                {"reason": "task_cancelled", "budget": self._update_budget_state(state)},
+            )
+            return await self._finish(
+                state,
+                AgentStatus.CANCELLED,
+                "RUN_CANCELLED: task_cancelled",
+            )
+
     async def _run_loop(self, state: AgentState) -> AgentRunResult:
-        while state.step < state.max_steps:
-            if state.cancel_requested:
-                return await self._finish(state, AgentStatus.CANCELLED, "Cancelled")
+        while True:
+            if state.cancel_requested and not self.cancellation.requested:
+                self.cancellation.cancel("state_cancel_requested")
+            self.cancellation.raise_if_cancelled()
+            self.run_budget.check_time()
+            self.run_budget.check_step(state.step + 1)
 
             state.step += 1
             state.status = AgentStatus.BUILDING_CONTEXT
             schemas = self._allowed_tool_schemas(state.mode)
             context = self.context_manager.build(state, schemas)
+            self.run_budget.check_time()
             await self._emit(state, "step_started", {"step": state.step})
             if context.truncated:
                 await self._emit(state, "context_compacted", {
@@ -140,14 +230,24 @@ class AgentRunner:
                 if callable(stream_method):
                     async def on_delta(delta: str) -> None:
                         await self._emit(state, "assistant_delta", {"content": delta})
-                    response = await stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta)
+                    response = await self._await_controlled(
+                        stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta)
+                    )
                 else:
-                    response = await self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode)
+                    response = await self._await_controlled(
+                        self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode)
+                    )
             except ModelError as exc:
                 return await self._finish(state, AgentStatus.FAILED, str(exc))
 
             state.messages.append(response.to_assistant_message())
             self._merge_usage(state, response.usage)
+            self.run_budget.record_usage(response.usage)
+            await self._emit(
+                state,
+                "run_budget_updated",
+                {"budget": self._update_budget_state(state)},
+            )
             await self._emit(
                 state,
                 "assistant_response",
@@ -160,6 +260,7 @@ class AgentRunner:
                     "usage": response.usage,
                 },
             )
+            self.run_budget.check_tokens()
 
             if response.tool_calls:
                 outcome = await self._handle_tool_calls(state, response.tool_calls)
@@ -197,14 +298,12 @@ class AgentRunner:
                 state, "verification_required", {"reason": decision.reason}
             )
 
-        return await self._finish(
-            state, AgentStatus.PARTIAL, "Maximum agent steps reached"
-        )
-
     async def _handle_tool_calls(
         self, state: AgentState, calls: list[ToolCall]
     ) -> AgentRunResult | None:
         for index, call in enumerate(calls):
+            self.cancellation.raise_if_cancelled()
+            self.run_budget.check_time()
             try:
                 spec = self.registry.get(call.name)
                 spec.validate(call.arguments)
@@ -261,7 +360,9 @@ class AgentRunner:
                         state,
                     )
 
-                approved = await self.approval_handler(call, permission)
+                approved = await self._await_controlled(
+                    self.approval_handler(call, permission)
+                )
                 await self._emit(
                     state,
                     "approval_result",
@@ -311,8 +412,43 @@ class AgentRunner:
             "tool_started",
             {"id": call.id, "name": call.name, "arguments": call.arguments},
         )
-        result = await self.tool_executor.execute(call.name, call.arguments)
+        result = await self._await_controlled(
+            self.tool_executor.execute(call.name, call.arguments)
+        )
         await self._record_tool_result(state, call, result)
+
+    async def _await_controlled(self, operation: Awaitable[Any]) -> Any:
+        operation_task = asyncio.ensure_future(operation)
+        cancel_task = asyncio.create_task(self.cancellation.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {operation_task, cancel_task},
+                timeout=self.run_budget.remaining_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if self.cancellation.requested:
+                operation_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await operation_task
+                raise RunCancelled(self.cancellation.reason)
+            if operation_task in done:
+                return await operation_task
+            operation_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await operation_task
+            self.run_budget.check_time()
+            raise BudgetExceeded(
+                "TIME_BUDGET_EXHAUSTED",
+                "Run wall-time budget expired while an operation was active",
+            )
+        finally:
+            cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
+
+    def _update_budget_state(self, state: AgentState) -> dict[str, Any]:
+        state.run_budget = self.run_budget.snapshot()
+        return state.run_budget
 
     async def _record_tool_result(
         self, state: AgentState, call: ToolCall, result: ToolResult
@@ -389,6 +525,7 @@ class AgentRunner:
                 "changed_files": sorted(state.changed_files),
                 "token_usage": state.token_usage,
                 "tool_stats": state.tool_stats,
+                "budget": self._update_budget_state(state),
                 "evidence": {
                     "changed_files": sorted(state.changed_files),
                     "plan": state.plan,

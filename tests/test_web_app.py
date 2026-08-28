@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -234,6 +237,8 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert intelligence.json()["repo_map"]["totals"]["files_seen"] == 2
     assert len(intelligence.json()["skills"]["available"]) == 3
     assert intelligence.json()["hooks"]["pipeline_enabled"] is True
+    assert intelligence.json()["budget"]["max_seconds"] == 600.0
+    assert intelligence.json()["budget"]["max_steps"] == 20
     assert changed.json() == {"profile": "fast", "reasoning_effort": "low"}
     assert details.json()["reasoning_profile"] == "fast"
 
@@ -276,6 +281,58 @@ class FinalAnswerModel:
         reasoning_effort: str | None = None,
     ) -> ModelResponse:
         return ModelResponse(content="Hello from the self-written agent loop.")
+
+
+class BlockingWebModel:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.closed = threading.Event()
+
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+    ) -> ModelResponse:
+        self.started.set()
+        try:
+            await asyncio.sleep(60)
+            return ModelResponse(content="too late")
+        finally:
+            self.closed.set()
+
+
+def test_cancel_endpoint_interrupts_active_web_run(tmp_path: Path) -> None:
+    model = BlockingWebModel()
+    application = create_app(_config(), model_client_factory=lambda: model)
+    with TestClient(application) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = created.json()["session_id"]
+        sent = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"content": "wait forever"},
+        )
+        assert sent.status_code == 202
+        assert model.started.wait(timeout=1)
+
+        cancelled = client.post(f"/api/sessions/{session_id}/cancel")
+        deadline = time.monotonic() + 2
+        details = client.get(f"/api/sessions/{session_id}").json()
+        while details["running"] and time.monotonic() < deadline:
+            time.sleep(0.02)
+            details = client.get(f"/api/sessions/{session_id}").json()
+        events = client.get(f"/api/sessions/{session_id}/events").json()
+
+    assert cancelled.status_code == 200
+    assert details["running"] is False
+    assert details["status"] == "cancelled"
+    assert model.closed.is_set()
+    event_types = [event["type"] for event in events]
+    assert "run_cancel_requested" in event_types
+    assert "run_cancelled" in event_types
 
 
 def test_websocket_receives_agent_events(tmp_path: Path) -> None:
