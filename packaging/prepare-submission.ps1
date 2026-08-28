@@ -17,6 +17,15 @@ $size = (Get-Item -LiteralPath $video).Length
 if ($size -gt 200MB) {
     throw "The video exceeds the 200 MB submission limit ($size bytes)."
 }
+try {
+    $durationText = & ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 -- $video 2>$null
+    $duration = [double]::Parse(($durationText | Select-Object -First 1), [Globalization.CultureInfo]::InvariantCulture)
+} catch {
+    throw 'ffprobe is required to validate the video duration (install FFmpeg and retry).'
+}
+if ($duration -gt 120) {
+    throw "The video exceeds the 120-second submission limit ($([math]::Round($duration, 1)) seconds)."
+}
 $readme = Join-Path (Get-Location) 'README.txt'
 if (-not (Test-Path -LiteralPath $readme -PathType Leaf)) {
     throw 'README.txt is missing from the project root.'
@@ -33,4 +42,4 @@ Copy-Item -LiteralPath $readme -Destination (Join-Path $staging 'README.txt')
 Copy-Item -LiteralPath $video -Destination (Join-Path $staging ([IO.Path]::GetFileName($video)))
 $archive = Join-Path $OutputDirectory "$Name.zip"
 Compress-Archive -LiteralPath $staging -DestinationPath $archive -Force
-Write-Output "Created $archive with README.txt and the MP4 video only."
+Write-Output "Created $archive with README.txt and the MP4 video only ($([math]::Round($duration, 1)) seconds)."
