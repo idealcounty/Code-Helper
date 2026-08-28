@@ -74,3 +74,16 @@ def test_tool_executor_runs_pre_and_post_hooks() -> None:
     result = asyncio.run(executor.execute("update_plan", {"steps": [{"step": "x"}]}))
     assert result.ok and result.metadata["hooked"]
     assert calls == ["pre:update_plan", "post:update_plan"]
+
+
+def test_state_restores_conversation_and_plan_from_events() -> None:
+    state = AgentState.create(session_id="session-1")
+    state.restore_from_events([
+        {"type": "turn_started", "turn_id": "turn-1", "payload": {"message": "Fix it"}},
+        {"type": "plan_updated", "turn_id": "turn-1", "payload": {"plan": [{"step": "Inspect", "status": "completed"}]}},
+        {"type": "turn_finished", "turn_id": "turn-1", "payload": {"status": "completed", "token_usage": {"total_tokens": 4}}},
+    ])
+    assert state.turn_id == "turn-1"
+    assert state.messages[0]["content"] == "Fix it"
+    assert state.plan[0]["status"] == "completed"
+    assert state.token_usage["total_tokens"] == 4

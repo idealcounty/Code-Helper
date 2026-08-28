@@ -24,6 +24,7 @@ from ..tools.base import ToolError
 class CreateSessionRequest(BaseModel):
     workspace: str = Field(min_length=1)
     mode: Literal["ask", "plan", "act"] = "act"
+    session_id: str | None = None
 
 
 class MessageRequest(BaseModel):
@@ -90,7 +91,7 @@ class WebSessionManager:
     model_client_factory: Callable[[], ModelClient] | None = None
     sessions: dict[str, WebSession] = field(default_factory=dict)
 
-    def create(self, workspace: str, mode: str) -> WebSession:
+    def create(self, workspace: str, mode: str, session_id: str | None = None) -> WebSession:
         if not self.config.api_key:
             raise ValueError(
                 "API key is not configured; set DEEPSEEK_API_KEY or "
@@ -101,11 +102,14 @@ class WebSessionManager:
             config=self.config,
             workspace_path=Path(workspace),
             mode=mode,
+            session_id=session_id,
             model_client=(
                 self.model_client_factory() if self.model_client_factory else None
             ),
             approval_handler=broker.request,
         )
+        if session_id:
+            runtime.state.restore_from_events(runtime.event_store.load())
         session = WebSession(runtime=runtime, approval_broker=broker)
         self.sessions[runtime.state.session_id] = session
         return session
@@ -141,7 +145,7 @@ def create_app(
     @app.post("/api/sessions")
     async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
         try:
-            session = manager.create(request.workspace, request.mode)
+            session = manager.create(request.workspace, request.mode, request.session_id)
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         runtime = session.runtime

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -78,3 +79,53 @@ class AgentState:
             and self.last_successful_verification_sequence
             > self.last_mutation_sequence
         )
+
+    def restore_from_events(self, events: list[dict[str, Any]]) -> None:
+        """Rehydrate durable conversation and observable state after a restart."""
+        for event in events:
+            payload = event.get("payload") or {}
+            event_type = event.get("type")
+            if event.get("turn_id"):
+                self.turn_id = str(event["turn_id"])
+            if event_type == "turn_started":
+                self.messages.append({"role": "user", "content": payload.get("message", "")})
+                self.step = 0
+            elif event_type == "step_started":
+                self.step = int(payload.get("step", self.step))
+            elif event_type == "assistant_response":
+                calls = payload.get("tool_calls") or []
+                self.messages.append({
+                    "role": "assistant",
+                    "content": payload.get("content") or "",
+                    **({"tool_calls": calls} if calls else {}),
+                })
+                usage = payload.get("usage") or {}
+                for key, value in usage.items():
+                    if isinstance(value, int):
+                        self.token_usage[key] = self.token_usage.get(key, 0) + value
+            elif event_type == "tool_result":
+                result = payload.get("result") or {}
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": payload.get("id", "recovered"),
+                    "name": payload.get("name", "unknown"),
+                    "content": json.dumps(result, ensure_ascii=False),
+                })
+                name = str(payload.get("name", "unknown"))
+                stats = self.tool_stats.setdefault(name, {"calls": 0, "successes": 0, "failures": 0, "duration_ms": 0})
+                stats["calls"] += 1
+                stats["successes" if result.get("ok") else "failures"] += 1
+                duration = (result.get("metadata") or {}).get("duration_ms", 0)
+                if isinstance(duration, int):
+                    stats["duration_ms"] += duration
+                metadata = result.get("metadata") or {}
+                self.changed_files.update(map(str, metadata.get("mutated_files", [])))
+            elif event_type == "plan_updated":
+                self.plan = list(payload.get("plan") or [])
+            elif event_type == "turn_finished":
+                try:
+                    self.status = AgentStatus(payload.get("status", self.status))
+                except ValueError:
+                    pass
+                self.token_usage.update(payload.get("token_usage") or {})
+                self.tool_stats.update(payload.get("tool_stats") or {})
