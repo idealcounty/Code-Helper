@@ -33,6 +33,9 @@ class AgentRuntime:
     event_store: EventStore
     event_bus: EventBus
     registry: ToolRegistry
+    skill_library: SkillLibrary
+    context_manager: ContextManager
+    tool_executor: ToolExecutor
     checkpoint_manager: CheckpointManager
     runner: AgentRunner
 
@@ -80,11 +83,15 @@ def create_runtime(
         thinking_mode=config.thinking_mode,
     )
     checkpoint_manager = CheckpointManager(workspace)
+    context_manager = ContextManager(workspace=workspace, skill_library=skill_library)
+    tool_executor = ToolExecutor(
+        registry, result_store=workspace.root / ".code-helper" / "tool-results"
+    )
     runner = AgentRunner(
         model_client=client,
-        context_manager=ContextManager(workspace=workspace, skill_library=skill_library),
+        context_manager=context_manager,
         registry=registry,
-        tool_executor=ToolExecutor(registry, result_store=workspace.root / ".code-helper" / "tool-results"),
+        tool_executor=tool_executor,
         permission_policy=PermissionPolicy(),
         event_bus=event_bus,
         approval_handler=approval_handler,
@@ -97,6 +104,9 @@ def create_runtime(
         event_store=event_store,
         event_bus=event_bus,
         registry=registry,
+        skill_library=skill_library,
+        context_manager=context_manager,
+        tool_executor=tool_executor,
         checkpoint_manager=checkpoint_manager,
         runner=runner,
     )

@@ -18,7 +18,7 @@ const state = {
 
 const elements = Object.fromEntries([
   "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput",
-  "browseWorkspaceButton", "createSessionButton", "modeSelect",
+  "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
   "editorTabs", "editorBreadcrumbs", "editorLanguage", "copyFileButton",
   "reloadFileButton", "editorEmpty", "codeScroll", "codeLines", "fileStatus",
@@ -26,6 +26,7 @@ const elements = Object.fromEntries([
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
   "stepCounter", "activityList", "planProgress", "planList", "diffView",
   "refreshDiffButton", "restoreButton", "terminalOutput", "copyTerminalButton",
+  "refreshIntelligenceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
   "approvalBackdrop", "approvalTitle", "approvalReason", "approvalArguments",
@@ -49,6 +50,7 @@ async function checkHealth() {
     elements.healthBadge.className = `health ${health.api_key_configured ? "ready" : "error"}`;
     elements.healthBadge.lastElementChild.textContent = health.api_key_configured ? "服务就绪" : "缺少 API Key";
     elements.providerLabel.textContent = `MODEL · ${model.toUpperCase()}`;
+    if (!state.sessionId) elements.reasoningSelect.value = effortToProfile(health.reasoning_effort);
   } catch {
     elements.healthBadge.className = "health error";
     elements.healthBadge.lastElementChild.textContent = "服务离线";
@@ -60,13 +62,22 @@ function workspaceName(path) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
 }
 
+function effortToProfile(value) {
+  return ({ low: "fast", medium: "balanced", high: "deep" })[value] || "auto";
+}
+
 async function openWorkspace(workspace, sessionId = null, preserveEditor = false) {
   const candidate = String(workspace || "").trim();
   if (!candidate) return showToast("请选择一个本地文件夹");
   try {
     const result = await api("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ workspace: candidate, mode: elements.modeSelect.value, session_id: sessionId }),
+      body: JSON.stringify({
+        workspace: candidate,
+        mode: elements.modeSelect.value,
+        session_id: sessionId,
+        reasoning_profile: elements.reasoningSelect.value,
+      }),
     });
     closeSocket();
     state.sessionId = result.session_id;
@@ -77,12 +88,13 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     elements.workspaceInput.value = result.workspace;
     elements.workspaceTitle.textContent = workspaceName(result.workspace);
     elements.explorerPath.textContent = result.workspace;
+    elements.reasoningSelect.value = result.reasoning_profile || elements.reasoningSelect.value;
     enableWorkspaceControls(true);
     resetConversationSurface();
     if (!preserveEditor) resetEditor();
     setRunning(false);
     connectSocket();
-    await Promise.all([loadRootFiles(), loadWorkspaceSessions()]);
+    await Promise.all([loadRootFiles(), loadWorkspaceSessions(), loadIntelligence()]);
     showToast(sessionId ? "已切换对话" : "工作区已打开");
   } catch (error) {
     showToast(error.message);
@@ -403,7 +415,10 @@ function handleEvent(event) {
   switch (event.type) {
     case "turn_started": addMessage("user", payload.message); setRunning(true); break;
     case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
-    case "context_compacted": addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning"); break;
+    case "context_compacted":
+      addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning");
+      refreshIntelligenceIfVisible();
+      break;
     case "model_started": addActivity("模型处理中", "正在选择下一步操作"); break;
     case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
     case "assistant_response": finishAssistantResponse(payload); break;
@@ -413,6 +428,7 @@ function handleEvent(event) {
       addActivity(`${result.ok ? "完成" : "失败"} ${payload.name}`, `${result.code || ""} · ${result.message || ""}`, result.ok ? "success" : "failure");
       if (payload.name === "run_command") mirrorCommandResult(result);
       if (result.metadata?.mutated_files?.length) { state.fileCache.clear(); refreshDiff(); loadRootFiles(); if (state.activeFilePath) openFile(state.activeFilePath, true); }
+      refreshIntelligenceIfVisible();
       break;
     }
     case "plan_updated": renderPlan(payload.plan || []); addActivity("计划已更新", payload.reason || "执行步骤发生变化", "success"); break;
@@ -421,7 +437,7 @@ function handleEvent(event) {
     case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
     case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
     case "checkpoint_restored": addActivity("已回滚本轮修改", (payload.files || []).join(", "), "success"); break;
-    case "turn_finished": setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); break;
+    case "turn_finished": setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }
@@ -517,16 +533,95 @@ function setRunning(running) {
   elements.cancelButton.disabled = !running;
   elements.messageInput.disabled = running || !state.sessionId;
   elements.newSessionButton.disabled = running || !state.workspace;
+  elements.reasoningSelect.disabled = running;
   elements.runStatus.classList.toggle("running", running);
   elements.runStatus.querySelector("span").textContent = running ? "Agent 运行中" : state.sessionId ? "就绪" : "未连接";
+}
+
+async function loadIntelligence() {
+  if (!state.sessionId) return;
+  if (state.activeView === "intelligence") {
+    elements.intelligenceContent.innerHTML = '<div class="view-empty">正在分析上下文状态…</div>';
+  }
+  try {
+    const data = await api(`/api/sessions/${state.sessionId}/intelligence`);
+    renderIntelligence(data);
+  } catch (error) {
+    elements.intelligenceContent.innerHTML = `<div class="view-empty error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function refreshIntelligenceIfVisible() {
+  if (state.activeView === "intelligence") loadIntelligence();
+}
+
+function renderIntelligence(data) {
+  const context = data.context || {};
+  const repo = data.repo_map || {};
+  const totals = repo.totals || {};
+  const skills = data.skills || { available: [], loaded: [] };
+  const loaded = new Set(skills.loaded || []);
+  const toolTotals = data.tool_totals || {};
+  const usage = data.token_usage || {};
+  const percent = Math.min(100, Math.round(((context.estimated_chars || 0) / Math.max(context.max_chars || 1, 1)) * 100));
+  const successRate = toolTotals.calls ? Math.round(((toolTotals.successes || 0) / toolTotals.calls) * 100) : 0;
+  const tokenTotal = usage.total_tokens ?? ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
+  const skillBadges = (skills.available || []).map((skill) => `<span class="skill-badge ${loaded.has(skill.name) ? "loaded" : ""}" title="${escapeHtml(skill.description || "")}"><i></i>${escapeHtml(skill.name)}</span>`).join("");
+  const topFiles = (repo.top_files || []).slice(0, 5).map((file) => `<li><span>${escapeHtml(file.path)}</span><b>${file.score}</b></li>`).join("");
+  const toolRows = Object.entries(data.tool_stats || {}).sort((a, b) => (b[1].calls || 0) - (a[1].calls || 0)).slice(0, 5).map(([name, stat]) => `<div class="metric-row"><span>${escapeHtml(name)}</span><b>${stat.successes || 0}/${stat.calls || 0}</b><em>${formatDuration(stat.duration_ms || 0)}</em></div>`).join("");
+  const hooks = data.hooks || {};
+  const outputs = data.outputs || {};
+  const cache = data.cache || {};
+  elements.intelligenceContent.innerHTML = `
+    <section class="intelligence-section context-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>
+      <div class="budget-track"><i style="width:${percent}%"></i></div>
+      <div class="intel-facts"><span>${formatNumber(context.estimated_chars || 0)} / ${formatNumber(context.max_chars || 0)} chars</span><span>${context.messages || 0} 条消息</span><span>${context.compactions || 0} 次压缩</span></div>
+      ${context.summary ? `<details><summary>查看历史摘要</summary><p>${escapeHtml(context.summary)}</p></details>` : '<p class="intel-note">尚未触发历史压缩，最近原始上下文会完整保留。</p>'}
+    </section>
+    <section class="intelligence-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>
+      <div class="intel-facts"><span>${totals.files_seen || 0} 文件</span><span>${totals.python_files || 0} Python</span><span>${totals.test_files || 0} 测试</span></div>
+      <ol class="repo-rank">${topFiles || '<li><span>暂无可排名文件</span></li>'}</ol>
+    </section>
+    <section class="intelligence-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">SKL</span><strong>Skills 按需加载</strong></div><b>${loaded.size}/${(skills.available || []).length}</b></div>
+      <div class="skill-badges">${skillBadges || '<span class="intel-note">没有发现 Skill</span>'}</div>
+      <p class="intel-note">实心标记代表当前会话已调用 load_skill。</p>
+    </section>
+    <section class="intelligence-section compact-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">SYS</span><strong>管线状态</strong></div><b>${escapeHtml(data.reasoning_profile || "auto").toUpperCase()}</b></div>
+      <div class="pipeline-grid">
+        <div><strong>${cache.file_summaries || 0}</strong><span>摘要缓存</span></div>
+        <div><strong>${cache.observed_files || 0}</strong><span>文件观察</span></div>
+        <div><strong>${outputs.stored_count || 0}</strong><span>完整输出引用</span></div>
+        <div><strong>${(hooks.pre || 0) + (hooks.post || 0)}</strong><span>自定义 Hooks</span></div>
+      </div>
+      <p class="intel-note">Hook 管线${hooks.pipeline_enabled ? "已启用" : "未启用"}：${hooks.pre || 0} Pre / ${hooks.post || 0} Post。未配置时不会虚报执行。</p>
+    </section>
+    <section class="intelligence-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">MET</span><strong>本轮统计</strong></div><b>${successRate}% 成功</b></div>
+      <div class="statistics-strip"><div><strong>${formatNumber(tokenTotal)}</strong><span>Tokens</span></div><div><strong>${toolTotals.calls || 0}</strong><span>工具调用</span></div><div><strong>${formatDuration(toolTotals.duration_ms || 0)}</strong><span>工具耗时</span></div></div>
+      <div class="metric-list">${toolRows || '<p class="intel-note">本轮还没有工具调用。</p>'}</div>
+    </section>`;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-CN", { notation: value >= 10000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value || 0);
+}
+
+function formatDuration(milliseconds) {
+  if (milliseconds < 1000) return `${milliseconds}ms`;
+  return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
 function setAssistantView(view) {
   state.activeView = view;
   document.querySelectorAll(".assistant-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  const ids = { chat: "chatView", trace: "traceView", plan: "planView", diff: "diffViewPane", terminal: "terminalView" };
+  const ids = { chat: "chatView", trace: "traceView", plan: "planView", intelligence: "intelligenceView", diff: "diffViewPane", terminal: "terminalView" };
   document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[view]));
   if (view === "diff") refreshDiff();
+  if (view === "intelligence") loadIntelligence();
 }
 
 async function browseWorkspace() {
@@ -619,7 +714,24 @@ elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
 elements.messageInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.ctrlKey) { event.preventDefault(); sendMessage(); } });
 elements.modeSelect.addEventListener("change", async () => { if (!state.sessionId || state.running) return; try { await api(`/api/sessions/${state.sessionId}/mode`, { method: "POST", body: JSON.stringify({ mode: elements.modeSelect.value }) }); showToast(`已切换为 ${elements.modeSelect.value.toUpperCase()} 模式`); } catch (error) { showToast(error.message); } });
+elements.reasoningSelect.addEventListener("change", async () => {
+  if (!state.sessionId) return;
+  if (state.running) {
+    showToast("Agent 运行时不能切换推理档位");
+    return;
+  }
+  try {
+    const result = await api(`/api/sessions/${state.sessionId}/reasoning`, {
+      method: "POST",
+      body: JSON.stringify({ profile: elements.reasoningSelect.value }),
+    });
+    elements.reasoningSelect.value = result.profile;
+    showToast(`推理档位已切换为 ${result.profile.toUpperCase()}`);
+    loadIntelligence();
+  } catch (error) { showToast(error.message); }
+});
 document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
+elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
 elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
 elements.copyTerminalButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(elements.terminalOutput.innerText); showToast("终端输出已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });

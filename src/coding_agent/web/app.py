@@ -20,6 +20,7 @@ from ..config import AppConfig
 from ..events import AgentEvent
 from ..model import ModelClient, ToolCall
 from ..permissions import PermissionResult
+from ..repo_map import RepoMapBuilder
 from ..runtime import AgentRuntime, create_runtime
 from ..tools.base import ToolError
 
@@ -116,10 +117,32 @@ def _language_from_path(path: Path) -> str:
     }.get(path.suffix.casefold(), "plaintext")
 
 
+REASONING_PROFILES = {
+    "auto": None,
+    "fast": "low",
+    "balanced": "medium",
+    "deep": "high",
+}
+
+
+def _reasoning_profile(value: str | None) -> tuple[str, str | None]:
+    normalized = (value or "auto").strip().lower()
+    if normalized not in REASONING_PROFILES:
+        raise ValueError(f"Unknown reasoning profile: {value}")
+    return normalized, REASONING_PROFILES[normalized]
+
+
+def _profile_from_effort(value: str | None) -> str:
+    return {None: "auto", "low": "fast", "medium": "balanced", "high": "deep"}.get(
+        value, value or "auto"
+    )
+
+
 class CreateSessionRequest(BaseModel):
     workspace: str = Field(min_length=1)
     mode: Literal["ask", "plan", "act"] = "act"
     session_id: str | None = None
+    reasoning_profile: Literal["auto", "fast", "balanced", "deep"] = "auto"
 
 
 class MessageRequest(BaseModel):
@@ -133,6 +156,10 @@ class ApprovalRequest(BaseModel):
 
 class ModeRequest(BaseModel):
     mode: Literal["ask", "plan", "act"]
+
+
+class ReasoningRequest(BaseModel):
+    profile: Literal["auto", "fast", "balanced", "deep"]
 
 
 class ApprovalBroker:
@@ -186,7 +213,13 @@ class WebSessionManager:
     model_client_factory: Callable[[], ModelClient] | None = None
     sessions: dict[str, WebSession] = field(default_factory=dict)
 
-    def create(self, workspace: str, mode: str, session_id: str | None = None) -> WebSession:
+    def create(
+        self,
+        workspace: str,
+        mode: str,
+        session_id: str | None = None,
+        reasoning_profile: str = "auto",
+    ) -> WebSession:
         if not self.config.api_key:
             raise ValueError(
                 "API key is not configured; set DEEPSEEK_API_KEY or "
@@ -203,6 +236,7 @@ class WebSessionManager:
             ),
             approval_handler=broker.request,
         )
+        _, runtime.state.reasoning_mode = _reasoning_profile(reasoning_profile)
         if session_id:
             runtime.state.restore_from_events(runtime.event_store.load())
         session = WebSession(runtime=runtime, approval_broker=broker)
@@ -299,7 +333,12 @@ def create_app(
     @app.post("/api/sessions")
     async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
         try:
-            session = manager.create(request.workspace, request.mode, request.session_id)
+            session = manager.create(
+                request.workspace,
+                request.mode,
+                request.session_id,
+                request.reasoning_profile,
+            )
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         runtime = session.runtime
@@ -307,6 +346,7 @@ def create_app(
             "session_id": runtime.state.session_id,
             "workspace": str(runtime.workspace.root),
             "mode": runtime.state.mode,
+            "reasoning_profile": _profile_from_effort(runtime.state.reasoning_mode),
         }
 
     @app.get("/api/sessions/{session_id}")
@@ -319,6 +359,7 @@ def create_app(
             "turn_id": state.turn_id,
             "status": state.status,
             "mode": state.mode,
+            "reasoning_profile": _profile_from_effort(state.reasoning_mode),
             "step": state.step,
             "running": session.running,
             "changed_files": sorted(state.changed_files),
@@ -326,6 +367,86 @@ def create_app(
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "last_error": session.last_error,
+        }
+
+    @app.get("/api/sessions/{session_id}/intelligence")
+    async def get_intelligence(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        runtime = session.runtime
+        state = runtime.state
+        events = runtime.event_store.load()
+        loaded_skills: list[str] = []
+        compactions = 0
+        output_references: list[str] = []
+        repo_map_calls = 0
+        for event in events:
+            payload = event.get("payload") or {}
+            if event.get("type") == "context_compacted":
+                compactions += 1
+            if event.get("type") != "tool_result":
+                continue
+            result = payload.get("result") or {}
+            data = result.get("data") or {}
+            if payload.get("name") == "load_skill" and result.get("ok"):
+                name = ((data.get("skill") or {}).get("name"))
+                if name and name not in loaded_skills:
+                    loaded_skills.append(str(name))
+            if payload.get("name") == "get_repo_map":
+                repo_map_calls += 1
+            reference = data.get("result_reference")
+            if reference:
+                output_references.append(str(reference))
+
+        context_manager = runtime.context_manager
+        estimated_chars = sum(
+            len(str(message.get("content", ""))) for message in state.messages
+        )
+        repo_map = RepoMapBuilder(runtime.workspace).build(max_files=8)
+        skills = [item.to_dict() for item in runtime.skill_library.list_summaries()]
+        tool_totals = {
+            "calls": sum(item.get("calls", 0) for item in state.tool_stats.values()),
+            "successes": sum(
+                item.get("successes", 0) for item in state.tool_stats.values()
+            ),
+            "failures": sum(
+                item.get("failures", 0) for item in state.tool_stats.values()
+            ),
+            "duration_ms": sum(
+                item.get("duration_ms", 0) for item in state.tool_stats.values()
+            ),
+        }
+        return {
+            "reasoning_profile": _profile_from_effort(state.reasoning_mode),
+            "context": {
+                "estimated_chars": estimated_chars,
+                "max_chars": context_manager.max_context_chars,
+                "messages": len(state.messages),
+                "compactions": compactions,
+                "summary": state.context_summary,
+            },
+            "repo_map": {
+                "calls": repo_map_calls,
+                "totals": repo_map["totals"],
+                "top_files": repo_map["files"],
+                "truncated": repo_map["truncated"],
+            },
+            "skills": {"available": skills, "loaded": loaded_skills},
+            "cache": {
+                "file_summaries": len(runtime.workspace.summary_cache),
+                "observed_files": len(runtime.workspace.observations),
+            },
+            "outputs": {
+                "references": output_references[-8:],
+                "stored_count": len(output_references),
+            },
+            "hooks": {
+                "pipeline_enabled": True,
+                "pre": len(runtime.tool_executor.hooks.pre),
+                "post": len(runtime.tool_executor.hooks.post),
+            },
+            "token_usage": state.token_usage,
+            "tool_stats": state.tool_stats,
+            "tool_totals": tool_totals,
         }
 
     @app.get("/api/sessions/{session_id}/file")
@@ -402,6 +523,19 @@ def create_app(
             raise HTTPException(status_code=409, detail="Cannot change mode while running")
         session.runtime.state.mode = request.mode
         return {"mode": request.mode}
+
+    @app.post("/api/sessions/{session_id}/reasoning")
+    async def set_reasoning(
+        session_id: str, request: ReasoningRequest
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        if session.running:
+            raise HTTPException(
+                status_code=409, detail="Cannot change reasoning while running"
+            )
+        profile, effort = _reasoning_profile(request.profile)
+        session.runtime.state.reasoning_mode = effort
+        return {"profile": profile, "reasoning_effort": effort}
 
     @app.post("/api/sessions/{session_id}/approval")
     async def resolve_approval(

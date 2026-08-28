@@ -156,6 +156,36 @@ def test_directory_browser_and_workspace_session_listing(tmp_path: Path) -> None
     assert sessions.json()["sessions"][0]["session_id"] == created.json()["session_id"]
 
 
+def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_bytes(b"def main():\n    return 1\n")
+    (tmp_path / "test_app.py").write_bytes(b"def test_main():\n    assert True\n")
+
+    with TestClient(create_app(_config())) as client:
+        created = client.post(
+            "/api/sessions",
+            json={
+                "workspace": str(tmp_path),
+                "mode": "act",
+                "reasoning_profile": "deep",
+            },
+        )
+        session_id = created.json()["session_id"]
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence")
+        changed = client.post(
+            f"/api/sessions/{session_id}/reasoning",
+            json={"profile": "fast"},
+        )
+        details = client.get(f"/api/sessions/{session_id}")
+
+    assert created.json()["reasoning_profile"] == "deep"
+    assert intelligence.status_code == 200
+    assert intelligence.json()["repo_map"]["totals"]["files_seen"] == 2
+    assert len(intelligence.json()["skills"]["available"]) == 3
+    assert intelligence.json()["hooks"]["pipeline_enabled"] is True
+    assert changed.json() == {"profile": "fast", "reasoning_effort": "low"}
+    assert details.json()["reasoning_profile"] == "fast"
+
+
 class FinalAnswerModel:
     async def complete(
         self,
