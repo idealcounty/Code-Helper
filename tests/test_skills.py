@@ -11,6 +11,8 @@ from coding_agent.tool_executor import ToolExecutor
 from coding_agent.hooks import HookManager
 from coding_agent.tools.base import ToolResult
 from coding_agent.context import ContextManager
+from coding_agent.verifier import CompletionStatus, Verifier
+from coding_agent.model import ModelResponse
 
 
 def test_skill_library_lists_and_loads_safely(tmp_path: Path) -> None:
@@ -107,3 +109,12 @@ def test_tool_executor_persists_full_output_reference(tmp_path: Path) -> None:
     result = asyncio.run(executor.execute("run_command", {"command": "python -c \"print('x' * 13000)\"", "purpose": "inspect"}))
     assert result.ok and result.data.get("result_reference")
     assert list((tmp_path / ".code-helper" / "tool-results").glob("*.json"))
+
+
+def test_verifier_stops_after_bounded_repair_attempts() -> None:
+    state = AgentState.create()
+    state.changed_files.add("app.py")
+    state.repair_attempts = state.max_repair_attempts
+    decision = Verifier().evaluate(state, ModelResponse(content="done"))
+    assert decision.status is CompletionStatus.PARTIAL
+    assert "repair attempts" in decision.reason

@@ -37,6 +37,11 @@ class Verifier:
             )
 
         if state.changed_files and not state.verification_is_fresh:
+            if state.repair_attempts >= state.max_repair_attempts:
+                return CompletionDecision(
+                    CompletionStatus.PARTIAL,
+                    f"Verification failed after {state.max_repair_attempts} repair attempts",
+                )
             return self._continue_or_partial(
                 state,
                 "Files changed after the latest successful verification. "

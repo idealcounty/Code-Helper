@@ -399,6 +399,9 @@ function handleEvent(event) {
     case "verification_required":
       addActivity("需要验证", payload.reason, "failure");
       break;
+    case "repair_attempt":
+      addActivity(`自动修复尝试 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning");
+      break;
     case "checkpoint_created":
       addActivity("创建检查点", payload.path, "success");
       break;

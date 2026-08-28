@@ -42,6 +42,8 @@ class AgentState:
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_stats: dict[str, dict[str, int]] = field(default_factory=dict)
     context_summary: str = ""
+    repair_attempts: int = 0
+    max_repair_attempts: int = 3
 
     @classmethod
     def create(
@@ -72,6 +74,7 @@ class AgentState:
         self.completion_rejections = 0
         self.cancel_requested = False
         self.tool_stats.clear()
+        self.repair_attempts = 0
 
     @property
     def verification_is_fresh(self) -> bool:

@@ -344,6 +344,14 @@ class AgentRunner:
             state.last_mutation_sequence = event.sequence
         if result.ok and result.metadata.get("verification_passed"):
             state.last_successful_verification_sequence = event.sequence
+        if (call.name == "run_command" and result.metadata.get("purpose") == "verify"
+                and not result.metadata.get("verification_passed")):
+            state.repair_attempts += 1
+            await self._emit(state, "repair_attempt", {
+                "attempt": state.repair_attempts,
+                "max_attempts": state.max_repair_attempts,
+                "reason": result.message,
+            })
         if result.ok and result.metadata.get("plan_updated"):
             await self._emit(state, "plan_updated", {
                 "plan": state.plan, "reason": result.data.get("reason", "")
