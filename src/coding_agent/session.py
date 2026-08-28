@@ -86,6 +86,14 @@ class AgentState:
 
     def restore_from_events(self, events: list[dict[str, Any]]) -> None:
         """Rehydrate durable conversation and observable state after a restart."""
+        self.messages.clear()
+        self.plan.clear()
+        self.changed_files.clear()
+        self.token_usage.clear()
+        self.tool_stats.clear()
+        self.pending_approval = None
+        self.context_summary = ""
+        self.repair_attempts = 0
         for event in events:
             payload = event.get("payload") or {}
             event_type = event.get("type")
@@ -126,6 +134,10 @@ class AgentState:
                 self.changed_files.update(map(str, metadata.get("mutated_files", [])))
             elif event_type == "plan_updated":
                 self.plan = list(payload.get("plan") or [])
+            elif event_type == "context_compacted":
+                self.context_summary = str(payload.get("summary") or "")
+            elif event_type == "repair_attempt":
+                self.repair_attempts = max(self.repair_attempts, int(payload.get("attempt", 0)))
             elif event_type == "turn_finished":
                 try:
                     self.status = AgentStatus(payload.get("status", self.status))
