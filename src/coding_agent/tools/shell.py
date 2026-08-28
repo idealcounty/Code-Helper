@@ -53,6 +53,8 @@ def register_shell_tools(
             "purpose": purpose,
             "stdout_truncated": stdout[1],
             "stderr_truncated": stderr[1],
+            "_full_stdout": stdout[2] if stdout[1] else "",
+            "_full_stderr": stderr[2] if stderr[1] else "",
             "verification_passed": purpose == "verify" and exit_code == 0,
         }
         if exit_code == 0:
@@ -91,13 +93,13 @@ def register_shell_tools(
     )
 
 
-def _decode_and_truncate(data: bytes, limit: int = 12_000) -> tuple[str, bool]:
+def _decode_and_truncate(data: bytes, limit: int = 12_000) -> tuple[str, bool, str]:
     text = data.decode(errors="replace")
     if len(text) <= limit:
-        return text, False
+        return text, False, ""
     head = text[:8_000]
     tail = text[-4_000:]
-    return f"{head}\n\n[... output truncated ...]\n\n{tail}", True
+    return f"{head}\n\n[... output truncated ...]\n\n{tail}", True, text
 
 
 def _sanitized_environment() -> dict[str, str]:

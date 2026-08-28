@@ -84,7 +84,7 @@ def create_runtime(
         model_client=client,
         context_manager=ContextManager(workspace=workspace, skill_library=skill_library),
         registry=registry,
-        tool_executor=ToolExecutor(registry),
+        tool_executor=ToolExecutor(registry, result_store=workspace.root / ".code-helper" / "tool-results"),
         permission_policy=PermissionPolicy(),
         event_bus=event_bus,
         approval_handler=approval_handler,

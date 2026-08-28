@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from .tools.base import ToolError, ToolResult
 from .tools.registry import ToolRegistry
 from .hooks import HookManager
+from uuid import uuid4
 
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry, hooks: HookManager | None = None) -> None:
+    def __init__(self, registry: ToolRegistry, hooks: HookManager | None = None, result_store: Path | None = None) -> None:
         self.registry = registry
         self.hooks = hooks or HookManager()
+        self.result_store = result_store
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         started = perf_counter()
@@ -33,5 +37,19 @@ class ToolExecutor:
                 f"{type(exc).__name__}: {exc}",
             )
         result = await self.hooks.after(name, arguments, result)
+        self._persist_full_output(result)
         result.metadata.setdefault("duration_ms", round((perf_counter() - started) * 1000))
         return result
+
+    def _persist_full_output(self, result: ToolResult) -> None:
+        if self.result_store is None:
+            result.metadata.pop("_full_stdout", None)
+            result.metadata.pop("_full_stderr", None)
+            return
+        full = {key: result.metadata.pop(key, "") for key in ("_full_stdout", "_full_stderr")}
+        if not any(full.values()):
+            return
+        self.result_store.mkdir(parents=True, exist_ok=True)
+        reference = f"tool-result-{uuid4().hex}.json"
+        (self.result_store / reference).write_text(json.dumps(full, ensure_ascii=False), encoding="utf-8")
+        result.data["result_reference"] = str(Path(".code-helper") / "tool-results" / reference)

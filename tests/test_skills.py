@@ -4,12 +4,13 @@ from pathlib import Path
 
 from coding_agent.session import AgentState
 from coding_agent.skills import SkillLibrary
-from coding_agent.tools import ToolRegistry
+from coding_agent.tools import ToolRegistry, Workspace
 from coding_agent.tools.plan import register_plan_tools
 from coding_agent.tools.skills import register_skill_tools
 from coding_agent.tool_executor import ToolExecutor
 from coding_agent.hooks import HookManager
 from coding_agent.tools.base import ToolResult
+from coding_agent.context import ContextManager
 
 
 def test_skill_library_lists_and_loads_safely(tmp_path: Path) -> None:
@@ -87,3 +88,21 @@ def test_state_restores_conversation_and_plan_from_events() -> None:
     assert state.messages[0]["content"] == "Fix it"
     assert state.plan[0]["status"] == "completed"
     assert state.token_usage["total_tokens"] == 4
+
+
+def test_context_manager_bounds_history() -> None:
+    state = AgentState.create()
+    state.messages = [{"role": "user", "content": str(index)} for index in range(5)]
+    context = ContextManager(max_messages=2).build(state, [])
+    assert context.messages[1]["content"].startswith("Earlier context omitted")
+    assert [item["content"] for item in context.messages[-2:]] == ["3", "4"]
+
+
+def test_tool_executor_persists_full_output_reference(tmp_path: Path) -> None:
+    from coding_agent.tools.shell import register_shell_tools
+    registry = ToolRegistry()
+    register_shell_tools(registry, Workspace(tmp_path))
+    executor = ToolExecutor(registry, result_store=tmp_path / ".code-helper" / "tool-results")
+    result = asyncio.run(executor.execute("run_command", {"command": "python -c \"print('x' * 13000)\"", "purpose": "inspect"}))
+    assert result.ok and result.data.get("result_reference")
+    assert list((tmp_path / ".code-helper" / "tool-results").glob("*.json"))

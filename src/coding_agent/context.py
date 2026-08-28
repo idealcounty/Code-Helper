@@ -31,10 +31,14 @@ class ContextManager:
         *,
         workspace: Workspace | None = None,
         skill_library: SkillLibrary | None = None,
+        max_messages: int = 48,
+        max_message_chars: int = 20_000,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
         self.skill_library = skill_library
+        self.max_messages = max_messages
+        self.max_message_chars = max_message_chars
 
     def build(
         self,
@@ -56,8 +60,9 @@ class ContextManager:
         skills = self._skills_summary()
         if skills:
             system += "\n\nAvailable project skills (call load_skill only when applicable):\n" + skills
+        messages = self._bounded_messages(state.messages)
         return ModelContext(
-            messages=[{"role": "system", "content": system}, *state.messages],
+            messages=[{"role": "system", "content": system}, *messages],
             allowed_tools=tool_schemas,
         )
 
@@ -86,6 +91,22 @@ class ContextManager:
             f"- {item.name}: {item.description} (use when: {item.when_to_use})"
             for item in self.skill_library.list_summaries()
         )
+
+    def _bounded_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not messages:
+            return []
+        kept = messages[-self.max_messages:]
+        dropped = len(messages) - len(kept)
+        bounded: list[dict[str, Any]] = []
+        if dropped:
+            bounded.append({"role": "system", "content": f"Earlier context omitted: {dropped} messages. Use current files and tool results as source of truth."})
+        for message in kept:
+            item = dict(message)
+            content = item.get("content")
+            if isinstance(content, str) and len(content) > self.max_message_chars:
+                item["content"] = content[: self.max_message_chars // 2] + "\n...[message clipped]...\n" + content[-self.max_message_chars // 2 :]
+            bounded.append(item)
+        return bounded
 
 
 def _find_agent_rule_files(workspace: Workspace) -> list[Path]:
