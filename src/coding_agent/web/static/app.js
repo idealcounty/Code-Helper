@@ -617,6 +617,11 @@ function loadLayout() {
   } catch {
     localStorage.removeItem(LAYOUT_STORAGE_KEY);
   }
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    state.layout.leftOpen = false;
+    state.layout.inspectorOpen = false;
+    state.layout.terminalOpen = false;
+  }
   applyLayout({ persist: false });
 }
 

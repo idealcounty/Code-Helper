@@ -18,12 +18,16 @@ def test_health_and_static_index() -> None:
     with TestClient(create_app(_config())) as client:
         health = client.get("/api/health")
         index = client.get("/")
+        modern_styles = client.get("/static/modern.css")
 
     assert health.status_code == 200
     assert health.json()["api_key_configured"] is True
     assert health.json()["provider"] == "deepseek"
     assert index.status_code == 200
     assert "Code Helper" in index.text
+    assert 'href="/static/modern.css"' in index.text
+    assert modern_styles.status_code == 200
+    assert "silver-white engineering workspace" in modern_styles.text
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:
