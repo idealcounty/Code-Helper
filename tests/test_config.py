@@ -74,3 +74,11 @@ def test_deepseek_thinking_settings_are_loaded(tmp_path: Path, monkeypatch) -> N
 
     assert config.thinking_mode == "enabled"
     assert config.reasoning_effort == "high"
+
+
+def test_reasoning_profiles_are_normalized(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
+    monkeypatch.setenv("CODE_HELPER_REASONING_EFFORT", "deep")
+    assert AppConfig.from_env().reasoning_effort == "high"
+    monkeypatch.setenv("CODE_HELPER_REASONING_EFFORT", "auto")
+    assert AppConfig.from_env().reasoning_effort is None

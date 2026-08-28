@@ -45,9 +45,7 @@ class AppConfig:
             thinking_mode=_optional_choice(
                 "CODE_HELPER_THINKING_MODE", {"enabled", "disabled"}
             ),
-            reasoning_effort=(
-                os.getenv("CODE_HELPER_REASONING_EFFORT", "").strip() or None
-            ),
+            reasoning_effort=_reasoning_effort(),
             max_steps=_positive_int("CODE_HELPER_MAX_STEPS", 20),
             request_timeout=_positive_float("CODE_HELPER_REQUEST_TIMEOUT", 120.0),
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
@@ -62,6 +60,15 @@ def _optional_choice(name: str, choices: set[str]) -> str | None:
         allowed = ", ".join(sorted(choices))
         raise ValueError(f"{name} must be one of: {allowed}")
     return value
+
+
+def _reasoning_effort() -> str | None:
+    """Accept user-facing profiles while keeping provider values normalized."""
+    value = os.getenv("CODE_HELPER_REASONING_EFFORT", "").strip().lower()
+    if not value or value == "auto":
+        return None
+    profiles = {"fast": "low", "balanced": "medium", "deep": "high"}
+    return profiles.get(value, value)
 
 
 def _positive_int(name: str, default: int) -> int:
