@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -14,7 +14,7 @@ from uuid import uuid4
 MEMORY_CATEGORIES = {"fact", "decision", "preference", "task"}
 _ASCII_TERM = re.compile(r"[a-z0-9_./-]+", re.IGNORECASE)
 _CHINESE_RUN = re.compile(r"[\u4e00-\u9fff]+")
-_STORE_LOCKS: dict[Path, Lock] = {}
+_STORE_LOCKS: dict[Path, RLock] = {}
 _STORE_LOCKS_GUARD = Lock()
 
 
@@ -58,7 +58,7 @@ class MemoryStore:
         self.scope = scope
         resolved = self.path.resolve()
         with _STORE_LOCKS_GUARD:
-            self._lock = _STORE_LOCKS.setdefault(resolved, Lock())
+            self._lock = _STORE_LOCKS.setdefault(resolved, RLock())
 
     def remember(
         self,
@@ -90,63 +90,94 @@ class MemoryStore:
         scope = scope or self.scope
         if scope != self.scope:
             raise ValueError(f"Cannot write {scope} memory into a {self.scope} memory store")
-        now = datetime.now(UTC).isoformat()
-        existing = self.get(memory_id) if memory_id else None
-        if memory_id and existing is None:
-            raise ValueError(f"Unknown project memory: {memory_id}")
-        if existing is None:
-            existing = next(
-                (
-                    item
-                    for item in self.list(limit=500)
-                    if item.category == category and item.content.casefold() == content.casefold()
-                ),
-                None,
+        with self._lock:
+            now = datetime.now(UTC).isoformat()
+            active, _, _ = self._load()
+            existing = active.get(memory_id) if memory_id else None
+            if memory_id and existing is None:
+                raise ValueError(f"Unknown project memory: {memory_id}")
+            if existing is None:
+                existing = next(
+                    (
+                        item
+                        for item in active.values()
+                        if item.category == category
+                        and item.content.casefold() == content.casefold()
+                    ),
+                    None,
+                )
+                if existing:
+                    memory_id = existing.id
+            memory = ProjectMemory(
+                id=memory_id or uuid4().hex,
+                category=category,
+                content=content,
+                keywords=normalized_keywords,
+                importance=importance,
+                source_session_id=source_session_id,
+                source_turn_id=source_turn_id,
+                created_at=existing.created_at if existing else now,
+                updated_at=now,
+                subject=subject,
+                file_paths=normalized_paths,
+                symbols=normalized_symbols,
+                scope=scope,
             )
-            if existing:
-                memory_id = existing.id
-        memory = ProjectMemory(
-            id=memory_id or uuid4().hex,
-            category=category,
-            content=content,
-            keywords=normalized_keywords,
-            importance=importance,
-            source_session_id=source_session_id,
-            source_turn_id=source_turn_id,
-            created_at=existing.created_at if existing else now,
-            updated_at=now,
-            subject=subject,
-            file_paths=normalized_paths,
-            symbols=normalized_symbols,
-            scope=scope,
-        )
-        self._append({"operation": "upsert", **memory.to_dict()})
-        return memory
+            self._append({"operation": "upsert", **memory.to_dict()})
+            return memory
 
     def forget(self, memory_id: str) -> bool:
-        memory = self.get(memory_id)
-        if memory is None:
-            return False
-        self._append(
-            {
-                "operation": "delete",
-                "id": memory_id,
-                "deleted_at": datetime.now(UTC).isoformat(),
-            }
-        )
-        return True
+        with self._lock:
+            active, _, _ = self._load()
+            if memory_id not in active:
+                return False
+            self._append(
+                {
+                    "operation": "delete",
+                    "id": memory_id,
+                    "scope": self.scope,
+                    "deleted_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            return True
+
+    def clear(self) -> int:
+        """Deactivate every active memory while preserving the audit log."""
+        with self._lock:
+            active, _, _ = self._load()
+            deleted_at = datetime.now(UTC).isoformat()
+            for memory_id in active:
+                self._append(
+                    {
+                        "operation": "delete",
+                        "id": memory_id,
+                        "scope": self.scope,
+                        "deleted_at": deleted_at,
+                    }
+                )
+            return len(active)
 
     def get(self, memory_id: str | None) -> ProjectMemory | None:
         if not memory_id:
             return None
-        return self._active().get(memory_id)
+        with self._lock:
+            active, _, _ = self._load()
+            return active.get(memory_id)
 
-    def list(self, *, category: str | None = None, limit: int = 100) -> list[ProjectMemory]:
-        memories = list(self._active().values())
-        if category:
-            memories = [item for item in memories if item.category == category]
-        memories.sort(key=lambda item: (item.importance, item.updated_at), reverse=True)
-        return memories[: max(0, min(limit, 500))]
+    def list(
+        self, *, category: str | None = None, limit: int | None = 100
+    ) -> list[ProjectMemory]:
+        with self._lock:
+            active, _, _ = self._load()
+            memories = list(active.values())
+            if category:
+                memories = [item for item in memories if item.category == category]
+            memories.sort(
+                key=lambda item: (item.importance, item.updated_at), reverse=True
+            )
+            if limit is None:
+                return memories
+            return memories[: max(0, min(limit, 500))]
 
     def search(
         self,
@@ -182,21 +213,37 @@ class MemoryStore:
     ) -> list[dict[str, Any]]:
         candidates = self.list(category=category, limit=500)
         if file_path:
-            needle = file_path.casefold()
-            candidates = [item for item in candidates if any(needle in value.casefold() for value in item.file_paths)]
+            needle = file_path.strip().replace("\\", "/").casefold()
+            candidates = [
+                item
+                for item in candidates
+                if any(needle == value.casefold() for value in item.file_paths)
+            ]
         if symbol:
             needle = symbol.casefold()
             candidates = [item for item in candidates if any(needle == value.casefold() for value in item.symbols)]
         if source_session_id:
             candidates = [item for item in candidates if item.source_session_id == source_session_id]
         query = query.strip()
+        result_limit = max(0, min(limit, 50))
         if not query:
-            selected = candidates[: max(0, min(limit, 50))]
-            return self._annotate(selected, {item.id: (0.0, 0.0, item.importance * 0.35) for item in selected})
+            selected = candidates[:result_limit]
+            return self._annotate(
+                selected,
+                {
+                    item.id: (
+                        0.0,
+                        0.0,
+                        _recency_score(item.updated_at),
+                        item.importance * 0.35 + _recency_score(item.updated_at),
+                    )
+                    for item in selected
+                },
+            )
         query_terms = _terms(query)
         lowered_query = query.casefold()
         query_vector = self._embedding(query)
-        scored: list[tuple[float, float, float, ProjectMemory]] = []
+        scored: list[tuple[float, float, float, float, ProjectMemory]] = []
         for memory in candidates:
             searchable = f"{memory.content} {' '.join(memory.keywords)} {memory.subject} {' '.join(memory.file_paths)} {' '.join(memory.symbols)}".casefold()
             memory_terms = _terms(searchable)
@@ -205,13 +252,27 @@ class MemoryStore:
             keyword_bonus = sum(2 for keyword in memory.keywords if keyword.casefold() in lowered_query)
             lexical = float(overlap * 3 + exact_bonus + keyword_bonus)
             semantic = _cosine(query_vector, self._embedding(searchable)) if query_vector else 0.0
-            score = lexical + semantic * 6 + memory.importance * 0.35
+            recency = _recency_score(memory.updated_at)
+            score = lexical + semantic * 6 + memory.importance * 0.35 + recency
             if lexical > 0 or semantic > 0.15:
-                scored.append((score, lexical, semantic, memory))
-        scored.sort(key=lambda item: (item[0], item[3].updated_at), reverse=True)
-        selected = scored[: max(0, min(limit, 50))]
-        scores = {item.id: (lexical, semantic, score) for score, lexical, semantic, item in selected}
-        return self._annotate([item for _, _, _, item in selected], scores)
+                scored.append((score, lexical, semantic, recency, memory))
+        scored.sort(key=lambda item: (item[0], item[4].updated_at), reverse=True)
+        selected = _select_with_conflicts(scored, candidates, result_limit)
+        scores = {
+            item.id: (lexical, semantic, recency, score)
+            for score, lexical, semantic, recency, item in scored
+        }
+        for item in selected:
+            scores.setdefault(
+                item.id,
+                (
+                    0.0,
+                    0.0,
+                    _recency_score(item.updated_at),
+                    item.importance * 0.35 + _recency_score(item.updated_at),
+                ),
+            )
+        return self._annotate(selected, scores)
 
     def _embedding(self, value: str) -> list[float] | None:
         if self.embedding_provider is None:
@@ -225,9 +286,9 @@ class MemoryStore:
     def _annotate(
         self,
         memories: list[ProjectMemory],
-        scores: dict[str, tuple[float, float, float]],
+        scores: dict[str, tuple[float, float, float, float]],
     ) -> list[dict[str, Any]]:
-        active = self.list(limit=500)
+        active = self.list(limit=None)
         groups: dict[tuple[str, str], list[ProjectMemory]] = {}
         for item in active:
             if item.subject:
@@ -238,12 +299,15 @@ class MemoryStore:
                 other for other in groups.get((item.category, item.subject.casefold()), [])
                 if other.id != item.id and other.content.casefold() != item.content.casefold()
             ] if item.subject else []
-            lexical, semantic, score = scores.get(item.id, (0.0, 0.0, 0.0))
+            lexical, semantic, recency, score = scores.get(
+                item.id, (0.0, 0.0, 0.0, 0.0)
+            )
             detailed.append({
                 **item.to_dict(),
                 "memory": item,
                 "lexical_score": round(lexical, 4),
                 "semantic_score": round(semantic, 4),
+                "recency_score": round(recency, 4),
                 "score": round(score, 4),
                 "conflict_ids": [other.id for other in sorted(conflicts, key=lambda value: value.updated_at, reverse=True)],
                 "is_latest_for_subject": not conflicts or item.updated_at >= max(other.updated_at for other in conflicts),
@@ -266,13 +330,18 @@ class MemoryStore:
         return "missing"
 
     def stats(self) -> dict[str, Any]:
-        memories = self.list(limit=500)
+        with self._lock:
+            active, record_count, invalid_records = self._load()
+        memories = list(active.values())
+        memories.sort(key=lambda item: (item.importance, item.updated_at), reverse=True)
         categories = {category: 0 for category in sorted(MEMORY_CATEGORIES)}
         for memory in memories:
             categories[memory.category] += 1
         return {
             "count": len(memories),
             "categories": categories,
+            "audit_records": record_count,
+            "invalid_records": invalid_records,
             "recent": [item.to_dict() for item in sorted(memories, key=lambda item: item.updated_at, reverse=True)[:5]],
         }
 
@@ -283,41 +352,37 @@ class MemoryStore:
             handle.write(line + "\n")
             handle.flush()
 
-    def _active(self) -> dict[str, ProjectMemory]:
+    def _load(self) -> tuple[dict[str, ProjectMemory], int, int]:
         active: dict[str, ProjectMemory] = {}
         if not self.path.exists():
-            return active
+            return active, 0, 0
         try:
             lines = self.path.read_text(encoding="utf-8").splitlines()
         except OSError:
-            return active
+            return active, 0, 0
+        invalid_records = 0
         for line in lines:
             try:
                 record = json.loads(line)
-                memory_id = str(record["id"])
+                if not isinstance(record, dict):
+                    raise ValueError("Memory record must be an object")
+                memory_id = str(record["id"]).strip()
+                if not memory_id:
+                    raise ValueError("Memory id cannot be empty")
                 if record.get("operation") == "delete":
+                    if record.get("scope", self.scope) != self.scope:
+                        raise ValueError("Memory scope does not match store scope")
                     active.pop(memory_id, None)
                     continue
                 if record.get("operation") != "upsert":
-                    continue
-                active[memory_id] = ProjectMemory(
-                    id=memory_id,
-                    category=str(record["category"]),
-                    content=str(record["content"]),
-                    keywords=[str(item) for item in record.get("keywords", [])],
-                    importance=int(record.get("importance", 3)),
-                    source_session_id=str(record.get("source_session_id", "")),
-                    source_turn_id=str(record.get("source_turn_id", "")),
-                    created_at=str(record["created_at"]),
-                    updated_at=str(record["updated_at"]),
-                    subject=str(record.get("subject", "")),
-                    file_paths=[str(item) for item in record.get("file_paths", [])],
-                    symbols=[str(item) for item in record.get("symbols", [])],
-                    scope=str(record.get("scope", "project")),
-                )
+                    raise ValueError("Unknown memory operation")
+                memory = _memory_from_record(memory_id, record)
+                if memory.scope != self.scope:
+                    raise ValueError("Memory scope does not match store scope")
+                active[memory_id] = memory
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                continue
-        return active
+                invalid_records += 1
+        return active, len(lines), invalid_records
 
 
 def _normalize_keywords(values: list[str]) -> list[str]:
@@ -344,6 +409,101 @@ def _normalize_metadata(values: list[str], label: str) -> list[str]:
         if item not in normalized:
             normalized.append(item)
     return normalized
+
+
+def _memory_from_record(memory_id: str, record: dict[str, Any]) -> ProjectMemory:
+    category = record["category"]
+    content = record["content"]
+    importance = record.get("importance", 3)
+    if not isinstance(category, str) or category not in MEMORY_CATEGORIES:
+        raise ValueError("Invalid stored memory category")
+    if not isinstance(content, str) or not content or len(content) > 2_000:
+        raise ValueError("Invalid stored memory content")
+    if (
+        not isinstance(importance, int)
+        or isinstance(importance, bool)
+        or not 1 <= importance <= 5
+    ):
+        raise ValueError("Invalid stored memory importance")
+    keywords = _normalize_keywords(record.get("keywords", []))
+    file_paths = _normalize_metadata(record.get("file_paths", []), "file path")
+    symbols = _normalize_metadata(record.get("symbols", []), "symbol")
+    subject = record.get("subject", "")
+    scope = record.get("scope", "project")
+    created_at = record["created_at"]
+    updated_at = record["updated_at"]
+    if not isinstance(subject, str) or len(subject) > 200:
+        raise ValueError("Invalid stored memory subject")
+    if scope not in {"project", "user"}:
+        raise ValueError("Invalid stored memory scope")
+    if not isinstance(created_at, str) or not isinstance(updated_at, str):
+        raise ValueError("Invalid stored memory timestamp")
+    datetime.fromisoformat(created_at)
+    datetime.fromisoformat(updated_at)
+    return ProjectMemory(
+        id=memory_id,
+        category=category,
+        content=content,
+        keywords=keywords,
+        importance=importance,
+        source_session_id=str(record.get("source_session_id", "")),
+        source_turn_id=str(record.get("source_turn_id", "")),
+        created_at=created_at,
+        updated_at=updated_at,
+        subject=subject,
+        file_paths=file_paths,
+        symbols=symbols,
+        scope=scope,
+    )
+
+
+def _select_with_conflicts(
+    scored: list[tuple[float, float, float, float, ProjectMemory]],
+    candidates: list[ProjectMemory],
+    limit: int,
+) -> list[ProjectMemory]:
+    if limit <= 0:
+        return []
+    groups: dict[tuple[str, str], list[ProjectMemory]] = {}
+    for item in candidates:
+        if item.subject:
+            groups.setdefault((item.category, item.subject.casefold()), []).append(item)
+    selected: list[ProjectMemory] = []
+    selected_ids: set[str] = set()
+    for *_, memory in scored:
+        related = [memory]
+        if memory.subject:
+            related.extend(
+                sorted(
+                    (
+                        item
+                        for item in groups[(memory.category, memory.subject.casefold())]
+                        if item.id != memory.id
+                        and item.content.casefold() != memory.content.casefold()
+                    ),
+                    key=lambda item: item.updated_at,
+                    reverse=True,
+                )
+            )
+        for item in related:
+            if item.id in selected_ids:
+                continue
+            selected.append(item)
+            selected_ids.add(item.id)
+            if len(selected) >= limit:
+                return selected
+    return selected
+
+
+def _recency_score(value: str) -> float:
+    try:
+        timestamp = datetime.fromisoformat(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        age_days = max(0.0, (datetime.now(UTC) - timestamp).total_seconds() / 86_400)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return 1.5 / (1.0 + age_days / 30.0)
 
 
 def _cosine(left: list[float] | None, right: list[float] | None) -> float:

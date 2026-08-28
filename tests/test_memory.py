@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from coding_agent.context import ContextManager
@@ -207,6 +209,22 @@ def test_memory_filters_hybrid_ranking_and_conflicts(tmp_path: Path) -> None:
     assert by_id[older.id]["repository_evidence"] == "missing"
 
 
+def test_search_returns_nonmatching_conflict_with_matching_memory(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory")
+    older = store.remember(
+        category="decision", subject="framework", content="Keep the legacy Flask server"
+    )
+    newer = store.remember(
+        category="decision", subject="framework", content="Migrate the API to FastAPI"
+    )
+
+    matches = store.search_detailed("legacy Flask", limit=6)
+
+    assert [item["id"] for item in matches] == [older.id, newer.id]
+    assert matches[0]["conflict_ids"] == [newer.id]
+    assert all(item["recency_score"] > 0 for item in matches)
+
+
 def test_user_memory_is_opt_in_separate_exportable_and_clearable(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -239,3 +257,116 @@ def test_memory_store_rejects_cross_scope_writes(tmp_path: Path) -> None:
         assert "Cannot write user memory" in str(exc)
     else:
         raise AssertionError("Cross-scope memory write should be rejected")
+
+
+def test_store_ignores_invalid_and_cross_scope_audit_records(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory")
+    valid = store.remember(category="fact", content="The API is local only.")
+    record = json.loads(store.path.read_text(encoding="utf-8").splitlines()[0])
+    invalid_category = {**record, "id": "invalid-category", "category": "guess"}
+    wrong_scope = {**record, "id": "wrong-scope", "scope": "user"}
+    wrong_scope_delete = {
+        "operation": "delete",
+        "id": valid.id,
+        "scope": "user",
+        "deleted_at": "2026-08-28T00:00:00+00:00",
+    }
+    with store.path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(invalid_category) + "\n")
+        handle.write(json.dumps(wrong_scope) + "\n")
+        handle.write(json.dumps(wrong_scope_delete) + "\n")
+
+    stats = MemoryStore(tmp_path / "memory").stats()
+
+    assert [item.id for item in store.list(limit=None)] == [valid.id]
+    assert stats["audit_records"] == 4
+    assert stats["invalid_records"] == 3
+
+
+def test_user_memory_export_and_clear_are_not_limited_to_500_records(
+    tmp_path: Path,
+) -> None:
+    service = UserMemoryService(tmp_path / "user-memory")
+    service.store.root.mkdir(parents=True)
+    records = [
+        {
+            "operation": "upsert",
+            "id": f"memory-{index}",
+            "category": "preference",
+            "content": f"Preference {index}",
+            "keywords": [],
+            "importance": 3,
+            "source_session_id": "",
+            "source_turn_id": "",
+            "created_at": "2026-08-28T00:00:00+00:00",
+            "updated_at": "2026-08-28T00:00:00+00:00",
+            "scope": "user",
+        }
+        for index in range(501)
+    ]
+    service.store.path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+
+    assert len(service.export()["memories"]) == 501
+    assert service.clear() == 501
+    assert service.store.list(limit=None) == []
+
+
+def test_memory_duplicate_and_candidate_resolution_are_serialized(
+    tmp_path: Path,
+) -> None:
+    memory_root = tmp_path / "memory"
+    stores = [MemoryStore(memory_root), MemoryStore(memory_root)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        saved = list(
+            pool.map(
+                lambda store: store.remember(
+                    category="fact", content="Python 3.11 is required."
+                ),
+                stores,
+            )
+        )
+    assert saved[0].id == saved[1].id
+    assert len(stores[0].list(limit=None)) == 1
+
+    summary_root = tmp_path / "summaries"
+    summaries = [SessionSummaryStore(summary_root), SessionSummaryStore(summary_root)]
+    state = AgentState.create(session_id="concurrent-session")
+    state.current_objective = "I prefer focused tests first"
+    summaries[0].create(state, AgentStatus.COMPLETED, "done", stores[0])
+    candidate_id = summaries[0].candidates()[0]["id"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        confirmed = pool.submit(summaries[0].confirm, candidate_id, stores[0])
+        rejected = pool.submit(summaries[1].reject, candidate_id)
+    assert sum(result is not None for result in (confirmed.result(), rejected.result())) == 1
+
+
+def test_internal_observation_does_not_change_user_memory_recall(tmp_path: Path) -> None:
+    service = UserMemoryService(tmp_path / "user-memory", initially_enabled=True)
+    preferred = service.store.remember(
+        category="preference",
+        content="Run focused pytest checks before the full suite.",
+        keywords=["pytest", "focused"],
+        scope="user",
+    )
+    service.store.remember(
+        category="preference",
+        content="Use cargo for Rust verification.",
+        keywords=["cargo", "verification"],
+        scope="user",
+    )
+    state = AgentState.create()
+    state.messages.extend(
+        [
+            {"role": "user", "content": "How should I run pytest?"},
+            {
+                "role": "user",
+                "content": "SYSTEM OBSERVATION: cargo verification is still required",
+            },
+        ]
+    )
+
+    ContextManager(user_memory=service).build(state, [])
+
+    assert state.recalled_user_memories[0]["id"] == preferred.id

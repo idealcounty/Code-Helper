@@ -135,29 +135,13 @@ class ContextManager:
     def _recalled_memories(self, state: AgentState) -> list[dict[str, Any]]:
         if self.memory_store is None:
             return []
-        query = ""
-        for message in reversed(state.messages):
-            content = str(message.get("content", "")).strip()
-            if (
-                message.get("role") == "user"
-                and content
-                and not content.startswith("SYSTEM OBSERVATION:")
-            ):
-                query = content
-                break
+        query = _latest_user_query(state.messages)
         return self.memory_store.search_detailed(query, limit=6) if query else []
 
     def _recalled_user_memories(self, state: AgentState) -> list[Any]:
         if self.user_memory is None or not self.user_memory.enabled:
             return []
-        query = next(
-            (
-                str(message.get("content", "")).strip()
-                for message in reversed(state.messages)
-                if message.get("role") == "user" and str(message.get("content", "")).strip()
-            ),
-            "",
-        )
+        query = _latest_user_query(state.messages)
         return self.user_memory.search(query, limit=4) if query else []
 
     def _bounded_messages(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str, bool]:
@@ -198,3 +182,15 @@ def _find_agent_rule_files(workspace: Workspace) -> list[Path]:
             continue
         files.append(path)
     return files
+
+
+def _latest_user_query(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        content = str(message.get("content", "")).strip()
+        if (
+            message.get("role") == "user"
+            and content
+            and not content.startswith("SYSTEM OBSERVATION:")
+        ):
+            return content
+    return ""

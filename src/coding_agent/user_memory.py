@@ -39,12 +39,11 @@ class UserMemoryService:
         return self.store.search(query, limit=limit) if self.enabled else []
 
     def export(self) -> dict[str, Any]:
-        memories = [item.to_dict() for item in self.store.list(limit=500)]
+        memories = [item.to_dict() for item in self.store.list(limit=None)]
         return {"version": 1, "scope": "user", "enabled": self.enabled, "memories": memories}
 
     def clear(self) -> int:
-        memories = self.store.list(limit=500)
-        return sum(1 for item in memories if self.store.forget(item.id))
+        return self.store.clear()
 
     def stats(self) -> dict[str, Any]:
         return {

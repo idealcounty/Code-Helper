@@ -5,11 +5,16 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock, RLock
 from typing import Any
 from uuid import uuid4
 
 from .memory import MemoryStore
 from .session import AgentState, AgentStatus
+
+
+_SUMMARY_LOCKS: dict[Path, RLock] = {}
+_SUMMARY_LOCKS_GUARD = Lock()
 
 
 @dataclass(slots=True)
@@ -48,6 +53,8 @@ class SessionSummaryStore:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        with _SUMMARY_LOCKS_GUARD:
+            self._lock = _SUMMARY_LOCKS.setdefault(root.resolve(), RLock())
 
     def create(
         self,
@@ -95,26 +102,28 @@ class SessionSummaryStore:
 
     def get(self, session_id: str, turn_id: str) -> SessionSummary | None:
         path = self._path(session_id, turn_id)
-        if not path.exists():
-            return None
-        try:
-            return _summary_from_dict(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-            return None
+        with self._lock:
+            if not path.exists():
+                return None
+            try:
+                return _summary_from_dict(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                return None
 
     def list(self, *, session_id: str | None = None, limit: int = 50) -> list[SessionSummary]:
-        if not self.root.exists():
-            return []
-        summaries: list[SessionSummary] = []
-        pattern = f"{session_id}__*.json" if session_id else "*.json"
-        for path in self.root.glob(pattern):
-            try:
-                summary = _summary_from_dict(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-                continue
-            summaries.append(summary)
-        summaries.sort(key=lambda item: item.created_at, reverse=True)
-        return summaries[: max(0, min(limit, 500))]
+        with self._lock:
+            if not self.root.exists():
+                return []
+            summaries: list[SessionSummary] = []
+            pattern = f"{session_id}__*.json" if session_id else "*.json"
+            for path in self.root.glob(pattern):
+                try:
+                    summary = _summary_from_dict(json.loads(path.read_text(encoding="utf-8")))
+                except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    continue
+                summaries.append(summary)
+            summaries.sort(key=lambda item: item.created_at, reverse=True)
+            return summaries[: max(0, min(limit, 500))]
 
     def candidates(self, *, status: str = "pending", limit: int = 100) -> list[dict[str, Any]]:
         found: list[dict[str, Any]] = []
@@ -160,27 +169,28 @@ class SessionSummaryStore:
         status: str,
         memory_store: MemoryStore | None,
     ) -> dict[str, Any] | None:
-        for summary in self.list(limit=500):
-            for candidate in summary.candidates:
-                if candidate.id != candidate_id or candidate.status != "pending":
-                    continue
-                if memory_store is not None:
-                    memory = memory_store.remember(
-                        category=candidate.category,
-                        content=candidate.content,
-                        keywords=candidate.keywords,
-                        importance=candidate.importance,
-                        source_session_id=summary.session_id,
-                        source_turn_id=summary.turn_id,
-                    )
-                    candidate.memory_id = memory.id
-                candidate.status = status
-                self._write(summary)
-                return {
-                    **asdict(candidate),
-                    "session_id": summary.session_id,
-                    "turn_id": summary.turn_id,
-                }
+        with self._lock:
+            for summary in self.list(limit=500):
+                for candidate in summary.candidates:
+                    if candidate.id != candidate_id or candidate.status != "pending":
+                        continue
+                    if memory_store is not None:
+                        memory = memory_store.remember(
+                            category=candidate.category,
+                            content=candidate.content,
+                            keywords=candidate.keywords,
+                            importance=candidate.importance,
+                            source_session_id=summary.session_id,
+                            source_turn_id=summary.turn_id,
+                        )
+                        candidate.memory_id = memory.id
+                    candidate.status = status
+                    self._write(summary)
+                    return {
+                        **asdict(candidate),
+                        "session_id": summary.session_id,
+                        "turn_id": summary.turn_id,
+                    }
         return None
 
     def _path(self, session_id: str, turn_id: str) -> Path:
@@ -189,14 +199,15 @@ class SessionSummaryStore:
         return self.root / f"{safe_session}__{safe_turn}.json"
 
     def _write(self, summary: SessionSummary) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        path = self._path(summary.session_id, summary.turn_id)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(summary.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(path)
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            path = self._path(summary.session_id, summary.turn_id)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(summary.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
 
 
 def _candidate_memories(objective: str, pending: list[str]) -> list[MemoryCandidate]:
