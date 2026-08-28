@@ -635,9 +635,13 @@ function renderIntelligence(data) {
   const outputs = data.outputs || {};
   const cache = data.cache || {};
   const memory = data.memory || { count: 0, categories: {}, recent: [], recalled: [] };
+  const summaryMemory = memory.summaries || { count: 0, pending_candidates: 0, candidates: [] };
+  const userMemory = data.user_memory || { enabled: false, count: 0, recent: [], recalled: [] };
   const memoryCategories = memory.categories || {};
-  const recalledIds = new Set((memory.recalled || []).map((item) => item.id));
+  const recalledIds = new Set((memory.recalled || []).map((item) => item.memory?.id || item.id));
   const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
+  const candidateRows = (summaryMemory.candidates || []).map((item) => `<li class="memory-candidate"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">保留</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
+  const userRows = (userMemory.recent || []).map((item) => `<li><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   elements.intelligenceContent.innerHTML = `
     <section class="intelligence-section context-section">
       <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>
@@ -650,6 +654,17 @@ function renderIntelligence(data) {
       <div class="intel-facts"><span>${memoryCategories.fact || 0} 事实</span><span>${memoryCategories.decision || 0} 决策</span><span>${memoryCategories.preference || 0} 偏好</span><span>${memoryCategories.task || 0} 待办</span></div>
       <ul class="memory-list">${memoryRows || '<li class="empty"><span>尚未保存项目长期记忆</span></li>'}</ul>
       <p class="intel-note">本轮自动召回 ${(memory.recalled || []).length} 条；高亮项已注入当前上下文。</p>
+    </section>
+    <section class="intelligence-section candidate-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">ASK</span><strong>待确认记忆</strong></div><b>${summaryMemory.pending_candidates || 0} 条</b></div>
+      <p class="intel-note">每轮会生成结构化总结，但候选内容只有经你确认后才会长期保存。</p>
+      <ul class="memory-list candidate-list">${candidateRows || '<li class="empty"><span>目前没有等待确认的候选</span></li>'}</ul>
+    </section>
+    <section class="intelligence-section user-memory-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">USR</span><strong>跨项目用户记忆</strong></div><b class="${userMemory.enabled ? "status-on" : "status-off"}">${userMemory.enabled ? "已启用" : "已关闭"}</b></div>
+      <div class="memory-toolbar"><button data-user-memory-action="toggle" type="button">${userMemory.enabled ? "停用" : "启用"}</button><button data-user-memory-action="export" type="button">导出</button><button data-user-memory-action="clear" type="button" ${userMemory.enabled && userMemory.count ? "" : "disabled"}>清空</button></div>
+      <ul class="memory-list">${userRows || '<li class="empty"><span>没有跨项目用户记忆</span></li>'}</ul>
+      <p class="intel-note">${userMemory.count || 0} 条，存放于工作区之外；当前会话召回 ${(userMemory.recalled || []).length} 条。</p>
     </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>
@@ -676,6 +691,36 @@ function renderIntelligence(data) {
       <div class="statistics-strip"><div><strong>${formatNumber(tokenTotal)}</strong><span>Tokens</span></div><div><strong>${toolTotals.calls || 0}</strong><span>工具调用</span></div><div><strong>${formatDuration(toolTotals.duration_ms || 0)}</strong><span>工具耗时</span></div></div>
       <div class="metric-list">${toolRows || '<p class="intel-note">本轮还没有工具调用。</p>'}</div>
     </section>`;
+}
+
+async function handleIntelligenceAction(event) {
+  const candidateButton = event.target.closest("[data-memory-action]");
+  if (candidateButton) {
+    try {
+      await api(`/api/sessions/${state.sessionId}/memory/candidates/${candidateButton.dataset.candidateId}`, { method: "POST", body: JSON.stringify({ action: candidateButton.dataset.memoryAction }) });
+      showToast(candidateButton.dataset.memoryAction === "confirm" ? "记忆已确认并保存" : "候选记忆已忽略");
+      return loadIntelligence();
+    } catch (error) { return showToast(error.message); }
+  }
+  const userButton = event.target.closest("[data-user-memory-action]");
+  if (!userButton) return;
+  const action = userButton.dataset.userMemoryAction;
+  try {
+    if (action === "toggle") {
+      const enabled = !document.querySelector(".user-memory-section .status-on");
+      await api(`/api/sessions/${state.sessionId}/user-memory/enabled`, { method: "POST", body: JSON.stringify({ enabled }) });
+      showToast(enabled ? "跨项目用户记忆已启用" : "跨项目用户记忆已停用");
+    } else if (action === "export") {
+      const data = await api(`/api/sessions/${state.sessionId}/user-memory/export`);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+      const link = Object.assign(document.createElement("a"), { href: url, download: "code-helper-user-memory.json" });
+      link.click(); URL.revokeObjectURL(url); showToast("用户记忆已导出");
+    } else if (action === "clear" && window.confirm("确定清空全部跨项目用户记忆吗？此操作不可撤销。")) {
+      const result = await api(`/api/sessions/${state.sessionId}/user-memory`, { method: "DELETE" });
+      showToast(`已清空 ${result.cleared || 0} 条用户记忆`);
+    }
+    await loadIntelligence();
+  } catch (error) { showToast(error.message); }
 }
 
 function formatNumber(value) {
@@ -804,6 +849,7 @@ elements.reasoningSelect.addEventListener("change", async () => {
 });
 document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
 elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
+elements.intelligenceContent.addEventListener("click", handleIntelligenceAction);
 elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
 elements.copyTerminalButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(elements.terminalOutput.innerText); showToast("终端输出已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });

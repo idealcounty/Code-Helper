@@ -128,6 +128,23 @@ def test_agent_emits_context_compaction_event(tmp_path: Path) -> None:
     assert "context_compacted" in [event["type"] for event in store.load()]
 
 
+def test_summary_failure_preserves_completed_turn_and_raw_events(tmp_path: Path) -> None:
+    model = ScriptedModel([ModelResponse(content="done")])
+    runner, store = _make_runner(tmp_path, model)
+
+    def broken_summary(*_: Any) -> dict[str, Any]:
+        raise OSError("summary storage unavailable")
+
+    runner.turn_summarizer = broken_summary
+    state = AgentState.create(session_id="session", max_steps=2)
+    result = asyncio.run(runner.run_turn(state, "finish safely"))
+    events = store.load()
+
+    assert result.status is AgentStatus.COMPLETED
+    assert [event["type"] for event in events][-2:] == ["turn_finished", "session_summary_failed"]
+    assert events[-1]["payload"]["raw_events_preserved"] is True
+
+
 def test_agent_does_not_finish_with_stale_verification(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
     model = ScriptedModel(

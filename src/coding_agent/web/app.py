@@ -162,6 +162,14 @@ class ReasoningRequest(BaseModel):
     profile: Literal["auto", "fast", "balanced", "deep"]
 
 
+class MemoryCandidateRequest(BaseModel):
+    action: Literal["confirm", "reject"]
+
+
+class UserMemorySettingRequest(BaseModel):
+    enabled: bool
+
+
 class ApprovalBroker:
     def __init__(self) -> None:
         self._pending: dict[str, asyncio.Future[bool]] = {}
@@ -434,6 +442,11 @@ def create_app(
             "memory": {
                 **runtime.memory_store.stats(),
                 "recalled": state.recalled_memories,
+                "summaries": runtime.summary_store.stats(),
+            },
+            "user_memory": {
+                **runtime.user_memory.stats(),
+                "recalled": state.recalled_user_memories,
             },
             "cache": {
                 "file_summaries": len(runtime.workspace.summary_cache),
@@ -452,6 +465,38 @@ def create_app(
             "tool_stats": state.tool_stats,
             "tool_totals": tool_totals,
         }
+
+    @app.post("/api/sessions/{session_id}/memory/candidates/{candidate_id}")
+    async def resolve_memory_candidate(
+        session_id: str, candidate_id: str, request: MemoryCandidateRequest
+    ) -> dict[str, Any]:
+        runtime = manager.get(session_id).runtime
+        candidate = (
+            runtime.summary_store.confirm(candidate_id, runtime.memory_store)
+            if request.action == "confirm"
+            else runtime.summary_store.reject(candidate_id)
+        )
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="Memory candidate was not found or was already resolved")
+        return {"candidate": candidate}
+
+    @app.post("/api/sessions/{session_id}/user-memory/enabled")
+    async def set_user_memory_enabled(
+        session_id: str, request: UserMemorySettingRequest
+    ) -> dict[str, Any]:
+        service = manager.get(session_id).runtime.user_memory
+        return {"enabled": service.set_enabled(request.enabled)}
+
+    @app.get("/api/sessions/{session_id}/user-memory/export")
+    async def export_user_memory(session_id: str) -> dict[str, Any]:
+        return manager.get(session_id).runtime.user_memory.export()
+
+    @app.delete("/api/sessions/{session_id}/user-memory")
+    async def clear_user_memory(session_id: str) -> dict[str, Any]:
+        service = manager.get(session_id).runtime.user_memory
+        if not service.enabled:
+            raise HTTPException(status_code=409, detail="User memory is disabled")
+        return {"cleared": service.clear()}
 
     @app.get("/api/sessions/{session_id}/file")
     async def read_workspace_file(session_id: str, path: str) -> dict[str, Any]:

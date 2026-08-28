@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 from .agent_loop import AgentRunner, ApprovalHandler
@@ -10,6 +11,8 @@ from .context import ContextManager
 from .events import EventBus, EventListener, EventStore
 from .model import ModelClient, OpenAICompatibleModelClient
 from .memory import MemoryStore
+from .memory_summary import SessionSummaryStore
+from .user_memory import UserMemoryService
 from .permissions import PermissionPolicy
 from .session import AgentState
 from .skills import SkillLibrary
@@ -24,6 +27,7 @@ from .tools import (
     register_plan_tools,
     register_skill_tools,
     register_memory_tools,
+    register_user_memory_tools,
 )
 
 
@@ -40,6 +44,8 @@ class AgentRuntime:
     tool_executor: ToolExecutor
     checkpoint_manager: CheckpointManager
     memory_store: MemoryStore
+    summary_store: SessionSummaryStore
+    user_memory: UserMemoryService
     runner: AgentRunner
 
 
@@ -69,7 +75,20 @@ def create_runtime(
 
     registry = ToolRegistry()
     skill_library = SkillLibrary(Path(__file__).resolve().parents[2] / "skills")
-    memory_store = MemoryStore(workspace.root / ".code-helper" / "memory")
+    memory_store = MemoryStore(
+        workspace.root / ".code-helper" / "memory",
+        workspace_root=workspace.root,
+    )
+    summary_store = SessionSummaryStore(
+        workspace.root / ".code-helper" / "memory" / "summaries"
+    )
+    user_memory_root = config.user_memory_dir or _default_user_memory_root()
+    if user_memory_root.resolve().is_relative_to(workspace.root):
+        raise ValueError("User memory directory must be outside the project workspace")
+    user_memory = UserMemoryService(
+        user_memory_root,
+        initially_enabled=config.user_memory_enabled,
+    )
     register_filesystem_tools(registry, workspace)
     register_repo_map_tool(registry, workspace)
     register_git_tools(registry, workspace)
@@ -78,7 +97,8 @@ def create_runtime(
     )
     register_plan_tools(registry, state)
     register_skill_tools(registry, skill_library)
-    register_memory_tools(registry, memory_store, state)
+    register_memory_tools(registry, memory_store, state, summary_store)
+    register_user_memory_tools(registry, user_memory, state)
     client = model_client or OpenAICompatibleModelClient(
         api_key=config.api_key,
         base_url=config.base_url,
@@ -92,6 +112,7 @@ def create_runtime(
         workspace=workspace,
         skill_library=skill_library,
         memory_store=memory_store,
+        user_memory=user_memory,
     )
     tool_executor = ToolExecutor(
         registry, result_store=workspace.root / ".code-helper" / "tool-results"
@@ -105,6 +126,9 @@ def create_runtime(
         event_bus=event_bus,
         approval_handler=approval_handler,
         checkpoint_manager=checkpoint_manager,
+        turn_summarizer=lambda current_state, status, outcome: summary_store.create(
+            current_state, status, outcome, memory_store
+        ).to_dict(),
     )
     return AgentRuntime(
         config=config,
@@ -118,5 +142,14 @@ def create_runtime(
         tool_executor=tool_executor,
         checkpoint_manager=checkpoint_manager,
         memory_store=memory_store,
+        summary_store=summary_store,
+        user_memory=user_memory,
         runner=runner,
     )
+
+
+def _default_user_memory_root() -> Path:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "CodeHelper" / "user-memory"
+    return Path.home() / ".code-helper" / "user-memory"

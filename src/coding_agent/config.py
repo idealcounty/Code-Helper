@@ -21,6 +21,8 @@ class AppConfig:
     max_steps: int = 20
     request_timeout: float = 120.0
     command_timeout: float = 60.0
+    user_memory_enabled: bool = False
+    user_memory_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -49,6 +51,8 @@ class AppConfig:
             max_steps=_positive_int("CODE_HELPER_MAX_STEPS", 20),
             request_timeout=_positive_float("CODE_HELPER_REQUEST_TIMEOUT", 120.0),
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
+            user_memory_enabled=_boolean("CODE_HELPER_USER_MEMORY_ENABLED", False),
+            user_memory_dir=_optional_path("CODE_HELPER_USER_MEMORY_DIR"),
         )
 
 
@@ -89,6 +93,21 @@ def _positive_float(name: str, default: float) -> float:
     if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value
+
+
+def _boolean(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value not in {"true", "false", "1", "0", "yes", "no"}:
+        raise ValueError(f"{name} must be true or false")
+    return value in {"true", "1", "yes"}
+
+
+def _optional_path(name: str) -> Path | None:
+    raw = os.getenv(name, "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
 
 
 def _load_local_env(path: Path) -> None:

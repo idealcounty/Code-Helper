@@ -267,6 +267,15 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .memory-list li span b { margin-right: 6px; color: var(--accent); font-family: var(--mono); font-size: 7px; font-weight: 700; text-transform: uppercase; }
 .memory-list li em { color: var(--faint); font-family: var(--mono); font-size: 8px; font-style: normal; text-align: right; }
 .memory-list li.empty { display: block; color: var(--muted); }
+.memory-list li.memory-candidate { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.memory-actions, .memory-toolbar { display: flex; gap: 5px; }
+.memory-actions button, .memory-toolbar button { min-height: 24px; padding: 0 8px; border: 1px solid #c8d2d4; border-radius: 5px; color: var(--ink-soft); background: linear-gradient(#fff, #edf0f0); font-family: var(--mono); font-size: 7.5px; cursor: pointer; }
+.memory-actions button:first-child { color: #155f4c; border-color: #b5d3ca; background: #edf7f3; }
+.memory-actions button:hover, .memory-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+.memory-actions button:focus-visible, .memory-toolbar button:focus-visible { outline: 2px solid rgba(28,114,140,.25); outline-offset: 1px; }
+.memory-toolbar { margin-top: 9px; }
+.memory-toolbar button:disabled { opacity: .42; cursor: not-allowed; }
+.status-on { color: var(--success) !important; }.status-off { color: var(--faint) !important; }
 .skill-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .skill-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: #f2f4f4; font-family: var(--mono); font-size: 7.5px; }
 .skill-badge i { width: 5px; height: 5px; border: 1px solid #8f999c; border-radius: 50%; }

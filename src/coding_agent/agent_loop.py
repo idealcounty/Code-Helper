@@ -19,6 +19,7 @@ from .verifier import CompletionStatus, Verifier
 
 
 ApprovalHandler = Callable[[ToolCall, PermissionResult], Awaitable[bool]]
+TurnSummarizer = Callable[[AgentState, AgentStatus, str], dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class AgentRunner:
         stuck_detector: StuckDetector | None = None,
         approval_handler: ApprovalHandler | None = None,
         checkpoint_manager: CheckpointManager | None = None,
+        turn_summarizer: TurnSummarizer | None = None,
     ) -> None:
         self.model_client = model_client
         self.context_manager = context_manager
@@ -53,6 +55,7 @@ class AgentRunner:
         self.stuck_detector = stuck_detector or StuckDetector()
         self.approval_handler = approval_handler
         self.checkpoint_manager = checkpoint_manager
+        self.turn_summarizer = turn_summarizer
 
     async def run_turn(
         self, state: AgentState, user_message: str | None = None
@@ -68,6 +71,7 @@ class AgentRunner:
                 raise RuntimeError("Cannot start a new turn while another turn is active")
             if state.status is not AgentStatus.READY:
                 state.begin_new_turn()
+            state.current_objective = user_message
             state.messages.append({"role": "user", "content": user_message})
             await self._emit(state, "turn_started", {"message": user_message})
 
@@ -393,6 +397,16 @@ class AgentRunner:
                 },
             },
         )
+        if self.turn_summarizer is not None:
+            try:
+                summary = self.turn_summarizer(state, status, message)
+                await self._emit(state, "session_summarized", {"summary": summary})
+            except Exception as exc:  # Summary persistence must never fail the completed turn.
+                await self._emit(
+                    state,
+                    "session_summary_failed",
+                    {"error": str(exc), "raw_events_preserved": True},
+                )
         return AgentRunResult(status, message, state)
 
     async def _emit(

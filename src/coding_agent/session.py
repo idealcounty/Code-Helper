@@ -43,6 +43,8 @@ class AgentState:
     tool_stats: dict[str, dict[str, int]] = field(default_factory=dict)
     context_summary: str = ""
     recalled_memories: list[dict[str, Any]] = field(default_factory=list)
+    recalled_user_memories: list[dict[str, Any]] = field(default_factory=list)
+    current_objective: str = ""
     repair_attempts: int = 0
     max_repair_attempts: int = 3
 
@@ -76,6 +78,8 @@ class AgentState:
         self.cancel_requested = False
         self.tool_stats.clear()
         self.recalled_memories.clear()
+        self.recalled_user_memories.clear()
+        self.current_objective = ""
         self.repair_attempts = 0
 
     @property
@@ -96,6 +100,8 @@ class AgentState:
         self.pending_approval = None
         self.context_summary = ""
         self.recalled_memories.clear()
+        self.recalled_user_memories.clear()
+        self.current_objective = ""
         self.repair_attempts = 0
         for event in events:
             payload = event.get("payload") or {}
@@ -103,7 +109,8 @@ class AgentState:
             if event.get("turn_id"):
                 self.turn_id = str(event["turn_id"])
             if event_type == "turn_started":
-                self.messages.append({"role": "user", "content": payload.get("message", "")})
+                self.current_objective = str(payload.get("message", ""))
+                self.messages.append({"role": "user", "content": self.current_objective})
                 self.step = 0
             elif event_type == "step_started":
                 self.step = int(payload.get("step", self.step))

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from coding_agent.config import AppConfig
 from coding_agent.model import ModelResponse
 from coding_agent.web.app import create_app
+from coding_agent.session import AgentStatus
 
 
 def _config() -> AppConfig:
@@ -57,6 +58,30 @@ def test_create_session_for_local_workspace(tmp_path: Path) -> None:
     assert details.status_code == 200
     assert details.json()["mode"] == "act"
     assert details.json()["running"] is False
+
+
+def test_memory_control_endpoints(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = AppConfig(api_key="test-key", base_url="https://example.invalid/v1", user_memory_dir=tmp_path / "global-memory")
+    app = create_app(config)
+    with TestClient(app) as client:
+        created = client.post("/api/sessions", json={"workspace": str(workspace), "mode": "act"})
+        session_id = created.json()["session_id"]
+        runtime = app.state.session_manager.get(session_id).runtime
+        runtime.state.current_objective = "我希望以后先执行最小测试"
+        runtime.summary_store.create(runtime.state, AgentStatus.COMPLETED, "done", runtime.memory_store)
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence").json()
+        candidate_id = intelligence["memory"]["summaries"]["candidates"][0]["id"]
+        confirmed = client.post(f"/api/sessions/{session_id}/memory/candidates/{candidate_id}", json={"action": "confirm"})
+        enabled = client.post(f"/api/sessions/{session_id}/user-memory/enabled", json={"enabled": True})
+        exported = client.get(f"/api/sessions/{session_id}/user-memory/export")
+        cleared = client.delete(f"/api/sessions/{session_id}/user-memory")
+
+    assert confirmed.status_code == 200 and runtime.memory_store.stats()["count"] == 1
+    assert enabled.json()["enabled"] is True
+    assert exported.json()["scope"] == "user"
+    assert cleared.status_code == 200
 
 
 def test_session_report_exposes_completion_evidence(tmp_path: Path) -> None:

@@ -6,12 +6,14 @@ from pathlib import Path
 from coding_agent.context import ContextManager
 from coding_agent.config import AppConfig
 from coding_agent.memory import MemoryStore
+from coding_agent.memory_summary import SessionSummaryStore
 from coding_agent.permissions import PermissionDecision, PermissionPolicy
-from coding_agent.session import AgentState
+from coding_agent.session import AgentState, AgentStatus
+from coding_agent.user_memory import UserMemoryService
 from coding_agent.runtime import create_runtime
 from coding_agent.tool_executor import ToolExecutor
 from coding_agent.tools import ToolRegistry
-from coding_agent.tools.memory import register_memory_tools
+from coding_agent.tools.memory import register_memory_tools, register_user_memory_tools
 
 
 def test_memory_persists_searches_and_forgets_across_instances(tmp_path: Path) -> None:
@@ -158,3 +160,82 @@ def test_new_runtime_recalls_memory_written_by_another_session(tmp_path: Path) -
         "remember_project_memory",
         "forget_project_memory",
     }.issubset(current.registry.names())
+
+
+def test_turn_summary_candidate_requires_confirmation(tmp_path: Path) -> None:
+    memories = MemoryStore(tmp_path / "memory")
+    summaries = SessionSummaryStore(tmp_path / "summaries")
+    state = AgentState.create(session_id="session-summary")
+    state.current_objective = "我希望以后先运行最小测试"
+    state.plan = [
+        {"step": "实现功能", "status": "completed"},
+        {"step": "执行完整回归测试", "status": "pending"},
+    ]
+    state.changed_files.add("src/app.py")
+
+    summary = summaries.create(state, AgentStatus.PARTIAL, "基础功能已完成", memories)
+
+    assert summary.objective == state.current_objective
+    assert summary.completed_items == ["实现功能"]
+    assert summary.pending_items == ["执行完整回归测试"]
+    assert memories.list() == []
+    candidate = summaries.candidates()[0]
+    confirmed = summaries.confirm(candidate["id"], memories)
+    assert confirmed and confirmed["status"] == "confirmed"
+    assert memories.list()[0].content == candidate["content"]
+
+
+def test_memory_filters_hybrid_ranking_and_conflicts(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "api.py").write_text("def serve(): pass\n", encoding="utf-8")
+
+    def embedding(text: str) -> list[float]:
+        return [1.0, 0.0] if "semantic-match" in text else [0.8, 0.2]
+
+    store = MemoryStore(tmp_path / "memory", workspace_root=tmp_path, embedding_provider=embedding)
+    older = store.remember(category="decision", subject="web-stack", content="Use Flask", file_paths=["missing.py"], symbols=["serve"], source_session_id="old")
+    newer = store.remember(category="decision", subject="web-stack", content="Use FastAPI semantic-match", file_paths=["src/api.py"], symbols=["serve"], source_session_id="new")
+
+    matches = store.search_detailed("semantic-match", file_path="src/api.py", symbol="serve", source_session_id="new")
+    conflicts = store.search_detailed("Use", symbol="serve", limit=10)
+
+    assert matches[0]["id"] == newer.id and matches[0]["semantic_score"] > 0
+    assert matches[0]["repository_evidence"] == "verified"
+    by_id = {item["id"]: item for item in conflicts}
+    assert older.id in by_id[newer.id]["conflict_ids"]
+    assert by_id[newer.id]["is_latest_for_subject"] is True
+    assert by_id[older.id]["repository_evidence"] == "missing"
+
+
+def test_user_memory_is_opt_in_separate_exportable_and_clearable(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    user_root = tmp_path / "outside-workspace" / "user-memory"
+    service = UserMemoryService(user_root)
+    registry = ToolRegistry()
+    state = AgentState.create(session_id="user-session")
+    register_user_memory_tools(registry, service, state)
+    executor = ToolExecutor(registry)
+
+    disabled = asyncio.run(executor.execute("search_user_memory", {"query": "tests"}))
+    assert disabled.ok is False and service.enabled is False
+    service.set_enabled(True)
+    saved = asyncio.run(executor.execute("remember_user_memory", {"category": "preference", "content": "Always run focused tests first."}))
+    exported = service.export()
+
+    assert saved.ok and saved.data["memory"]["scope"] == "user"
+    assert user_root not in workspace.parents and not str(user_root).startswith(str(workspace))
+    assert exported["memories"][0]["content"] == "Always run focused tests first."
+    assert service.clear() == 1 and service.store.list() == []
+    service.set_enabled(False)
+    assert service.enabled is False
+
+
+def test_memory_store_rejects_cross_scope_writes(tmp_path: Path) -> None:
+    project_store = MemoryStore(tmp_path / "project", scope="project")
+    try:
+        project_store.remember(category="preference", content="global preference", scope="user")
+    except ValueError as exc:
+        assert "Cannot write user memory" in str(exc)
+    else:
+        raise AssertionError("Cross-scope memory write should be rejected")
