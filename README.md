@@ -13,8 +13,11 @@ Code Helper 是一个从零实现的本地 Coding Agent。它通过模型原生 
 - [x] 本地 Web API、WebSocket 事件流与基础 UI
 - [x] 读取后修改、文件哈希和验证新鲜度
 - [x] Git Diff 展示、轻量检查点与显式回滚
+- [x] Repo Map Lite 与项目 `AGENTS.md` 规则注入
+- [x] 三个项目 Skills（bug-fix、add-feature、code-review）按需加载
+- [x] 动态计划工具与 Web 计划面板
 - [ ] Session 恢复
-- [ ] 上下文压缩、Skills 和 Repo Map Lite
+- [ ] 上下文压缩（长输出裁剪已具备，完整历史摘要仍在规划）
 
 详细设计见 [docs/architecture.md](docs/architecture.md)。
 
@@ -60,6 +63,8 @@ code-helper-web
 ```
 
 Web 服务只监听 `127.0.0.1:8765`。打开页面后输入本地项目的绝对路径，写文件和执行命令时会要求用户批准。
+
+运行时会先向模型暴露 Skills 的名称、描述和触发条件；只有模型判断某个流程适用时，才调用 `load_skill` 读取对应的 `SKILL.md` 全文。复杂任务可通过 `update_plan` 创建和更新计划，Web UI 的“任务计划”页签会实时显示状态。
 
 ## 测试
 

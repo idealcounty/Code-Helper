@@ -163,6 +163,7 @@ def create_app(
             "step": state.step,
             "running": session.running,
             "changed_files": sorted(state.changed_files),
+            "plan": state.plan,
             "last_error": session.last_error,
         }
 
@@ -229,6 +230,47 @@ def create_app(
     @app.get("/api/sessions/{session_id}/events")
     async def get_events(session_id: str) -> list[dict[str, Any]]:
         return manager.get(session_id).runtime.event_store.load()
+
+    @app.get("/api/sessions/{session_id}/files")
+    async def list_workspace_files(
+        session_id: str, path: str = "."
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        workspace = session.runtime.workspace
+        try:
+            directory = workspace.resolve(path, must_exist=True)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not directory.is_dir():
+            raise HTTPException(status_code=400, detail="Path is not a directory")
+
+        entries: list[dict[str, Any]] = []
+        try:
+            children = sorted(
+                directory.iterdir(),
+                key=lambda item: (not item.is_dir(), item.name.casefold()),
+            )
+            for child in children:
+                if workspace.is_ignored(child) or workspace.is_sensitive(child):
+                    continue
+                entries.append(
+                    {
+                        "name": child.name,
+                        "path": workspace.relative(child),
+                        "kind": "directory" if child.is_dir() else "file",
+                    }
+                )
+                if len(entries) >= 500:
+                    break
+        except OSError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Cannot list directory: {exc}"
+            ) from exc
+        return {
+            "path": workspace.relative(directory),
+            "entries": entries,
+            "truncated": len(entries) >= 500,
+        }
 
     @app.get("/api/sessions/{session_id}/diff")
     async def get_diff(session_id: str) -> dict[str, Any]:

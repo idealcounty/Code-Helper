@@ -336,6 +336,10 @@ class AgentRunner:
             state.last_mutation_sequence = event.sequence
         if result.ok and result.metadata.get("verification_passed"):
             state.last_successful_verification_sequence = event.sequence
+        if result.ok and result.metadata.get("plan_updated"):
+            await self._emit(state, "plan_updated", {
+                "plan": state.plan, "reason": result.data.get("reason", "")
+            })
 
     def _allowed_tool_schemas(self, mode: str) -> list[dict[str, Any]]:
         if mode == "act":

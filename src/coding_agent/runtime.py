@@ -11,8 +11,18 @@ from .events import EventBus, EventListener, EventStore
 from .model import ModelClient, OpenAICompatibleModelClient
 from .permissions import PermissionPolicy
 from .session import AgentState
+from .skills import SkillLibrary
 from .tool_executor import ToolExecutor
-from .tools import ToolRegistry, Workspace, register_filesystem_tools, register_shell_tools
+from .tools import (
+    ToolRegistry,
+    Workspace,
+    register_filesystem_tools,
+    register_git_tools,
+    register_repo_map_tool,
+    register_shell_tools,
+    register_plan_tools,
+    register_skill_tools,
+)
 
 
 @dataclass(slots=True)
@@ -52,10 +62,15 @@ def create_runtime(
         event_bus.subscribe(event_listener)
 
     registry = ToolRegistry()
+    skill_library = SkillLibrary(Path(__file__).resolve().parents[2] / "skills")
     register_filesystem_tools(registry, workspace)
+    register_repo_map_tool(registry, workspace)
+    register_git_tools(registry, workspace)
     register_shell_tools(
         registry, workspace, default_timeout=config.command_timeout
     )
+    register_plan_tools(registry, state)
+    register_skill_tools(registry, skill_library)
     client = model_client or OpenAICompatibleModelClient(
         api_key=config.api_key,
         base_url=config.base_url,
@@ -67,7 +82,7 @@ def create_runtime(
     checkpoint_manager = CheckpointManager(workspace)
     runner = AgentRunner(
         model_client=client,
-        context_manager=ContextManager(),
+        context_manager=ContextManager(workspace=workspace, skill_library=skill_library),
         registry=registry,
         tool_executor=ToolExecutor(registry),
         permission_policy=PermissionPolicy(),

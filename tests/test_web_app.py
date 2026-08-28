@@ -53,6 +53,46 @@ def test_missing_workspace_is_rejected(tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
+def test_file_explorer_lists_safe_workspace_entries(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("SECRET=value\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+
+    with TestClient(create_app(_config())) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        root = client.get(f"/api/sessions/{session_id}/files")
+        nested = client.get(
+            f"/api/sessions/{session_id}/files", params={"path": "src"}
+        )
+
+    assert root.status_code == 200
+    assert root.json()["entries"] == [
+        {"name": "src", "path": "src", "kind": "directory"},
+        {"name": "README.md", "path": "README.md", "kind": "file"},
+    ]
+    assert nested.json()["entries"] == [
+        {"name": "app.py", "path": "src/app.py", "kind": "file"}
+    ]
+
+
+def test_file_explorer_cannot_escape_workspace(tmp_path: Path) -> None:
+    with TestClient(create_app(_config())) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        response = client.get(
+            f"/api/sessions/{session_id}/files", params={"path": ".."}
+        )
+
+    assert response.status_code == 400
+
+
 class FinalAnswerModel:
     async def complete(
         self,
