@@ -40,8 +40,10 @@ async function api(path, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(body.detail || `HTTP ${response.status}`);
+    const detail = body.detail;
+    const error = new Error(typeof detail === "string" ? detail : detail?.message || `HTTP ${response.status}`);
     error.status = response.status;
+    error.detail = detail;
     throw error;
   }
   return body;
@@ -435,12 +437,32 @@ async function restoreCheckpoint() {
   if (!state.sessionId || state.running) return;
   if (!window.confirm("恢复本轮任务开始前的文件状态？此操作会覆盖 Agent 的修改。")) return;
   try {
-    const result = await api(`/api/sessions/${state.sessionId}/restore`, { method: "POST" });
+    let result;
+    try {
+      result = await requestCheckpointRestore(false);
+    } catch (error) {
+      if (error.status !== 409 || error.detail?.code !== "RESTORE_CONFLICT") throw error;
+      const conflicts = error.detail.conflicts || [];
+      const paths = conflicts.map((item) => item.path).join("、");
+      const confirmed = window.confirm(`检测到 Agent 修改后又发生了外部编辑：${paths}\n\n继续会覆盖这些新内容。确认强制回滚吗？`);
+      if (!confirmed) return showToast("已保留外部修改，未执行回滚");
+      result = await requestCheckpointRestore(
+        true,
+        Object.fromEntries(conflicts.map((item) => [item.path, item.current_sha256 ?? null])),
+      );
+    }
     state.fileCache.clear();
-    showToast(`已恢复 ${result.restored.length} 个文件`);
+    showToast(`${result.forced ? "已强制恢复" : "已恢复"} ${result.restored.length} 个文件`);
     await Promise.all([refreshDiff(), loadRootFiles()]);
     if (state.activeFilePath) await openFile(state.activeFilePath, true);
   } catch (error) { showToast(error.message); }
+}
+
+function requestCheckpointRestore(force, confirmedHashes = null) {
+  return api(`/api/sessions/${state.sessionId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ force, confirmed_hashes: confirmedHashes }),
+  });
 }
 
 async function resolveApproval(approved) {
@@ -496,7 +518,14 @@ function handleEvent(event) {
     case "verification_required": addActivity("需要验证", payload.reason, "failure"); break;
     case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
     case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
-    case "checkpoint_restored": addActivity("已回滚本轮修改", (payload.files || []).join(", "), "success"); break;
+    case "checkpoint_tracking_failed": addActivity("检查点跟踪失败", `${payload.code || ""} · ${payload.message || ""}`, "failure"); break;
+    case "checkpoint_restored": addActivity(payload.forced ? "已强制回滚本轮修改" : "已回滚本轮修改", (payload.files || []).join(", "), payload.forced ? "warning" : "success"); break;
+    case "verification_recorded": {
+      const evidence = payload.evidence || {};
+      addActivity(evidence.accepted ? "验证证据已接受" : "验证证据不足", `${String(evidence.kind || "unknown").toUpperCase()} · ${evidence.reason || ""}`, evidence.accepted ? "success" : "warning");
+      refreshIntelligenceIfVisible();
+      break;
+    }
     case "turn_finished": setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
@@ -637,6 +666,7 @@ function refreshIntelligenceIfVisible() {
 function renderIntelligence(data) {
   const context = data.context || {};
   const budget = data.budget || {};
+  const verification = data.verification || { evidence: [] };
   const repo = data.repo_map || {};
   const totals = repo.totals || {};
   const skills = data.skills || { available: [], loaded: [] };
@@ -669,6 +699,7 @@ function renderIntelligence(data) {
   const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   const candidateRows = (summaryMemory.candidates || []).map((item) => `<li class="memory-candidate"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">保留</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
   const userRows = (userMemory.recent || []).map((item) => `<li><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
+  const evidenceRows = (verification.evidence || []).slice(-5).reverse().map((item) => `<li class="evidence-row ${item.accepted ? "accepted" : "rejected"}"><div><span><b>${escapeHtml(String(item.kind || "unknown").toUpperCase())}</b><em>${escapeHtml(item.source || "untrusted")}</em></span><code>${escapeHtml(item.command || "")}</code><small>${escapeHtml(item.reason || "")}</small></div><i title="${item.accepted ? "满足完成契约" : "不满足完成契约"}">${item.accepted ? "✓" : "!"}</i></li>`).join("");
   elements.intelligenceContent.innerHTML = `
     <section class="intelligence-section run-budget-section ${runBudgetState}">
       <div class="intelligence-heading"><div><span class="intel-icon">RUN</span><strong>运行预算</strong></div><b>${runBudgetState === "warning" ? "LIMIT" : "ACTIVE"}</b></div>
@@ -679,6 +710,11 @@ function renderIntelligence(data) {
       </div>
       <div class="budget-meter-row"><span>时间</span><div class="budget-track"><i style="width:${timePercent}%"></i></div><b>${timePercent}%</b></div>
       ${tokenLimit ? `<div class="budget-meter-row"><span>Token</span><div class="budget-track token"><i style="width:${tokenPercent}%"></i></div><b>${tokenPercent}%</b></div>` : '<p class="intel-note">Token 预算未设上限；仍会记录供应商返回的用量。</p>'}
+    </section>
+    <section class="intelligence-section verification-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">VER</span><strong>验证证据</strong></div><b class="${verification.fresh ? "status-on" : "status-off"}">${verification.fresh ? "FRESH" : "STALE"}</b></div>
+      <ul class="evidence-list">${evidenceRows || '<li class="empty-evidence">尚无验证证据；普通成功命令不会被当作测试。</li>'}</ul>
+      <p class="intel-note">仅用户明确指定，或可识别的测试、构建、Lint、类型检查命令能满足完成契约。</p>
     </section>
     <section class="intelligence-section context-section">
       <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>

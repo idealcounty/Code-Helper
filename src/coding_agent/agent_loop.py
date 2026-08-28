@@ -20,6 +20,7 @@ from .tool_executor import ToolExecutor
 from .tools.base import ToolError, ToolResult, ToolRisk
 from .tools.registry import ToolRegistry
 from .verifier import CompletionStatus, Verifier
+from .verification_evidence import build_verification_evidence
 
 
 ApprovalHandler = Callable[[ToolCall, PermissionResult], Awaitable[bool]]
@@ -407,7 +408,7 @@ class AgentRunner:
                         },
                     )
         state.status = AgentStatus.EXECUTING_TOOL
-        await self._emit(
+        started_event = await self._emit(
             state,
             "tool_started",
             {"id": call.id, "name": call.name, "arguments": call.arguments},
@@ -415,7 +416,9 @@ class AgentRunner:
         result = await self._await_controlled(
             self.tool_executor.execute(call.name, call.arguments)
         )
-        await self._record_tool_result(state, call, result)
+        await self._record_tool_result(
+            state, call, result, started_sequence=started_event.sequence
+        )
 
     async def _await_controlled(self, operation: Awaitable[Any]) -> Any:
         operation_task = asyncio.ensure_future(operation)
@@ -451,7 +454,12 @@ class AgentRunner:
         return state.run_budget
 
     async def _record_tool_result(
-        self, state: AgentState, call: ToolCall, result: ToolResult
+        self,
+        state: AgentState,
+        call: ToolCall,
+        result: ToolResult,
+        *,
+        started_sequence: int = 0,
     ) -> None:
         state.status = AgentStatus.OBSERVING
         event = await self._emit(
@@ -487,16 +495,54 @@ class AgentRunner:
         if mutated_files:
             state.changed_files.update(map(str, mutated_files))
             state.last_mutation_sequence = event.sequence
-        if result.ok and result.metadata.get("verification_passed"):
-            state.last_successful_verification_sequence = event.sequence
-        if (call.name == "run_command" and result.metadata.get("purpose") == "verify"
-                and not result.metadata.get("verification_passed")):
-            state.repair_attempts += 1
-            await self._emit(state, "repair_attempt", {
-                "attempt": state.repair_attempts,
-                "max_attempts": state.max_repair_attempts,
-                "reason": result.message,
-            })
+            if self.checkpoint_manager is not None:
+                for path in map(str, mutated_files):
+                    try:
+                        self.checkpoint_manager.record_mutation(
+                            state.turn_id,
+                            path,
+                            sequence=event.sequence,
+                            tool=call.name,
+                            expected_sha256=(
+                                str(result.data["sha256"])
+                                if result.data.get("sha256")
+                                else None
+                            ),
+                        )
+                    except ToolError as exc:
+                        await self._emit(
+                            state,
+                            "checkpoint_tracking_failed",
+                            {
+                                "path": path,
+                                "code": exc.code,
+                                "message": exc.message,
+                            },
+                        )
+        if call.name == "run_command" and result.metadata.get("purpose") == "verify":
+            evidence = build_verification_evidence(
+                command=str(call.arguments.get("command") or ""),
+                purpose=str(result.metadata.get("purpose") or call.arguments.get("purpose") or "other"),
+                result=result.to_dict(),
+                objective=state.current_objective,
+                changed_files=state.changed_files,
+                started_sequence=started_sequence,
+                finished_sequence=event.sequence,
+            )
+            evidence_payload = evidence.to_dict()
+            state.verification_evidence.append(evidence_payload)
+            evidence_event = await self._emit(
+                state, "verification_recorded", {"evidence": evidence_payload}
+            )
+            if evidence.accepted:
+                state.last_successful_verification_sequence = evidence_event.sequence
+            else:
+                state.repair_attempts += 1
+                await self._emit(state, "repair_attempt", {
+                    "attempt": state.repair_attempts,
+                    "max_attempts": state.max_repair_attempts,
+                    "reason": evidence.reason,
+                })
         if result.ok and result.metadata.get("plan_updated"):
             await self._emit(state, "plan_updated", {
                 "plan": state.plan, "reason": result.data.get("reason", "")
@@ -531,6 +577,7 @@ class AgentRunner:
                     "plan": state.plan,
                     "verification_fresh": state.verification_is_fresh,
                     "successful_verification_sequence": state.last_successful_verification_sequence,
+                    "verification_evidence": state.verification_evidence,
                 },
             },
         )

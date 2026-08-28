@@ -48,6 +48,7 @@ class AgentState:
     repair_attempts: int = 0
     max_repair_attempts: int = 3
     run_budget: dict[str, Any] = field(default_factory=dict)
+    verification_evidence: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def create(
@@ -83,6 +84,7 @@ class AgentState:
         self.current_objective = ""
         self.repair_attempts = 0
         self.run_budget.clear()
+        self.verification_evidence.clear()
 
     @property
     def verification_is_fresh(self) -> bool:
@@ -106,12 +108,20 @@ class AgentState:
         self.current_objective = ""
         self.repair_attempts = 0
         self.run_budget.clear()
+        self.verification_evidence.clear()
         for event in events:
             payload = event.get("payload") or {}
             event_type = event.get("type")
             if event.get("turn_id"):
                 self.turn_id = str(event["turn_id"])
             if event_type == "turn_started":
+                self.changed_files.clear()
+                self.last_mutation_sequence = 0
+                self.last_successful_verification_sequence = 0
+                self.verification_evidence.clear()
+                self.pending_approval = None
+                self.repair_attempts = 0
+                self.completion_rejections = 0
                 self.current_objective = str(payload.get("message", ""))
                 self.messages.append({"role": "user", "content": self.current_objective})
                 self.step = 0
@@ -144,13 +154,28 @@ class AgentState:
                 if isinstance(duration, int):
                     stats["duration_ms"] += duration
                 metadata = result.get("metadata") or {}
-                self.changed_files.update(map(str, metadata.get("mutated_files", [])))
+                mutated_files = list(map(str, metadata.get("mutated_files", [])))
+                self.changed_files.update(mutated_files)
+                if mutated_files:
+                    self.last_mutation_sequence = int(event.get("sequence", 0))
             elif event_type == "plan_updated":
                 self.plan = list(payload.get("plan") or [])
             elif event_type == "context_compacted":
                 self.context_summary = str(payload.get("summary") or "")
             elif event_type == "repair_attempt":
                 self.repair_attempts = max(self.repair_attempts, int(payload.get("attempt", 0)))
+            elif event_type == "verification_recorded":
+                evidence = payload.get("evidence")
+                if isinstance(evidence, dict):
+                    self.verification_evidence.append(dict(evidence))
+                    if evidence.get("accepted"):
+                        self.last_successful_verification_sequence = int(
+                            event.get("sequence", 0)
+                        )
+            elif event_type == "checkpoint_restored":
+                self.changed_files.clear()
+                self.last_mutation_sequence = int(event.get("sequence", 0))
+                self.last_successful_verification_sequence = 0
             elif event_type in {"run_budget_started", "run_budget_updated", "run_budget_exhausted"}:
                 self.run_budget = dict(payload.get("budget") or self.run_budget)
             elif event_type == "turn_finished":

@@ -42,4 +42,4 @@ No existing coding-agent product is invoked or wrapped. No agent framework or ag
 
 ## Core execution contract
 
-The model may request an action, but it never directly accesses the machine. Every action passes through parameter validation, workspace policy, optional user approval, execution, result normalization, and event logging. A code-changing task is complete only when a successful verification occurs after the latest mutation.
+The model may request an action, but it never directly accesses the machine. Every action passes through parameter validation, workspace policy, optional user approval, execution, result normalization, and event logging. A code-changing task is complete only when applicable structured verification evidence succeeds after the latest mutation; `purpose="verify"` alone is never trusted. Checkpoint restore preflights the current file hashes against the latest Agent-owned outputs and refuses conflicts unless the user explicitly confirms a forced restore.

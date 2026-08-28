@@ -11,8 +11,8 @@ Code Helper 是一个从零实现的本地 Coding Agent。它通过模型原生 
 - [x] 本地文件、搜索和命令工具
 - [x] CLI 读—改—测闭环
 - [x] 本地 Web API、WebSocket 事件流与基础 UI
-- [x] 读取后修改、文件哈希和验证新鲜度
-- [x] Git Diff 展示、轻量检查点与显式回滚
+- [x] 读取后修改、文件哈希、结构化验证证据和验证新鲜度
+- [x] Git Diff、Agent 产物检查点、冲突预检与二次确认回滚
 - [x] Repo Map Lite 与项目 `AGENTS.md` 规则注入
 - [x] 三个项目 Skills（bug-fix、add-feature、code-review）按需加载
 - [x] 动态计划工具与 Web 计划面板

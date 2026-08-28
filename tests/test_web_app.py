@@ -335,6 +335,78 @@ def test_cancel_endpoint_interrupts_active_web_run(tmp_path: Path) -> None:
     assert "run_cancelled" in event_types
 
 
+def test_restore_endpoint_requires_second_confirmation_for_external_edits(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sample.py"
+    path.write_text("before\n", encoding="utf-8")
+    application = create_app(_config())
+    with TestClient(application) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        session = application.state.session_manager.get(session_id)
+        state = session.runtime.state
+        checkpoint = session.runtime.checkpoint_manager
+        checkpoint.capture(state.turn_id, "sample.py")
+        path.write_text("agent edit\n", encoding="utf-8")
+        checkpoint.record_mutation(
+            state.turn_id, "sample.py", sequence=3, tool="apply_patch"
+        )
+        path.write_text("user edit\n", encoding="utf-8")
+
+        rejected = client.post(
+            f"/api/sessions/{session_id}/restore", json={"force": False}
+        )
+        conflict = rejected.json()["detail"]["conflicts"][0]
+        forced = client.post(
+            f"/api/sessions/{session_id}/restore",
+            json={
+                "force": True,
+                "confirmed_hashes": {"sample.py": conflict["current_sha256"]},
+            },
+        )
+        events = client.get(f"/api/sessions/{session_id}/events").json()
+
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "RESTORE_CONFLICT"
+    assert rejected.json()["detail"]["conflicts"][0]["path"] == "sample.py"
+    assert forced.status_code == 200
+    assert forced.json()["forced"] is True
+    assert path.read_text(encoding="utf-8") == "before\n"
+    restored_event = next(
+        event for event in events if event["type"] == "checkpoint_restored"
+    )
+    assert restored_event["payload"]["forced"] is True
+
+
+def test_intelligence_exposes_structured_verification_evidence(tmp_path: Path) -> None:
+    application = create_app(_config())
+    with TestClient(application) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = created.json()["session_id"]
+        session = application.state.session_manager.get(session_id)
+        session.runtime.state.verification_evidence.append(
+            {
+                "command": "python -m pytest -q",
+                "kind": "test",
+                "source": "related_test_inferred",
+                "accepted": True,
+                "reason": "Recognized test command",
+            }
+        )
+
+        intelligence = client.get(
+            f"/api/sessions/{session_id}/intelligence"
+        ).json()
+
+    assert intelligence["verification"]["evidence"][0]["kind"] == "test"
+    assert intelligence["verification"]["evidence"][0]["accepted"] is True
+
+
 def test_websocket_receives_agent_events(tmp_path: Path) -> None:
     application = create_app(_config(), model_client_factory=FinalAnswerModel)
     with TestClient(application) as client:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -94,10 +93,13 @@ def _make_runner(
 
 def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
-    verify_command = (
-        f'"{sys.executable}" -c "from pathlib import Path; '
-        "assert Path('sample.py').read_text() == 'value = 2\\n'\""
+    (tmp_path / "test_sample.py").write_text(
+        "from pathlib import Path\n\n"
+        "def test_value():\n"
+        "    assert Path('sample.py').read_text() == 'value = 2\\n'\n",
+        encoding="utf-8",
     )
+    verify_command = "python -m pytest -q test_sample.py"
     model = ScriptedModel(
         [
             ModelResponse(tool_calls=[ToolCall("1", "read_file", {"path": "sample.py"})]),
@@ -199,12 +201,103 @@ def test_agent_does_not_finish_with_stale_verification(tmp_path: Path) -> None:
     assert "verification" in result.message.lower()
 
 
+def test_agent_rejects_echo_as_fake_verification(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    model = ScriptedModel(
+        [
+            ModelResponse(tool_calls=[ToolCall("1", "read_file", {"path": "sample.py"})]),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "2",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "value = 1",
+                            "new_text": "value = 2",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "3",
+                        "run_command",
+                        {"command": "echo ok", "purpose": "verify"},
+                    )
+                ]
+            ),
+            ModelResponse(content="Done."),
+            ModelResponse(content="Still done."),
+            ModelResponse(content="No stronger verification."),
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=10)
+
+    result = asyncio.run(runner.run_turn(state, "Change value to 2"))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert state.verification_is_fresh is False
+    assert state.last_successful_verification_sequence == 0
+    assert state.verification_evidence[-1]["accepted"] is False
+    assert "not verification" in state.verification_evidence[-1]["reason"]
+    assert "verification_recorded" in [event["type"] for event in store.load()]
+
+
+def test_agent_accepts_user_requested_custom_verification(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    command = "python -c \"from pathlib import Path; assert Path('sample.py').exists()\""
+    model = ScriptedModel(
+        [
+            ModelResponse(tool_calls=[ToolCall("1", "read_file", {"path": "sample.py"})]),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "2",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "value = 1",
+                            "new_text": "value = 2",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "3",
+                        "run_command",
+                        {"command": command, "purpose": "verify"},
+                    )
+                ]
+            ),
+            ModelResponse(content="Verified with the requested command."),
+        ]
+    )
+    runner, _ = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=10)
+
+    result = asyncio.run(
+        runner.run_turn(state, f"Change value to 2, then run `{command}`")
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert state.verification_evidence[-1]["accepted"] is True
+    assert state.verification_evidence[-1]["source"] == "user_requested"
+
+
 def test_agent_can_suspend_and_resume_approval(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
-    verify_command = (
-        f'"{sys.executable}" -c "from pathlib import Path; '
-        "assert Path('sample.py').read_text() == 'value = 2\\n'\""
+    (tmp_path / "test_sample.py").write_text(
+        "from pathlib import Path\n\n"
+        "def test_value():\n"
+        "    assert Path('sample.py').read_text() == 'value = 2\\n'\n",
+        encoding="utf-8",
     )
+    verify_command = "python -m pytest -q test_sample.py"
     model = ScriptedModel(
         [
             ModelResponse(tool_calls=[ToolCall("1", "read_file", {"path": "sample.py"})]),

@@ -114,7 +114,6 @@ def register_shell_tools(
         exit_code = data["exit_code"]
         metadata = {
             "purpose": purpose,
-            "verification_passed": purpose == "verify" and exit_code == 0,
             "termination": "completed",
             **output_metadata,
         }
@@ -132,7 +131,7 @@ def register_shell_tools(
     registry.register(
         ToolSpec(
             "run_command",
-            "Run a command in the workspace. Use purpose='verify' for tests, builds, or checks.",
+            "Run a command in the workspace. Use purpose='verify' only for real tests, builds, lint, typechecks, compiles, or an exact user-requested check; informational commands do not verify changes.",
             {
                 "type": "object",
                 "properties": {

@@ -179,6 +179,12 @@ class UserMemorySettingRequest(BaseModel):
     enabled: bool
 
 
+class RestoreRequest(BaseModel):
+    paths: list[str] | None = None
+    force: bool = False
+    confirmed_hashes: dict[str, str | None] | None = None
+
+
 class ApprovalBroker:
     def __init__(self) -> None:
         self._pending: dict[str, asyncio.Future[bool]] = {}
@@ -384,6 +390,7 @@ def create_app(
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "budget": _budget_view(session.runtime),
+            "verification_evidence": state.verification_evidence,
             "last_error": session.last_error,
         }
 
@@ -476,6 +483,11 @@ def create_app(
             "tool_totals": tool_totals,
             "step": state.step,
             "budget": _budget_view(runtime),
+            "verification": {
+                "fresh": state.verification_is_fresh,
+                "successful_sequence": state.last_successful_verification_sequence,
+                "evidence": state.verification_evidence,
+            },
         }
 
     @app.post("/api/sessions/{session_id}/memory/candidates/{candidate_id}")
@@ -641,7 +653,11 @@ def create_app(
             "status": state.status,
             "changed_files": sorted(state.changed_files),
             "plan": state.plan,
-            "verification": {"fresh": state.verification_is_fresh, "successful_sequence": state.last_successful_verification_sequence},
+            "verification": {
+                "fresh": state.verification_is_fresh,
+                "successful_sequence": state.last_successful_verification_sequence,
+                "evidence": state.verification_evidence,
+            },
             "repair_attempts": {"used": state.repair_attempts, "max": state.max_repair_attempts},
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
@@ -717,33 +733,58 @@ def create_app(
     async def get_checkpoint(session_id: str) -> dict[str, Any]:
         session = manager.get(session_id)
         state = session.runtime.state
+        manager = session.runtime.checkpoint_manager
+        try:
+            preview = manager.preview_restore(state.turn_id)
+        except ToolError:
+            preview = []
         return {
             "turn_id": state.turn_id,
-            "files": session.runtime.checkpoint_manager.list_files(state.turn_id),
+            "files": manager.list_files(state.turn_id),
+            "preview": preview,
         }
 
     @app.post("/api/sessions/{session_id}/restore")
-    async def restore_checkpoint(session_id: str) -> dict[str, Any]:
+    async def restore_checkpoint(
+        session_id: str, request: RestoreRequest | None = None
+    ) -> dict[str, Any]:
         session = manager.get(session_id)
         if session.running:
             raise HTTPException(status_code=409, detail="Cannot restore while Agent is running")
         state = session.runtime.state
+        restore_request = request or RestoreRequest()
+        checkpoint_manager = session.runtime.checkpoint_manager
         try:
-            restored = session.runtime.checkpoint_manager.restore(state.turn_id)
+            preview = checkpoint_manager.preview_restore(
+                state.turn_id, paths=restore_request.paths
+            )
+            restored = checkpoint_manager.restore(
+                state.turn_id,
+                paths=restore_request.paths,
+                force=restore_request.force,
+                confirmed_hashes=restore_request.confirmed_hashes,
+            )
         except ToolError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": exc.message, **exc.data},
+            ) from exc
         state.changed_files.clear()
-        state.last_mutation_sequence = 0
         state.last_successful_verification_sequence = 0
-        await session.runtime.event_bus.publish(
+        event = await session.runtime.event_bus.publish(
             AgentEvent(
                 type="checkpoint_restored",
                 session_id=state.session_id,
                 turn_id=state.turn_id,
-                payload={"files": restored},
+                payload={
+                    "files": restored,
+                    "forced": restore_request.force,
+                    "preview": preview,
+                },
             )
         )
-        return {"restored": restored}
+        state.last_mutation_sequence = event.sequence
+        return {"restored": restored, "forced": restore_request.force, "preview": preview}
 
     @app.websocket("/ws/sessions/{session_id}")
     async def session_events(websocket: WebSocket, session_id: str) -> None:
