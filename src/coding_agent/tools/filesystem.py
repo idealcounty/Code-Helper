@@ -58,6 +58,7 @@ def register_filesystem_tools(registry: ToolRegistry, workspace: Workspace) -> N
                 "total_lines": len(lines),
                 "content": selected,
                 "sha256": observation.sha256,
+                "summary": workspace.file_summary(path, observation),
             },
         )
 

@@ -39,6 +39,7 @@ class Workspace:
         if not self.root.is_dir():
             raise ValueError(f"Workspace is not a directory: {self.root}")
         self.observations: dict[Path, FileObservation] = {}
+        self.summary_cache: dict[Path, tuple[str, dict[str, object]]] = {}
 
     def resolve(
         self,
@@ -98,8 +99,27 @@ class Workspace:
 
     def observe(self, path: Path) -> FileObservation:
         observation = _file_observation(path)
-        self.observations[path.resolve()] = observation
+        resolved = path.resolve()
+        previous = self.observations.get(resolved)
+        self.observations[resolved] = observation
+        if previous is not None and previous.sha256 != observation.sha256:
+            self.summary_cache.pop(resolved, None)
         return observation
+
+    def file_summary(self, path: Path, observation: FileObservation | None = None) -> dict[str, object]:
+        resolved = path.resolve()
+        observation = observation or self.observe(resolved)
+        cached = self.summary_cache.get(resolved)
+        if cached and cached[0] == observation.sha256:
+            return dict(cached[1])
+        text = resolved.read_text(encoding="utf-8")
+        summary: dict[str, object] = {
+            "path": self.relative(resolved), "sha256": observation.sha256,
+            "bytes": observation.size, "lines": len(text.splitlines()),
+            "preview": "\n".join(text.splitlines()[:8]),
+        }
+        self.summary_cache[resolved] = (observation.sha256, summary)
+        return dict(summary)
 
     def require_fresh_observation(self, path: Path) -> FileObservation:
         resolved = path.resolve()

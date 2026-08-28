@@ -57,6 +57,18 @@ def test_external_change_invalidates_observation(
     assert path.read_text(encoding="utf-8") == "value = 9\n"
 
 
+def test_file_summary_cache_invalidates_after_change(tmp_path: Path) -> None:
+    path = tmp_path / "app.py"
+    path.write_text("one\ntwo\n", encoding="utf-8")
+    workspace = Workspace(tmp_path)
+    first = workspace.file_summary(path)
+    assert workspace.file_summary(path) == first
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    workspace.observe(path)
+    second = workspace.file_summary(path)
+    assert second["lines"] == 3 and second["sha256"] != first["sha256"]
+
+
 def test_path_cannot_escape_workspace(
     tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
 ) -> None:
