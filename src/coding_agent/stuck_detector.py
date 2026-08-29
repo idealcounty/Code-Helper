@@ -42,17 +42,24 @@ class StuckDetector:
         if not self.is_stuck(recent_actions):
             return None
         latest = recent_actions[-1]
-        if str(latest.get("result_code") or "") not in RECOVERABLE_RESULT_CODES:
-            return None
         try:
             signature = json.loads(str(latest.get("signature") or "{}"))
         except (TypeError, ValueError):
             return None
-        if str(signature.get("name") or "") not in RECOVERABLE_TOOL_NAMES:
-            return None
+        result_code = str(latest.get("result_code") or "")
+        name = str(signature.get("name") or "")
+        if result_code in RECOVERABLE_RESULT_CODES and name in RECOVERABLE_TOOL_NAMES:
+            return (
+                "The same edit failed repeatedly. Do not repeat the identical tool call. "
+                "Re-read the target file to refresh its current contents, then choose a "
+                "corrected edit; if the requested change is already present, explain that "
+                "no further write is needed."
+            )
+        # A successful result can still be a model-side loop (for example, the
+        # same patch is emitted after every round). Give the model one bounded
+        # chance to observe the current state before terminating the run.
         return (
-            "The same edit failed repeatedly. Do not repeat the identical tool call. "
-            "Re-read the target file to refresh its current contents, then choose a "
-            "corrected edit; if the requested change is already present, explain that "
-            "no further write is needed."
+            "The identical tool call produced the same result repeatedly. Do not "
+            "repeat it again; inspect the latest state, choose a different next "
+            "action, or finish if the task is already satisfied."
         )

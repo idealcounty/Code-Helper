@@ -43,3 +43,24 @@ def test_repeated_edit_failure_gets_one_recovery_turn(tmp_path: Path) -> None:
         and "Re-read the target file" in message.get("content", "")
         for message in model.seen_messages[-1]
     )
+
+
+def test_repeated_successful_action_gets_bounded_recovery_turn(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 2\n", encoding="utf-8")
+    model = ScriptedModel(
+        [
+            ModelResponse(tool_calls=[ToolCall("read-1", "read_file", {"path": "sample.py"})]),
+            ModelResponse(tool_calls=[ToolCall("read-2", "read_file", {"path": "sample.py"})]),
+            ModelResponse(tool_calls=[ToolCall("read-3", "read_file", {"path": "sample.py"})]),
+            ModelResponse(content="The file is already in the requested state."),
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=8, mode="act")
+
+    result = asyncio.run(runner.run_turn(state, "Check sample.py"))
+
+    assert result.status is AgentStatus.COMPLETED
+    recovery = [event for event in store.load() if event["type"] == "stuck_recovery"]
+    assert len(recovery) == 1
+    assert "identical tool call" in recovery[0]["payload"]["message"]
