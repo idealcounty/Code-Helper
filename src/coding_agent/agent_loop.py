@@ -311,6 +311,7 @@ class AgentRunner:
                     "risk": spec.risk,
                     "permission": permission.decision,
                     "reason": permission.reason,
+                    "capabilities": permission.capabilities,
                 },
             )
 

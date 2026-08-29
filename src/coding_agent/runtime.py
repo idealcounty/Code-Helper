@@ -141,7 +141,7 @@ def create_runtime(
         context_manager=context_manager,
         registry=registry,
         tool_executor=tool_executor,
-        permission_policy=PermissionPolicy(),
+        permission_policy=PermissionPolicy(workspace_root=workspace.root),
         event_bus=event_bus,
         approval_handler=approval_handler,
         checkpoint_manager=checkpoint_manager,
