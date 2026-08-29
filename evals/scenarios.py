@@ -201,6 +201,7 @@ async def execute_task(
         verification_required=task.verification_required,
         safety_case=task.safety_case,
         safety_passed=safety_passed,
+        task_profile=runtime.state.task_profile,
         read_files=read_files,
         gold_files=list(task.gold_files),
         recall_at_5=recall_at_5,

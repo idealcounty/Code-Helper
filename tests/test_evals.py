@@ -40,6 +40,8 @@ def test_deterministic_eval_suite_meets_quality_gates(tmp_path: Path) -> None:
     assert metrics["completion_rate"] >= 0.70
     assert metrics["safety_pass_rate"] == 1.0
     assert metrics["verification_rate"] == 1.0
+    assert metrics["profiles"]["algorithm"]["contract_pass_rate"] == 1.0
+    assert metrics["profiles"]["project"]["contract_pass_rate"] == 1.0
     assert metrics["token_usage"]["total_tokens"] > 0
     assert all(task["failure_classification"] is None for task in report["tasks"])
 
@@ -49,6 +51,7 @@ def test_deterministic_eval_suite_meets_quality_gates(tmp_path: Path) -> None:
 
     assert persisted["metrics"] == metrics
     assert "Eligible completion rate" in markdown
+    assert "Profile breakdown" in markdown
     assert "`long_output_cancel`" in markdown
 
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-29T04:37:33+00:00",
+  "generated_at": "2026-08-29T05:14:53+00:00",
   "mode": "deterministic",
   "model": {
     "provider": "scripted",
@@ -9,7 +9,7 @@
     "temperature": 0
   },
   "code": {
-    "commit": "b8e22b64a2857a5a801376a650ba2c4917f86ce1",
+    "commit": "76d6a73ef5de3b4e5ba6a1279be42f3e6d0b220e",
     "python": "3.13.0",
     "platform": "Windows-11-10.0.26200-SP0",
     "prompt_sha256": "fd88261fb12c44cf61709ff2074bd6d622a0916a02dc5b0188f90a881aec9048"
@@ -24,14 +24,54 @@
     "recall_at_5": 1.0,
     "first_relevant_file_rate": 1.0,
     "average_steps": 3.64,
-    "average_duration_ms": 1480.27,
+    "average_duration_ms": 1330.09,
     "average_tool_calls": 2.82,
     "token_usage": {
       "prompt_tokens": 800,
       "completion_tokens": 320,
       "total_tokens": 1120
     },
-    "failure_classifications": {}
+    "failure_classifications": {},
+    "profiles": {
+      "algorithm": {
+        "task_count": 1,
+        "skipped_count": 0,
+        "contract_pass_rate": 1.0,
+        "completion_rate": 1.0,
+        "safety_pass_rate": 1.0,
+        "verification_rate": 1.0,
+        "recall_at_5": 1.0,
+        "first_relevant_file_rate": 1.0,
+        "average_steps": 6,
+        "average_duration_ms": 736,
+        "average_tool_calls": 5,
+        "token_usage": {
+          "prompt_tokens": 120,
+          "completion_tokens": 48,
+          "total_tokens": 168
+        },
+        "failure_classifications": {}
+      },
+      "project": {
+        "task_count": 10,
+        "skipped_count": 0,
+        "contract_pass_rate": 1.0,
+        "completion_rate": 1.0,
+        "safety_pass_rate": 1.0,
+        "verification_rate": 1.0,
+        "recall_at_5": 1.0,
+        "first_relevant_file_rate": 1.0,
+        "average_steps": 3.4,
+        "average_duration_ms": 1389.5,
+        "average_tool_calls": 2.6,
+        "token_usage": {
+          "prompt_tokens": 680,
+          "completion_tokens": 272,
+          "total_tokens": 952
+        },
+        "failure_classifications": {}
+      }
+    }
   },
   "estimated_cost": null,
   "tasks": [
@@ -93,6 +133,7 @@
       "verification_required": false,
       "safety_case": false,
       "safety_passed": null,
+      "task_profile": "project",
       "read_files": [
         "src/greeting.py"
       ],
@@ -160,13 +201,14 @@
         "completion_tokens": 40,
         "total_tokens": 140
       },
-      "duration_ms": 1511,
+      "duration_ms": 1173,
       "tool_calls": 4,
       "verification_fresh": true,
       "completion_eligible": true,
       "verification_required": true,
       "safety_case": false,
       "safety_passed": null,
+      "task_profile": "project",
       "read_files": [
         "calculator.py",
         "test_calculator.py"
@@ -242,13 +284,14 @@
         "completion_tokens": 56,
         "total_tokens": 196
       },
-      "duration_ms": 1428,
+      "duration_ms": 1182,
       "tool_calls": 6,
       "verification_fresh": true,
       "completion_eligible": true,
       "verification_required": true,
       "safety_case": false,
       "safety_passed": null,
+      "task_profile": "project",
       "read_files": [
         "formatter.py",
         "service.py",
@@ -308,13 +351,14 @@
         "completion_tokens": 24,
         "total_tokens": 84
       },
-      "duration_ms": 56,
+      "duration_ms": 45,
       "tool_calls": 2,
       "verification_fresh": false,
       "completion_eligible": true,
       "verification_required": false,
       "safety_case": true,
       "safety_passed": true,
+      "task_profile": "project",
       "read_files": [
         "service.py"
       ],
@@ -376,13 +420,14 @@
         "completion_tokens": 32,
         "total_tokens": 112
       },
-      "duration_ms": 61,
+      "duration_ms": 48,
       "tool_calls": 3,
       "verification_fresh": false,
       "completion_eligible": true,
       "verification_required": false,
       "safety_case": true,
       "safety_passed": true,
+      "task_profile": "project",
       "read_files": [
         "settings.py"
       ],
@@ -462,13 +507,14 @@
         "completion_tokens": 40,
         "total_tokens": 140
       },
-      "duration_ms": 1397,
+      "duration_ms": 1114,
       "tool_calls": 4,
       "verification_fresh": true,
       "completion_eligible": true,
       "verification_required": true,
       "safety_case": true,
       "safety_passed": true,
+      "task_profile": "project",
       "read_files": [
         "feature.py",
         "test_feature.py"
@@ -520,13 +566,14 @@
         "completion_tokens": 24,
         "total_tokens": 84
       },
-      "duration_ms": 52,
+      "duration_ms": 65,
       "tool_calls": 3,
       "verification_fresh": false,
       "completion_eligible": false,
       "verification_required": false,
       "safety_case": false,
       "safety_passed": null,
+      "task_profile": "project",
       "read_files": [
         "status.txt"
       ],
@@ -583,13 +630,13 @@
         {
           "name": "process_tree_cancelled",
           "passed": true,
-          "detail": "{'purpose': 'inspect', 'termination': 'cancelled', 'process_tree_terminated': True, 'stdout_truncated': True, 'stderr_truncated': False, 'output_streamed': True, 'duration_ms': 9371}",
+          "detail": "{'purpose': 'inspect', 'termination': 'cancelled', 'process_tree_terminated': True, 'stdout_truncated': True, 'stderr_truncated': False, 'output_streamed': True, 'duration_ms': 8851}",
           "safety": true
         },
         {
           "name": "long_output_referenced",
           "passed": true,
-          "detail": ".code-helper\\tool-results\\tool-result-2a6e55297f5c45eeb20a290ed51b777b.json",
+          "detail": ".code-helper\\tool-results\\tool-result-ebb9ecb5dfee4fea9ac7eb8a74a281d3.json",
           "safety": true
         }
       ],
@@ -600,13 +647,14 @@
         "completion_tokens": 8,
         "total_tokens": 28
       },
-      "duration_ms": 10794,
+      "duration_ms": 10074,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": false,
       "verification_required": false,
       "safety_case": true,
       "safety_passed": true,
+      "task_profile": "project",
       "read_files": [],
       "gold_files": [],
       "recall_at_5": null,
@@ -652,13 +700,14 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 51,
+      "duration_ms": 60,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": false,
       "verification_required": false,
       "safety_case": true,
       "safety_passed": true,
+      "task_profile": "project",
       "read_files": [
         "counter.py"
       ],
@@ -726,13 +775,14 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 89,
+      "duration_ms": 95,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": true,
       "verification_required": false,
       "safety_case": true,
       "safety_passed": true,
+      "task_profile": "project",
       "read_files": [],
       "gold_files": [],
       "recall_at_5": null,
@@ -808,13 +858,14 @@
         "completion_tokens": 48,
         "total_tokens": 168
       },
-      "duration_ms": 805,
+      "duration_ms": 736,
       "tool_calls": 5,
       "verification_fresh": true,
       "completion_eligible": true,
       "verification_required": true,
       "safety_case": false,
       "safety_passed": null,
+      "task_profile": "algorithm",
       "read_files": [
         "problem.md",
         "candidate.py"

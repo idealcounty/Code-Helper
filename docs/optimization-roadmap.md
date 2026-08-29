@@ -236,6 +236,7 @@ Cline 提供按时间点比较和恢复文件/任务的体验。本项目应只�
 - 确定性结果验证的是 Agent 契约和执行管线，不代表真实模型智能水平。
 - 真实模型首版只启用项目问答、单文件缺陷和跨文件功能三类任务，其余安全场景仍由确定性层控制变量。
 - `evals/algorithm_benchmark.py` 提供固定 seed 的 15-case 算法基准，覆盖样例、边界、随机输入、错误候选检测和失败输入最小化，并输出 `algorithm.json`/`algorithm.md`。
+- Agent Eval 报告按实际选中的 `project`/`algorithm` Profile 分组，分别记录契约、完成、验证、检索和资源指标，避免总平均掩盖模式差异。
 - `sensitive_environment` 当前只证明命令环境不会继承 API Key；运行时统一脱敏已在 R7 V1 落地，完整格式覆盖和配额仍待增强。
 - Session 中断任务证明副作用不会被自动重放；等待同一审批的完整恢复仍属于 R2。
 

@@ -114,6 +114,20 @@ async def run_suite(
 
 
 def summarize_metrics(results: list[EvalTaskResult]) -> dict[str, Any]:
+    """Summarize the suite and expose the same metrics per selected profile."""
+    metrics = _summarize_core(results)
+    active = [result for result in results if not result.skipped]
+    profiles = sorted({result.task_profile for result in active})
+    metrics["profiles"] = {
+        profile: _summarize_core(
+            [result for result in active if result.task_profile == profile]
+        )
+        for profile in profiles
+    }
+    return metrics
+
+
+def _summarize_core(results: list[EvalTaskResult]) -> dict[str, Any]:
     active = [result for result in results if not result.skipped]
     completed_candidates = [result for result in active if result.completion_eligible]
     safety_candidates = [result for result in active if result.safety_case]
@@ -304,6 +318,7 @@ def _crashed_result(
         verification_required=False,
         safety_case=False,
         safety_passed=None,
+        task_profile="unknown",
     )
 
 
@@ -403,11 +418,26 @@ def _markdown_report(report: dict[str, Any]) -> str:
         f"| Average duration | {metrics['average_duration_ms']} ms |",
         f"| Total Tokens | {metrics['token_usage']['total_tokens']} |",
         "",
+        "## Profile breakdown",
+        "",
+        "| Profile | Tasks | Contract | Completion | Verification | Recall@5 |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for profile, profile_metrics in sorted((metrics.get("profiles") or {}).items()):
+        lines.append(
+            f"| `{profile}` | {profile_metrics['task_count']} | "
+            f"{_percent(profile_metrics['contract_pass_rate'])} | "
+            f"{_percent(profile_metrics['completion_rate'])} | "
+            f"{_percent(profile_metrics['verification_rate'])} | "
+            f"{_percent(profile_metrics['recall_at_5'])} |"
+        )
+    lines.extend([
+        "",
         "## Tasks",
         "",
         "| Task | Category | Status | Contract | Steps | Tokens | Failure |",
         "| --- | --- | --- | --- | ---: | ---: | --- |",
-    ]
+    ])
     for task in report["tasks"]:
         lines.append(
             f"| `{task['task_id']}` | {task['category']} | {task['status']} | "
