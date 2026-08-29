@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -333,6 +334,49 @@ def test_repo_map_cache_survives_workspace_restart(tmp_path: Path) -> None:
     assert second["totals"]["summary_cache_hits"] == 1
     assert second["totals"]["dependency_graph_cache_hits"] == 1
     assert "def cached_symbol" in second["files"][0]["symbols"]
+
+
+def test_legacy_repo_map_cache_is_refreshed_for_call_edges(tmp_path: Path) -> None:
+    module = tmp_path / "module.py"
+    module.write_text("def target():\n    return 1\n", encoding="utf-8")
+    app = tmp_path / "app.py"
+    app.write_text(
+        "from module import target\n\ndef run():\n    return target()\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(module.read_bytes()).hexdigest()
+    cache_file = tmp_path / ".code-helper" / "cache" / "repo-map.json"
+    cache_file.parent.mkdir(parents=True)
+    # Simulate a cache written before the ``calls`` field was introduced.
+    cache_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "files": {
+                    "module.py": {
+                        "sha256": digest,
+                        "imports": [],
+                        "symbols": ["def target"],
+                    }
+                },
+                "graph": {
+                    "signature": [["module.py", digest]],
+                    "metadata": {},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    workspace = Workspace(tmp_path)
+    assert workspace.repo_graph_cache is None
+    data = RepoMapBuilder(workspace).build(query="target", max_files=10)
+
+    assert data["totals"]["summary_cache_misses"] == 2
+    app_entry = next(item for item in data["files"] if item["path"] == "app.py")
+    assert app_entry["dependencies"] == ["module.py"]
+    refreshed = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert refreshed["files"]["module.py"]["calls"] == []
 
 
 def test_get_repo_map_is_registered_as_read_tool(tmp_path: Path) -> None:

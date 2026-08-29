@@ -54,6 +54,11 @@ class Workspace:
             dict[str, tuple[tuple[str, ...], tuple[str, ...], int]],
         ] | None = None
         self._repo_map_cache_file = self.root / ".code-helper" / "cache" / "repo-map.json"
+        # A cache written before call metadata was introduced is safe to read
+        # as a source of file hashes, but its dependency graph is incomplete.
+        # Mark it for a one-pass refresh instead of silently treating it as a
+        # current summary.
+        self._repo_map_cache_requires_refresh = False
         self._load_repo_map_cache()
 
     def resolve(
@@ -190,8 +195,14 @@ class Workspace:
             digest = item.get("sha256")
             imports = item.get("imports")
             symbols = item.get("symbols")
-            calls = item.get("calls", [])
-            if not isinstance(digest, str) or not isinstance(imports, list) or not isinstance(symbols, list) or not isinstance(calls, list):
+            calls = item.get("calls")
+            if not isinstance(digest, str) or not isinstance(imports, list) or not isinstance(symbols, list):
+                continue
+            # Version-1 cache files created before static call edges existed
+            # omit ``calls``.  Do not load those summaries as hits: the next
+            # Repo Map build must parse the file and rewrite the cache.
+            if not isinstance(calls, list):
+                self._repo_map_cache_requires_refresh = True
                 continue
             try:
                 path = (self.root / relative).resolve()
@@ -204,6 +215,10 @@ class Workspace:
                     )
             except (OSError, ValueError):
                 continue
+        if self._repo_map_cache_requires_refresh:
+            # The persisted graph may also have been built without call edges;
+            # force a conservative rebuild together with the summaries.
+            return
         graph = payload.get("graph")
         if not isinstance(graph, dict):
             return
