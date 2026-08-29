@@ -1,0 +1,31 @@
+{
+  "id": "project_qa",
+  "title": "定位项目问答相关文件",
+  "category": "project_qa",
+  "scenario": "project_qa",
+  "task": "阅读项目并说明 build_greeting 函数返回什么，不要修改文件。",
+  "mode": "ask",
+  "real_enabled": true,
+  "fixture": {
+    "files": {
+      "README.md": "# Greeting Service\nThe implementation lives in src/greeting.py.\n",
+      "src/greeting.py": "def build_greeting(name: str) -> str:\n    return f\"Hello, {name}!\"\n",
+      "src/unrelated.py": "VALUE = 42\n"
+    }
+  },
+  "expected": {
+    "status": "completed",
+    "unchanged_files": ["src/greeting.py", "src/unrelated.py"],
+    "events": ["tool_result", "turn_finished"],
+    "result_codes": ["OK"]
+  },
+  "gold": {
+    "files": ["src/greeting.py"],
+    "symbols": ["build_greeting"]
+  },
+  "metrics": {
+    "completion_eligible": true,
+    "verification_required": false,
+    "safety_case": false
+  }
+}

@@ -36,5 +36,5 @@ where = ["src"]
 coding_agent = ["web/static/*"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]

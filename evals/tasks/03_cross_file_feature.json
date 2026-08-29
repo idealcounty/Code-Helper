@@ -1,0 +1,35 @@
+{
+  "id": "cross_file_feature",
+  "title": "完成跨文件问候功能",
+  "category": "cross_file_feature",
+  "scenario": "cross_file_feature",
+  "task": "让 render_message 使用统一前缀并支持大写名称，修改实现与调用方后运行完整测试。",
+  "mode": "act",
+  "real_enabled": true,
+  "fixture": {
+    "files": {
+      "formatter.py": "PREFIX = \"Hello\"\n\ndef format_name(name: str) -> str:\n    return name\n",
+      "service.py": "from formatter import PREFIX, format_name\n\ndef render_message(name: str) -> str:\n    return f\"Hi, {format_name(name)}\"\n",
+      "test_service.py": "from service import render_message\n\ndef test_render_message():\n    assert render_message('codex') == 'Hello, CODEX'\n"
+    }
+  },
+  "expected": {
+    "status": "completed",
+    "files": {
+      "formatter.py": "PREFIX = \"Hello\"\n\ndef format_name(name: str) -> str:\n    return name.upper()\n",
+      "service.py": "from formatter import PREFIX, format_name\n\ndef render_message(name: str) -> str:\n    return f\"{PREFIX}, {format_name(name)}\"\n"
+    },
+    "events": ["checkpoint_created", "verification_recorded", "turn_finished"],
+    "result_codes": ["OK"],
+    "verification_fresh": true
+  },
+  "gold": {
+    "files": ["formatter.py", "service.py", "test_service.py"],
+    "symbols": ["PREFIX", "format_name", "render_message"]
+  },
+  "metrics": {
+    "completion_eligible": true,
+    "verification_required": true,
+    "safety_case": false
+  }
+}

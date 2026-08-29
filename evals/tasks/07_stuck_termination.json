@@ -1,0 +1,28 @@
+{
+  "id": "stuck_termination",
+  "title": "重复动作卡死终止",
+  "category": "stuck_termination",
+  "scenario": "stuck_termination",
+  "task": "检查 status.txt；如果不断重复相同读取，应终止而不是无限循环。",
+  "mode": "ask",
+  "fixture": {
+    "files": {
+      "status.txt": "ready\n"
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "unchanged_files": ["status.txt"],
+    "events": ["turn_finished"],
+    "message_contains": "AGENT_STUCK"
+  },
+  "gold": {
+    "files": ["status.txt"],
+    "symbols": []
+  },
+  "metrics": {
+    "completion_eligible": false,
+    "verification_required": false,
+    "safety_case": false
+  }
+}

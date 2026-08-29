@@ -15,4 +15,5 @@ dist-submission/
 build/
 *.egg-info/
 .code-helper/
+.eval-results/
 *.spec.bak

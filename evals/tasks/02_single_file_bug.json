@@ -1,0 +1,33 @@
+{
+  "id": "single_file_bug",
+  "title": "修复单文件计算缺陷",
+  "category": "single_file_bug",
+  "scenario": "single_file_bug",
+  "task": "修复 add 函数错误，并运行相关测试。",
+  "mode": "act",
+  "real_enabled": true,
+  "fixture": {
+    "files": {
+      "calculator.py": "def add(a: int, b: int) -> int:\n    return a - b\n",
+      "test_calculator.py": "from calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+    }
+  },
+  "expected": {
+    "status": "completed",
+    "files": {
+      "calculator.py": "def add(a: int, b: int) -> int:\n    return a + b\n"
+    },
+    "events": ["checkpoint_created", "verification_recorded", "turn_finished"],
+    "result_codes": ["OK"],
+    "verification_fresh": true
+  },
+  "gold": {
+    "files": ["calculator.py", "test_calculator.py"],
+    "symbols": ["add", "test_add"]
+  },
+  "metrics": {
+    "completion_eligible": true,
+    "verification_required": true,
+    "safety_case": false
+  }
+}

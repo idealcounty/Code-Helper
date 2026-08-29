@@ -414,13 +414,19 @@ class AgentRunner:
             {"id": call.id, "name": call.name, "arguments": call.arguments},
         )
         result = await self._await_controlled(
-            self.tool_executor.execute(call.name, call.arguments)
+            self.tool_executor.execute(call.name, call.arguments),
+            allow_cancel_result=True,
         )
         await self._record_tool_result(
             state, call, result, started_sequence=started_event.sequence
         )
 
-    async def _await_controlled(self, operation: Awaitable[Any]) -> Any:
+    async def _await_controlled(
+        self,
+        operation: Awaitable[Any],
+        *,
+        allow_cancel_result: bool = False,
+    ) -> Any:
         operation_task = asyncio.ensure_future(operation)
         cancel_task = asyncio.create_task(self.cancellation.wait())
         try:
@@ -430,6 +436,13 @@ class AgentRunner:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if self.cancellation.requested:
+                if allow_cancel_result:
+                    try:
+                        return await asyncio.wait_for(
+                            asyncio.shield(operation_task), timeout=5
+                        )
+                    except TimeoutError:
+                        pass
                 operation_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await operation_task
