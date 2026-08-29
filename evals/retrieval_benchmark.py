@@ -45,12 +45,14 @@ def run_benchmark() -> dict[str, Any]:
             workspace.mkdir()
             write_fixture(workspace, task.fixture_files)
             builder = RepoMapBuilder(Workspace(workspace))
+            no_rag = _metrics(_filesystem_order(workspace), task.gold_files)
             lexical = builder.build(query=task.task, max_files=5, include_dependency_graph=False)
             graph = builder.build(query=task.task, max_files=5, include_dependency_graph=True)
             rows.append(
                 {
                     "task_id": task.id,
                     "gold_files": list(task.gold_files),
+                    "no_rag": no_rag,
                     "lexical": _metrics(lexical["files"], task.gold_files),
                     "dependency_graph": _metrics(graph["files"], task.gold_files),
                 }
@@ -60,22 +62,25 @@ def run_benchmark() -> dict[str, Any]:
         workspace.mkdir()
         write_fixture(workspace, case["files"])
         builder = RepoMapBuilder(Workspace(workspace))
+        no_rag = _metrics(_filesystem_order(workspace), case["gold_files"])
         lexical = builder.build(query=case["query"], max_files=1, include_dependency_graph=False)
         graph = builder.build(query=case["query"], max_files=1, include_dependency_graph=True)
         rows.append(
             {
                 "task_id": case["id"],
                 "gold_files": list(case["gold_files"]),
+                "no_rag": no_rag,
                 "lexical": _metrics(lexical["files"], case["gold_files"]),
                 "dependency_graph": _metrics(graph["files"], case["gold_files"]),
             }
         )
+    no_rag = _aggregate(rows, "no_rag")
     lexical = _aggregate(rows, "lexical")
     graph = _aggregate(rows, "dependency_graph")
     return {
         "schema_version": 1,
         "task_count": len(rows),
-        "metrics": {"lexical": lexical, "dependency_graph": graph},
+        "metrics": {"no_rag": no_rag, "lexical": lexical, "dependency_graph": graph},
         "tasks": rows,
     }
 
@@ -93,6 +98,15 @@ def _metrics(files: list[dict[str, Any]], gold: tuple[str, ...]) -> dict[str, An
     }
 
 
+def _filesystem_order(workspace: Path) -> list[dict[str, Any]]:
+    """Model a no-RAG baseline by taking files in stable filesystem order."""
+    return [
+        {"path": path.relative_to(workspace).as_posix()}
+        for path in sorted(workspace.rglob("*"))
+        if path.is_file()
+    ]
+
+
 def _aggregate(rows: list[dict[str, Any]], key: str) -> dict[str, float | int]:
     values = [row[key] for row in rows]
     return {
@@ -108,20 +122,20 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Repo Map 检索基线",
         "",
-        "该报告使用固定 Eval fixtures，对比词法排序与词法 + Python 导入依赖图排序。",
+        "该报告使用固定 Eval fixtures，对比无 RAG 文件顺序、词法排序与词法 + Python 导入依赖图排序。",
         "",
         "| 策略 | 任务数 | Recall@5 | 首个相关文件 | MRR |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
-    for name, label in (("lexical", "仅词法"), ("dependency_graph", "词法+依赖图")):
+    for name, label in (("no_rag", "无 RAG"), ("lexical", "仅词法"), ("dependency_graph", "词法+依赖图")):
         item = metrics[name]
         lines.append(
             f"| {label} | {item['task_count']} | {item['recall_at_5']:.1%} | {item['first_relevant_rate']:.1%} | {item['mrr']:.3f} |"
         )
-    lines.extend(["", "## 任务明细", "", "| 任务 | 词法 Recall@5 | 依赖图 Recall@5 |", "| --- | ---: | ---: |"])
+    lines.extend(["", "## 任务明细", "", "| 任务 | 无 RAG Recall@5 | 词法 Recall@5 | 依赖图 Recall@5 |", "| --- | ---: | ---: | ---: |"])
     for row in report["tasks"]:
         lines.append(
-            f"| `{row['task_id']}` | {row['lexical']['recall_at_5']:.1%} | {row['dependency_graph']['recall_at_5']:.1%} |"
+            f"| `{row['task_id']}` | {row['no_rag']['recall_at_5']:.1%} | {row['lexical']['recall_at_5']:.1%} | {row['dependency_graph']['recall_at_5']:.1%} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -138,7 +152,10 @@ def main() -> int:
     (args.output_dir / "retrieval.md").write_text(render_markdown(report), encoding="utf-8")
     lexical = report["metrics"]["lexical"]
     graph = report["metrics"]["dependency_graph"]
-    if graph["recall_at_5"] < lexical["recall_at_5"] or graph["first_relevant_rate"] < lexical["first_relevant_rate"]:
+    if (
+        graph["recall_at_5"] < lexical["recall_at_5"]
+        or graph["first_relevant_rate"] < lexical["first_relevant_rate"]
+    ):
         return 1
     print(render_markdown(report), end="")
     return 0

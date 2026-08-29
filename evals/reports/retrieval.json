@@ -2,6 +2,12 @@
   "schema_version": 1,
   "task_count": 10,
   "metrics": {
+    "no_rag": {
+      "task_count": 10,
+      "recall_at_5": 1.0,
+      "first_relevant_rate": 0.9,
+      "mrr": 0.95
+    },
     "lexical": {
       "task_count": 10,
       "recall_at_5": 0.9,
@@ -21,6 +27,16 @@
       "gold_files": [
         "src/greeting.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "README.md",
+          "src/greeting.py",
+          "src/unrelated.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": false,
+        "mrr": 0.5
+      },
       "lexical": {
         "top_files": [
           "src/greeting.py",
@@ -48,6 +64,15 @@
         "calculator.py",
         "test_calculator.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "calculator.py",
+          "test_calculator.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "test_calculator.py",
@@ -74,6 +99,16 @@
         "service.py",
         "test_service.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "formatter.py",
+          "service.py",
+          "test_service.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "test_service.py",
@@ -100,6 +135,14 @@
       "gold_files": [
         "service.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "service.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "service.py"
@@ -122,6 +165,14 @@
       "gold_files": [
         "settings.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "settings.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "settings.py"
@@ -145,6 +196,15 @@
         "feature.py",
         "test_feature.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "feature.py",
+          "test_feature.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "test_feature.py",
@@ -169,6 +229,14 @@
       "gold_files": [
         "status.txt"
       ],
+      "no_rag": {
+        "top_files": [
+          "status.txt"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "status.txt"
@@ -191,6 +259,14 @@
       "gold_files": [
         "counter.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "counter.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "counter.py"
@@ -214,6 +290,15 @@
         "problem.md",
         "candidate.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "candidate.py",
+          "problem.md"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "problem.md",
@@ -238,6 +323,18 @@
       "gold_files": [
         "src/core.py"
       ],
+      "no_rag": {
+        "top_files": [
+          "src/core.py",
+          "src/noise_0.py",
+          "src/noise_1.py",
+          "src/noise_2.py",
+          "src/noise_3.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
       "lexical": {
         "top_files": [
           "src/workflow_entry.py"
