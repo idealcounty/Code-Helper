@@ -87,6 +87,37 @@ def test_create_session_for_local_workspace(tmp_path: Path) -> None:
     assert details.json()["running"] is False
 
 
+def test_trace_export_endpoint_returns_redacted_span_document(tmp_path: Path) -> None:
+    with TestClient(create_app(_config())) as client:
+        created = client.post("/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"})
+        session_id = created.json()["session_id"]
+        runtime = client.app.state.session_manager.get(session_id).runtime
+        runtime.event_store.append(
+            AgentEvent(
+                type="span_started",
+                session_id=session_id,
+                turn_id=runtime.state.turn_id,
+                payload={"span_id": "span-1", "kind": "model_request", "secret": "x"},
+            )
+        )
+        runtime.event_store.append(
+            AgentEvent(
+                type="span_finished",
+                session_id=session_id,
+                turn_id=runtime.state.turn_id,
+                payload={"span_id": "span-1", "kind": "model_request", "duration_ms": 4},
+            )
+        )
+        response = client.get(f"/api/sessions/{session_id}/trace")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metadata"]["source"] == "code-helper"
+    assert body["metadata"]["span_count"] == 1
+    assert body["traceEvents"][0]["dur"] == 4000.0
+    assert "secret" not in body["traceEvents"][0]["args"]
+
+
 def test_memory_control_endpoints(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

@@ -24,6 +24,7 @@ from ..permissions import ApprovalMode, PermissionResult
 from ..repo_map import RepoMapBuilder
 from ..runtime import AgentRuntime, create_runtime
 from ..session import AgentStatus
+from ..trace_export import build_trace
 from ..tools.base import ToolError
 
 
@@ -690,6 +691,12 @@ def create_app(
             "interrupted_tool_calls": state.interrupted_tool_calls,
             "recovery_warnings": state.recovery_warnings,
         }
+
+    @app.get("/api/sessions/{session_id}/trace")
+    async def get_trace(session_id: str) -> dict[str, Any]:
+        """Return a redacted Chrome Trace export of the session's spans."""
+        session = manager.get(session_id)
+        return build_trace(session.runtime.event_store.load())
 
     @app.post("/api/sessions/{session_id}/memory/candidates/{candidate_id}")
     async def resolve_memory_candidate(
