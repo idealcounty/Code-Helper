@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "seed": 20260829,
+  "case_count": 15,
+  "input_classes": [
+    "sample",
+    "boundary",
+    "random"
+  ],
+  "scenarios": [
+    {
+      "id": "correct_candidate",
+      "expected_fault": false,
+      "judge_ok": true,
+      "code": "OK",
+      "passed": 15,
+      "failed": 0,
+      "total": 15,
+      "first_failure": null,
+      "minimized_input": null
+    },
+    {
+      "id": "constant_wrong",
+      "expected_fault": true,
+      "judge_ok": false,
+      "code": "ALGORITHM_JUDGE_FAILED",
+      "passed": 1,
+      "failed": 14,
+      "total": 15,
+      "first_failure": {
+        "label": "case-2",
+        "status": "wrong_answer",
+        "expected": "2",
+        "actual": "0",
+        "detail": "normalized output differs"
+      },
+      "minimized_input": "0\n"
+    },
+    {
+      "id": "negative_boundary_bug",
+      "expected_fault": true,
+      "judge_ok": false,
+      "code": "ALGORITHM_JUDGE_FAILED",
+      "passed": 11,
+      "failed": 4,
+      "total": 15,
+      "first_failure": {
+        "label": "case-3",
+        "status": "wrong_answer",
+        "expected": "-2",
+        "actual": "-1",
+        "detail": "normalized output differs"
+      },
+      "minimized_input": "0\n"
+    }
+  ],
+  "metrics": {
+    "candidate_count": 3,
+    "faulty_candidate_count": 2,
+    "fault_detection_rate": 1.0,
+    "failure_minimization_rate": 1.0,
+    "correct_candidate_passed": true
+  }
+}

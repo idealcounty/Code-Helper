@@ -41,6 +41,9 @@ jobs:
       - name: Run Repo Map retrieval benchmark
         if: matrix.python-version == '3.11'
         run: python -m evals.retrieval_benchmark --output-dir retrieval-results
+      - name: Run Algorithm Judge benchmark
+        if: matrix.python-version == '3.11'
+        run: python -m evals.algorithm_benchmark --output-dir algorithm-results
       - name: Upload Agent Eval report
         if: always() && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
@@ -54,6 +57,13 @@ jobs:
         with:
           name: retrieval-benchmark
           path: retrieval-results/*
+          if-no-files-found: error
+      - name: Upload algorithm benchmark
+        if: always() && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: algorithm-benchmark
+          path: algorithm-results/*
           if-no-files-found: error
 
   package:
