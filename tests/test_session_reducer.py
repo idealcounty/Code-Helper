@@ -49,6 +49,28 @@ def test_reducer_restores_pending_approval_without_replaying_tools() -> None:
     assert state.interrupted_tool_calls == []
 
 
+def test_reducer_marks_redacted_approval_as_requires_reissue() -> None:
+    state = AgentState.create(session_id="session")
+    state.restore_from_events(
+        [
+            _event("turn_started", 1, {"message": "run with a secret"}),
+            _event(
+                "approval_requested",
+                2,
+                {
+                    "id": "cmd-1",
+                    "name": "run_command",
+                    "arguments": {"command": "[REDACTED]"},
+                    "reason": "command requires approval",
+                },
+            ),
+        ]
+    )
+
+    assert state.pending_approval is not None
+    assert state.pending_approval["redacted"] is True
+
+
 def test_reducer_marks_started_without_result_and_never_replays_it() -> None:
     state = AgentState.create(session_id="session")
     events = [
@@ -94,6 +116,50 @@ def test_reducer_deduplicates_tool_result_by_call_id() -> None:
     assert state.tool_stats["write_file"]["calls"] == 1
     assert state.changed_files == {"app.py"}
     assert state.completed_tool_call_ids == {"write-1"}
+
+
+def test_recovery_matrix_preserves_write_and_verification_facts() -> None:
+    state = AgentState.create(session_id="session")
+    state.restore_from_events(
+        [
+            _event("turn_started", 1, {"message": "edit and verify"}),
+            _event(
+                "tool_started",
+                2,
+                {"id": "write-1", "name": "write_file", "arguments": {"path": "app.py"}},
+            ),
+            _event(
+                "tool_result",
+                3,
+                {
+                    "id": "write-1",
+                    "name": "write_file",
+                    "arguments": {"path": "app.py"},
+                    "result": {
+                        "ok": True,
+                        "code": "OK",
+                        "metadata": {"mutated_files": ["app.py"]},
+                    },
+                },
+            ),
+            _event(
+                "verification_recorded",
+                4,
+                {
+                    "evidence": {
+                        "command": "python -m pytest -q",
+                        "accepted": True,
+                    }
+                },
+            ),
+        ]
+    )
+
+    assert state.interrupted_tool_calls == []
+    assert state.changed_files == {"app.py"}
+    assert state.last_mutation_sequence == 3
+    assert state.last_successful_verification_sequence == 4
+    assert state.verification_is_fresh is True
 
 
 def test_reducer_ignores_duplicate_event_id() -> None:

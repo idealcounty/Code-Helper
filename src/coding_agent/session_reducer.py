@@ -146,11 +146,14 @@ class SessionReducer:
             "name": str(payload.get("name") or ""),
             "arguments": copy.deepcopy(payload.get("arguments") or {}),
         }
-        self.state.pending_approval = {
+        pending = {
             "call": call,
             "remaining": copy.deepcopy(list(payload.get("remaining") or [])),
             "reason": str(payload.get("reason") or ""),
         }
+        if _contains_redacted(call) or _contains_redacted(payload.get("remaining") or []):
+            pending["redacted"] = True
+        self.state.pending_approval = pending
         self.state.status = AgentStatus.WAITING_APPROVAL
 
     def _approval_result(self, payload: Mapping[str, Any]) -> None:
@@ -270,3 +273,13 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _contains_redacted(value: Any) -> bool:
+    if isinstance(value, str):
+        return value == "[REDACTED]"
+    if isinstance(value, Mapping):
+        return any(_contains_redacted(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_redacted(item) for item in value)
+    return False

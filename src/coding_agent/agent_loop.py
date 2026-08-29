@@ -108,6 +108,22 @@ class AgentRunner:
         approved: bool,
     ) -> AgentRunResult:
 
+        if pending.get("redacted"):
+            call_id = str((pending.get("call") or {}).get("id") or "unknown")
+            await self._emit(
+                state,
+                "recovery_reapproval_required",
+                {
+                    "tool_call_id": call_id,
+                    "reason": "Approval arguments were redacted during persistence; resubmit the operation",
+                },
+            )
+            return AgentRunResult(
+                AgentStatus.WAITING_APPROVAL,
+                "RECOVERY_REAPPROVAL_REQUIRED: resubmit the operation because persisted approval data was redacted",
+                state,
+            )
+
         call = ToolCall(
             id=pending["call"]["id"],
             name=pending["call"]["name"],

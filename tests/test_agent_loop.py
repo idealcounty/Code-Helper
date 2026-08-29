@@ -370,6 +370,76 @@ def test_agent_can_suspend_and_resume_approval(tmp_path: Path) -> None:
     assert completed.status is AgentStatus.COMPLETED
 
 
+def test_redacted_recovered_approval_never_executes_with_placeholder(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    runner, store = _make_runner(tmp_path, ScriptedModel([]), approval_handler=None)
+    state = AgentState.create(session_id="session", max_steps=2)
+    state.status = AgentStatus.WAITING_APPROVAL
+    state.pending_approval = {
+        "call": {
+            "id": "write-1",
+            "name": "write_file",
+            "arguments": {
+                "path": "sample.py",
+                "content": "[REDACTED]",
+            },
+        },
+        "remaining": [],
+        "redacted": True,
+    }
+
+    result = asyncio.run(runner.resume_approval(state, approved=True))
+
+    assert result.status is AgentStatus.WAITING_APPROVAL
+    assert "REAPPROVAL_REQUIRED" in result.message
+    assert (tmp_path / "sample.py").read_text(encoding="utf-8") == "value = 1\n"
+    assert "recovery_reapproval_required" in [event["type"] for event in store.load()]
+
+
+def test_recovered_approval_can_resume_once_without_replaying_prior_events(tmp_path: Path) -> None:
+    runner, store = _make_runner(
+        tmp_path,
+        ScriptedModel(
+            [ModelResponse(content="write applied"), ModelResponse(content="still pending")]
+        ),
+        approval_handler=None,
+    )
+    state = AgentState.create(session_id="session", max_steps=2)
+    state.restore_from_events(
+        [
+            {
+                "type": "turn_started",
+                "turn_id": "turn-1",
+                "sequence": 1,
+                "payload": {"message": "create output.txt"},
+            },
+            {
+                "type": "approval_requested",
+                "turn_id": "turn-1",
+                "sequence": 2,
+                "payload": {
+                    "id": "write-1",
+                    "name": "write_file",
+                    "arguments": {"path": "output.txt", "content": "hello\n"},
+                    "reason": "write requires approval",
+                },
+            },
+        ]
+    )
+
+    result = asyncio.run(runner.resume_approval(state, approved=True))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert (tmp_path / "output.txt").read_text(encoding="utf-8") == "hello\n"
+    results = [
+        event
+        for event in store.load()
+        if event["type"] == "tool_result"
+        and event["payload"].get("id") == "write-1"
+    ]
+    assert len(results) == 1
+
+
 def test_shared_cancellation_interrupts_active_model_request(tmp_path: Path) -> None:
     async def scenario() -> tuple[AgentRunResult, list[dict[str, Any]], bool]:
         model = BlockingModel()
