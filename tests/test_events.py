@@ -9,6 +9,33 @@ import pytest
 from coding_agent.events import AgentEvent, EventBus, EventStore
 
 
+def test_event_store_prunes_old_sessions_but_keeps_active_session(tmp_path: Path) -> None:
+    old = tmp_path / "old-session.jsonl"
+    older = tmp_path / "older-session.jsonl"
+    old.write_text("x" * 120, encoding="utf-8")
+    older.write_text("y" * 120, encoding="utf-8")
+
+    store = EventStore(
+        tmp_path,
+        "active-session",
+        max_storage_bytes=260,
+        max_session_files=2,
+    )
+    EventBus(store)
+    store.append(
+        AgentEvent(
+            type="turn_started",
+            session_id="active-session",
+            turn_id="turn",
+            payload={"message": "hello"},
+        )
+    )
+
+    assert store.path.exists()
+    assert len(list(tmp_path.glob("*.jsonl"))) <= 2
+    assert any(item["code"] == "SESSION_PRUNED" for item in store.last_prune_diagnostics)
+
+
 def test_event_bus_assigns_stable_metadata(tmp_path: Path) -> None:
     store = EventStore(tmp_path, "session")
     bus = EventBus(store)

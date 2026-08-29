@@ -106,6 +106,8 @@ def create_runtime(
         workspace.root / ".code-helper" / "sessions",
         state.session_id,
         redactor=redactor,
+        max_storage_bytes=config.event_store_max_bytes,
+        max_session_files=config.event_store_max_files,
     )
     event_bus = EventBus(event_store)
     if event_listener is not None:

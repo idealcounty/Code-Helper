@@ -25,6 +25,8 @@ class AppConfig:
     token_budget: int | None = None
     result_store_max_bytes: int = 50_000_000
     result_store_max_files: int = 512
+    event_store_max_bytes: int = 100_000_000
+    event_store_max_files: int = 256
     user_memory_enabled: bool = False
     user_memory_dir: Path | None = None
 
@@ -62,6 +64,12 @@ class AppConfig:
             ),
             result_store_max_files=_positive_int(
                 "CODE_HELPER_RESULT_STORE_MAX_FILES", 512
+            ),
+            event_store_max_bytes=_positive_int(
+                "CODE_HELPER_EVENT_STORE_MAX_BYTES", 100_000_000
+            ),
+            event_store_max_files=_positive_int(
+                "CODE_HELPER_EVENT_STORE_MAX_FILES", 256
             ),
             user_memory_enabled=_boolean("CODE_HELPER_USER_MEMORY_ENABLED", False),
             user_memory_dir=_optional_path("CODE_HELPER_USER_MEMORY_DIR"),

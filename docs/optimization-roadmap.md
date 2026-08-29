@@ -273,7 +273,7 @@ Cline 提供按时间点比较和恢复文件/任务的体验。本项目应只�
 
 - 当前是 best-effort 模式，尚未覆盖所有第三方凭据格式、二进制输出和跨进程密钥注入；用户仍不应把凭据放进提示词或命令行。
 - 事件内容校验目前只保护新写入事件，旧无签名事件会兼容加载并标记 `LEGACY_EVENT_UNSIGNED`，不会自动改写历史文件。
-- 工具完整输出目录支持 `CODE_HELPER_RESULT_STORE_MAX_BYTES` 与 `CODE_HELPER_RESULT_STORE_MAX_FILES`；达到限制时按最旧引用清理，单个超限结果保留摘要并返回 `RESULT_STORE_QUOTA`，事件 JSONL 的跨 Session 配额仍待后续实现。
+- 工具完整输出目录支持 `CODE_HELPER_RESULT_STORE_MAX_BYTES` 与 `CODE_HELPER_RESULT_STORE_MAX_FILES`；达到限制时按最旧引用清理，单个超限结果保留摘要并返回 `RESULT_STORE_QUOTA`。Session 事件目录同样支持跨 Session 的字节/文件数保留上限，活动 Session 永不被清理。
 
 **建议实现**
 

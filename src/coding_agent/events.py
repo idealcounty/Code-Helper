@@ -48,12 +48,18 @@ class EventStore:
         *,
         redactor: Redactor | None = None,
         secret_values: tuple[str, ...] | list[str] | None = None,
+        max_storage_bytes: int | None = 100_000_000,
+        max_session_files: int | None = 256,
     ) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / f"{session_id}.jsonl"
+        self.max_storage_bytes = max_storage_bytes
+        self.max_session_files = max_session_files
+        self.last_prune_diagnostics: list[dict[str, Any]] = []
         self.last_load_diagnostics: list[dict[str, Any]] = []
         self.redactor = redactor or Redactor(secret_values)
+        self._prune_session_store()
 
     def append(self, event: AgentEvent) -> None:
         safe_data = self.redactor.redact(event.to_dict())
@@ -62,9 +68,47 @@ class EventStore:
         safe_data["integrity_sha256"] = digest
         event.integrity_sha256 = digest
         line = json.dumps(safe_data, ensure_ascii=False, default=str)
+        self._prune_session_store(incoming_bytes=len(line.encode("utf-8")) + 1)
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(line)
             handle.write("\n")
+
+    def _prune_session_store(self, *, incoming_bytes: int = 0) -> int:
+        """Prune only historical sessions; never remove the active session file."""
+        self.last_prune_diagnostics = []
+        candidates = sorted(
+            (
+                path
+                for path in self.root.glob("*.jsonl")
+                if path.is_file() and path.resolve() != self.path.resolve()
+            ),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+        current_size = self.path.stat().st_size if self.path.exists() else 0
+        total = current_size + sum(path.stat().st_size for path in candidates)
+        removed = 0
+        while candidates and (
+            (self.max_storage_bytes is not None and total + incoming_bytes > self.max_storage_bytes)
+            or (
+                self.max_session_files is not None
+                and len(candidates) + 1 > self.max_session_files
+            )
+        ):
+            oldest = candidates.pop(0)
+            try:
+                size = oldest.stat().st_size
+                oldest.unlink()
+            except OSError as exc:
+                self.last_prune_diagnostics.append(
+                    {"code": "SESSION_PRUNE_FAILED", "path": oldest.name, "message": str(exc)}
+                )
+                continue
+            total -= size
+            removed += 1
+            self.last_prune_diagnostics.append(
+                {"code": "SESSION_PRUNED", "path": oldest.name, "bytes": size}
+            )
+        return removed
 
     def load(self) -> list[dict[str, Any]]:
         self.last_load_diagnostics = []

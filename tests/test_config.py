@@ -16,6 +16,8 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_TOKEN_BUDGET",
     "CODE_HELPER_RESULT_STORE_MAX_BYTES",
     "CODE_HELPER_RESULT_STORE_MAX_FILES",
+    "CODE_HELPER_EVENT_STORE_MAX_BYTES",
+    "CODE_HELPER_EVENT_STORE_MAX_FILES",
     "DEEPSEEK_API_KEY",
 }
 
@@ -108,3 +110,14 @@ def test_result_store_limits_are_loaded(monkeypatch) -> None:
 
     assert config.result_store_max_bytes == 2048
     assert config.result_store_max_files == 3
+
+
+def test_event_store_limits_are_loaded(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
+    monkeypatch.setenv("CODE_HELPER_EVENT_STORE_MAX_BYTES", "4096")
+    monkeypatch.setenv("CODE_HELPER_EVENT_STORE_MAX_FILES", "5")
+
+    config = AppConfig.from_env()
+
+    assert config.event_store_max_bytes == 4096
+    assert config.event_store_max_files == 5

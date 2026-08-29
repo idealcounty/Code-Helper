@@ -136,7 +136,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 - 冲突安全回滚 V1 已完成：恢复前比较 Agent 产物哈希，冲突时普通恢复零写入并要求二次确认。
 - Web 已提供逐文件选择、恢复差异预览和外部修改二次确认的专用恢复对话框。
 - HookManager V1 已支持 Pre/Post、OnVerification、OnTaskEnd 四类 Hook；Runtime 默认注册安全的验证失败和任务结束证据提示，并支持工作区内受限的 argv 外部 Hook 配置（matcher、超时、cwd 和结构化 JSON）。
-- EventStore 已支持新事件完整性摘要、尾部损坏诊断、统一脱敏和默认 `causation_id` 因果链；工具完整输出已提供按字节/文件数的保留上限与最旧引用清理，旧无签名事件兼容加载、事件目录跨 Session 配额和更完整格式覆盖仍待加强。
+- EventStore 已支持新事件完整性摘要、尾部损坏诊断、统一脱敏、默认 `causation_id` 因果链和跨 Session 事件保留上限；工具完整输出也支持按字节/文件数清理，旧无签名事件兼容加载和更完整格式覆盖仍待加强。
 - shell 已支持 stdout/stderr 增量事件和 Web 终端实时显示，并在 Agent Loop 层按时间/大小窗口合并高频输出；长模型请求会发布不含思维内容的等待心跳；模型请求、审批等待和上下文构造已统一记录 Span 耗时；DeepSeek thinking 工具调用的私有推理状态与标准工具消息已完成多轮协议适配，且不会持久化思维文本。
 
 ### 4.4 仓库理解
