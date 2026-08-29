@@ -122,6 +122,21 @@ def test_repo_map_reuses_dependency_graph_until_importer_changes(tmp_path: Path)
     assert third["files"][0]["centrality"] == 0
 
 
+def test_repo_map_cache_survives_workspace_restart(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
+    source.write_text("def cached_symbol():\n    return 1\n", encoding="utf-8")
+
+    first_workspace = Workspace(tmp_path)
+    first = RepoMapBuilder(first_workspace).build(query="cached")
+    assert first["totals"]["summary_cache_misses"] == 1
+
+    restarted_workspace = Workspace(tmp_path)
+    second = RepoMapBuilder(restarted_workspace).build(query="cached")
+    assert second["totals"]["summary_cache_hits"] == 1
+    assert second["totals"]["dependency_graph_cache_hits"] == 1
+    assert "def cached_symbol" in second["files"][0]["symbols"]
+
+
 def test_get_repo_map_is_registered_as_read_tool(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     workspace = Workspace(tmp_path)

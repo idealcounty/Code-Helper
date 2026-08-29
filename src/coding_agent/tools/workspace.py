@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +51,8 @@ class Workspace:
             tuple[tuple[str, str], ...],
             dict[str, tuple[tuple[str, ...], tuple[str, ...], int]],
         ] | None = None
+        self._repo_map_cache_file = self.root / ".code-helper" / "cache" / "repo-map.json"
+        self._load_repo_map_cache()
 
     def resolve(
         self,
@@ -129,6 +133,97 @@ class Workspace:
         }
         self.summary_cache[resolved] = (observation.sha256, summary)
         return dict(summary)
+
+    def persist_repo_map_cache(self) -> None:
+        """Persist metadata-only Repo Map caches for reuse after a restart."""
+        files = {
+            self.relative(path): {
+                "sha256": digest,
+                "imports": list(imports),
+                "symbols": list(symbols),
+            }
+            for path, (digest, imports, symbols) in self.repo_map_cache.items()
+            if path.exists() and path.is_file()
+        }
+        graph: dict[str, object] | None = None
+        if self.repo_graph_cache is not None:
+            signature, metadata = self.repo_graph_cache
+            graph = {
+                "signature": [list(item) for item in signature],
+                "metadata": {
+                    path: {
+                        "dependencies": list(values[0]),
+                        "dependents": list(values[1]),
+                        "centrality": values[2],
+                    }
+                    for path, values in metadata.items()
+                },
+            }
+        payload = {"version": 1, "files": files, "graph": graph}
+        try:
+            self._repo_map_cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", newline="\n",
+                dir=self._repo_map_cache_file.parent,
+                prefix="repo-map-", suffix=".tmp", delete=False,
+            ) as handle:
+                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+                temporary = Path(handle.name)
+            temporary.replace(self._repo_map_cache_file)
+        except OSError:
+            # A read-only workspace must still be usable with in-memory cache.
+            return
+
+    def _load_repo_map_cache(self) -> None:
+        try:
+            payload = json.loads(self._repo_map_cache_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if payload.get("version") != 1 or not isinstance(payload.get("files"), dict):
+            return
+        for relative, item in payload["files"].items():
+            if not isinstance(relative, str) or not isinstance(item, dict):
+                continue
+            digest = item.get("sha256")
+            imports = item.get("imports")
+            symbols = item.get("symbols")
+            if not isinstance(digest, str) or not isinstance(imports, list) or not isinstance(symbols, list):
+                continue
+            try:
+                path = (self.root / relative).resolve()
+                if path.is_relative_to(self.root) and path.is_file():
+                    self.repo_map_cache[path] = (
+                        digest,
+                        tuple(str(value) for value in imports),
+                        tuple(str(value) for value in symbols),
+                    )
+            except (OSError, ValueError):
+                continue
+        graph = payload.get("graph")
+        if not isinstance(graph, dict):
+            return
+        raw_signature = graph.get("signature")
+        raw_metadata = graph.get("metadata")
+        if not isinstance(raw_signature, list) or not isinstance(raw_metadata, dict):
+            return
+        signature: list[tuple[str, str]] = []
+        for item in raw_signature:
+            if isinstance(item, list) and len(item) == 2 and all(isinstance(value, str) for value in item):
+                signature.append((item[0], item[1]))
+        metadata: dict[str, tuple[tuple[str, ...], tuple[str, ...], int]] = {}
+        for path, item in raw_metadata.items():
+            if not isinstance(path, str) or not isinstance(item, dict):
+                continue
+            dependencies = item.get("dependencies")
+            dependents = item.get("dependents")
+            centrality = item.get("centrality")
+            if isinstance(dependencies, list) and isinstance(dependents, list) and isinstance(centrality, int):
+                metadata[path] = (
+                    tuple(str(value) for value in dependencies),
+                    tuple(str(value) for value in dependents),
+                    centrality,
+                )
+        self.repo_graph_cache = (tuple(sorted(signature)), metadata)
 
     def require_fresh_observation(self, path: Path) -> FileObservation:
         resolved = path.resolve()

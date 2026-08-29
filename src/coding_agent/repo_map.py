@@ -153,6 +153,7 @@ class RepoMapBuilder:
             totals[
                 "dependency_graph_cache_hits" if graph_cache_hit else "dependency_graph_cache_misses"
             ] += 1
+        self.workspace.persist_repo_map_cache()
         ranked = sorted(files, key=lambda item: (-item.score, -item.centrality, item.path))
         ranked = ranked[:max_files]
         budget_truncated = False
