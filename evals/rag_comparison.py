@@ -71,6 +71,7 @@ async def run_comparison(
         "samples": samples,
         "delta": _delta(repo_summary["metrics"], no_rag_summary["metrics"]),
         "cross_file_delta": cross_file_delta,
+        "cross_file_repetitions": _cross_file_repetition_stats(samples),
         "quality_evidence": {
             "status": "real_model_required" if mode != "real" else "real_model_observed",
             "cross_file_completion_improved": (
@@ -152,6 +153,22 @@ def _cross_file_summary(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cross_file_repetition_stats(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize paired cross-file deltas across repetitions."""
+    deltas: list[float] = []
+    for sample in samples:
+        repo = _cross_file_summary(sample["repo_map"])["metrics"]["completion_rate"]
+        no_rag = _cross_file_summary(sample["no_rag"])["metrics"]["completion_rate"]
+        deltas.append(round(float(repo) - float(no_rag), 4))
+    return {
+        "count": len(deltas),
+        "positive_count": sum(delta > 0 for delta in deltas),
+        "non_negative_count": sum(delta >= 0 for delta in deltas),
+        "mean_delta": round(sum(deltas) / len(deltas), 4) if deltas else 0.0,
+        "deltas": deltas,
+    }
+
+
 def _task_rate(tasks: list[dict[str, Any]], field: str) -> float:
     if not tasks:
         return 0.0
@@ -207,6 +224,10 @@ def render_markdown(report: dict[str, Any]) -> str:
                 for key, value in report["cross_file_delta"].items()
             ),
             f"> {report['interpretation']}",
+            "Paired repetitions: "
+            f"{report['cross_file_repetitions']['positive_count']}/"
+            f"{report['cross_file_repetitions']['count']} positive, "
+            f"mean completion delta={report['cross_file_repetitions']['mean_delta']:+.1%}",
             "",
         ]
     )
