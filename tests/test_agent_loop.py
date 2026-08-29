@@ -303,6 +303,43 @@ def test_agent_emits_context_compaction_event(tmp_path: Path) -> None:
     assert "context_compacted" in event_types
 
 
+def test_agent_recovers_from_incomplete_tool_history_without_provider_400(
+    tmp_path: Path,
+) -> None:
+    class StrictProtocolModel(ScriptedModel):
+        async def complete(self, **kwargs: Any) -> ModelResponse:
+            messages = kwargs["messages"]
+            assert not any(message.get("tool_calls") for message in messages)
+            assert not any(message.get("role") == "tool" for message in messages)
+            return await super().complete(**kwargs)
+
+    model = StrictProtocolModel([ModelResponse(content="recovered")])
+    runner, _ = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=2, mode="ask")
+    state.messages = [
+        {"role": "user", "content": "inspect two files"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                ToolCall("call-1", "read_file", {"path": "a.py"}).to_message_dict(),
+                ToolCall("call-2", "read_file", {"path": "b.py"}).to_message_dict(),
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "read_file",
+            "content": "partial result before cancellation",
+        },
+    ]
+
+    result = asyncio.run(runner.run_turn(state, "continue safely"))
+
+    assert result.status is AgentStatus.COMPLETED
+    assert result.message == "recovered"
+
+
 def test_summary_failure_preserves_completed_turn_and_raw_events(tmp_path: Path) -> None:
     model = ScriptedModel([ModelResponse(content="done")])
     runner, store = _make_runner(tmp_path, model)

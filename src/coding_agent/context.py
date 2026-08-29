@@ -139,7 +139,7 @@ class ContextManager:
         )
         state.context_summary = summary
         state.context_summary_meta = summary_meta
-        estimated_chars = sum(len(str(item.get("content", ""))) for item in messages)
+        estimated_chars = _messages_chars(messages)
         return ModelContext(
             messages=[{"role": "system", "content": system}, *messages],
             allowed_tools=tool_schemas,
@@ -289,34 +289,153 @@ class ContextManager:
     ) -> tuple[list[dict[str, Any]], str, bool, dict[str, Any]]:
         if not messages:
             return [], "", False, {}
-        kept = messages[-self.max_messages:]
-        dropped = len(messages) - len(kept)
-        bounded: list[dict[str, Any]] = []
+        groups, protocol_removed = _protocol_message_groups(messages)
+        kept_groups: list[list[dict[str, Any]]] = []
+        kept_count = 0
+        for group in reversed(groups):
+            if not kept_groups:
+                # The newest atomic exchange is more important than the soft
+                # message-count limit and must never be split.
+                kept_groups.append(group)
+                kept_count += len(group)
+                continue
+            if kept_count + len(group) > self.max_messages:
+                break
+            kept_groups.append(group)
+            kept_count += len(group)
+        kept_groups.reverse()
+
+        clipped_groups = [
+            [_clip_message(message, self.max_message_chars) for message in group]
+            for group in kept_groups
+        ]
+        dropped = len(messages) - kept_count
+
+        # Remove old history by protocol group, never message by message.  An
+        # assistant tool_calls message and every corresponding tool result are
+        # one atomic unit for OpenAI-compatible APIs (including DeepSeek).
+        while len(clipped_groups) > 1:
+            summary, _ = _structured_context_summary(
+                messages,
+                state,
+                dropped,
+                protocol_removed=protocol_removed,
+            )
+            flattened = [message for group in clipped_groups for message in group]
+            total = _messages_chars(
+                ([{"role": "system", "content": summary}] if dropped else [])
+                + flattened
+            )
+            if total <= self.max_context_chars:
+                break
+            dropped += len(clipped_groups[0])
+            clipped_groups.pop(0)
+
+        bounded = [message for group in clipped_groups for message in group]
         summary = ""
         summary_meta: dict[str, Any] = {}
         if dropped:
-            summary, summary_meta = _structured_context_summary(messages, state, dropped)
-            bounded.append({"role": "system", "content": summary})
-        for message in kept:
-            item = dict(message)
-            content = item.get("content")
-            if isinstance(content, str) and len(content) > self.max_message_chars:
-                item["content"] = content[: self.max_message_chars // 2] + "\n...[message clipped]...\n" + content[-self.max_message_chars // 2 :]
-            bounded.append(item)
-        total = sum(len(str(item.get("content", ""))) for item in bounded)
-        while total > self.max_context_chars and len(bounded) > 1:
-            removed = bounded.pop(1)
-            total -= len(str(removed.get("content", "")))
+            summary, summary_meta = _structured_context_summary(
+                messages,
+                state,
+                dropped,
+                protocol_removed=protocol_removed,
+            )
+            bounded.insert(0, {"role": "system", "content": summary})
         return (
             bounded,
             summary,
-            dropped > 0 or len(bounded) < len(kept) + (1 if dropped else 0),
+            dropped > 0,
             summary_meta,
         )
 
 
+def _protocol_message_groups(
+    messages: list[dict[str, Any]],
+) -> tuple[list[list[dict[str, Any]]], int]:
+    """Return provider-valid atomic groups and count discarded messages.
+
+    Interrupted sessions and older event logs can contain an assistant tool
+    request without all of its tool results.  Orphan results are invalid too.
+    Both are omitted from the next provider request instead of causing a 400.
+    """
+    groups: list[list[dict[str, Any]]] = []
+    removed = 0
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        role = message.get("role")
+        if role == "tool":
+            removed += 1
+            index += 1
+            continue
+
+        raw_calls = message.get("tool_calls") if role == "assistant" else None
+        if not raw_calls:
+            groups.append([message])
+            index += 1
+            continue
+
+        call_ids = _tool_call_ids(raw_calls)
+        following: list[dict[str, Any]] = []
+        cursor = index + 1
+        while cursor < len(messages) and messages[cursor].get("role") == "tool":
+            following.append(messages[cursor])
+            cursor += 1
+        result_ids = [str(item.get("tool_call_id") or "") for item in following]
+        complete = (
+            call_ids is not None
+            and len(result_ids) == len(call_ids)
+            and len(set(result_ids)) == len(result_ids)
+            and set(result_ids) == set(call_ids)
+        )
+        if complete:
+            groups.append([message, *following])
+        else:
+            removed += 1 + len(following)
+        index = cursor
+    return groups, removed
+
+
+def _tool_call_ids(raw_calls: Any) -> list[str] | None:
+    if not isinstance(raw_calls, list) or not raw_calls:
+        return None
+    ids: list[str] = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            return None
+        call_id = str(raw_call.get("id") or "")
+        if not call_id or call_id in ids:
+            return None
+        ids.append(call_id)
+    return ids
+
+
+def _clip_message(message: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    item = dict(message)
+    content = item.get("content")
+    if isinstance(content, str) and len(content) > max_chars:
+        half = max_chars // 2
+        item["content"] = (
+            content[:half]
+            + "\n...[message clipped]...\n"
+            + content[-half:]
+        )
+    return item
+
+
+def _messages_chars(messages: list[dict[str, Any]]) -> int:
+    return sum(
+        len(json.dumps(item, ensure_ascii=False, default=str)) for item in messages
+    )
+
+
 def _structured_context_summary(
-    messages: list[dict[str, Any]], state: AgentState, dropped: int
+    messages: list[dict[str, Any]],
+    state: AgentState,
+    dropped: int,
+    *,
+    protocol_removed: int = 0,
 ) -> tuple[str, dict[str, Any]]:
     """Build a deterministic, evidence-oriented summary for omitted history."""
     covered_end = min(dropped, len(messages))
@@ -324,6 +443,7 @@ def _structured_context_summary(
     lines = [
         "Context summary v1",
         f"Covered messages: 0-{max(0, covered_end - 1)} ({dropped} omitted)",
+        f"Protocol-invalid messages omitted: {protocol_removed}",
         f"Covered event sequence: <= {state.last_applied_event_sequence}",
         "",
         "Objective",
@@ -396,6 +516,7 @@ def _structured_context_summary(
         "covered_message_start": 0,
         "covered_message_end": max(0, covered_end - 1),
         "covered_message_count": dropped,
+        "protocol_removed_message_count": protocol_removed,
         "covered_event_sequence": state.last_applied_event_sequence,
         "char_count": len(summary),
     }
