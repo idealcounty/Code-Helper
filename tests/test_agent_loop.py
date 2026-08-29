@@ -65,6 +65,34 @@ class BlockingModel:
             self.closed.set()
 
 
+class CancellationResistantModel:
+    """Simulate a transport cleanup path that temporarily ignores cancellation."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancel_seen = asyncio.Event()
+        self.release = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+    ) -> ModelResponse:
+        self.started.set()
+        try:
+            while not self.release.is_set():
+                try:
+                    await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    self.cancel_seen.set()
+            return ModelResponse(content="released")
+        finally:
+            self.closed.set()
+
+
 async def _approve_all(*_: Any) -> bool:
     return True
 
@@ -464,6 +492,55 @@ def test_shared_cancellation_interrupts_active_model_request(tmp_path: Path) -> 
     event_types = [event["type"] for event in events]
     assert "run_cancelled" in event_types
     assert event_types[-1] == "turn_finished"
+
+
+def test_cancellation_resistant_model_cannot_freeze_turn_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "coding_agent.agent_loop.OPERATION_CANCEL_GRACE_SECONDS", 0.05
+    )
+
+    async def scenario() -> tuple[AgentRunResult, bool, bool]:
+        model = CancellationResistantModel()
+        runner, _ = _make_runner(tmp_path, model)  # type: ignore[arg-type]
+        state = AgentState.create(session_id="session", max_steps=5)
+        task = asyncio.create_task(runner.run_turn(state, "wait forever"))
+        await asyncio.wait_for(model.started.wait(), timeout=1)
+        runner.cancellation.cancel("test_cancel")
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=1)
+        cancel_seen = model.cancel_seen.is_set()
+        still_cleaning = not model.closed.is_set()
+        model.release.set()
+        await asyncio.wait_for(model.closed.wait(), timeout=1)
+        return result, cancel_seen, still_cleaning
+
+    result, cancel_seen, still_cleaning = asyncio.run(scenario())
+
+    assert result.status is AgentStatus.CANCELLED
+    assert cancel_seen is True
+    assert still_cleaning is True
+
+
+def test_model_wait_emits_periodic_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "coding_agent.agent_loop.CONTROL_PROGRESS_INTERVAL_SECONDS", 0.01
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        model = BlockingModel(delay=0.04)
+        runner, store = _make_runner(tmp_path, model)  # type: ignore[arg-type]
+        state = AgentState.create(session_id="session", max_steps=5)
+        await runner.run_turn(state, "brief wait")
+        return store.load()
+
+    events = asyncio.run(scenario())
+    progress = [event for event in events if event["type"] == "model_progress"]
+
+    assert progress
+    assert progress[0]["payload"]["elapsed_seconds"] >= 0.0
 
 
 def test_wall_time_budget_interrupts_active_operation(tmp_path: Path) -> None:

@@ -26,6 +26,8 @@ from .verification_evidence import build_verification_evidence
 ApprovalHandler = Callable[[ToolCall, PermissionResult], Awaitable[bool]]
 TurnSummarizer = Callable[[AgentState, AgentStatus, str], dict[str, Any]]
 CANCEL_RESULT_GRACE_SECONDS = 12
+OPERATION_CANCEL_GRACE_SECONDS = 1.0
+CONTROL_PROGRESS_INTERVAL_SECONDS = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,16 +264,31 @@ class AgentRunner:
 
             await self._emit(state, "model_started", {"step": state.step})
             try:
+                async def on_model_wait(elapsed_seconds: float) -> None:
+                    await self._emit(
+                        state,
+                        "model_progress",
+                        {
+                            "step": state.step,
+                            "elapsed_seconds": round(elapsed_seconds, 1),
+                            "request_timeout_seconds": getattr(
+                                self.model_client, "timeout", None
+                            ),
+                        },
+                    )
+
                 stream_method = getattr(self.model_client, "complete_stream", None)
                 if callable(stream_method):
                     async def on_delta(delta: str) -> None:
                         await self._emit(state, "assistant_delta", {"content": delta})
                     response = await self._await_controlled(
-                        stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta)
+                        stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta),
+                        progress_callback=on_model_wait,
                     )
                 else:
                     response = await self._await_controlled(
-                        self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode)
+                        self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode),
+                        progress_callback=on_model_wait,
                     )
             except ModelError as exc:
                 return await self._finish(state, AgentStatus.FAILED, str(exc))
@@ -559,38 +576,51 @@ class AgentRunner:
         operation: Awaitable[Any],
         *,
         allow_cancel_result: bool = False,
+        progress_callback: Callable[[float], Awaitable[None]] | None = None,
     ) -> Any:
         operation_task = asyncio.ensure_future(operation)
         cancel_task = asyncio.create_task(self.cancellation.wait())
+        started = asyncio.get_running_loop().time()
         try:
-            done, _ = await asyncio.wait(
-                {operation_task, cancel_task},
-                timeout=self.run_budget.remaining_seconds,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if self.cancellation.requested:
-                if allow_cancel_result:
-                    try:
-                        return await asyncio.wait_for(
-                            asyncio.shield(operation_task),
-                            timeout=CANCEL_RESULT_GRACE_SECONDS,
-                        )
-                    except TimeoutError:
-                        pass
-                operation_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await operation_task
-                raise RunCancelled(self.cancellation.reason)
-            if operation_task in done:
-                return await operation_task
-            operation_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await operation_task
-            self.run_budget.check_time()
-            raise BudgetExceeded(
-                "TIME_BUDGET_EXHAUSTED",
-                "Run wall-time budget expired while an operation was active",
-            )
+            while True:
+                remaining = self.run_budget.remaining_seconds
+                wait_timeout = remaining
+                if progress_callback is not None:
+                    wait_timeout = CONTROL_PROGRESS_INTERVAL_SECONDS
+                    if remaining is not None:
+                        wait_timeout = min(wait_timeout, remaining)
+                done, _ = await asyncio.wait(
+                    {operation_task, cancel_task},
+                    timeout=wait_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if self.cancellation.requested:
+                    if allow_cancel_result:
+                        try:
+                            return await asyncio.wait_for(
+                                asyncio.shield(operation_task),
+                                timeout=CANCEL_RESULT_GRACE_SECONDS,
+                            )
+                        except TimeoutError:
+                            pass
+                    await _cancel_operation_task(operation_task)
+                    raise RunCancelled(self.cancellation.reason)
+                if operation_task in done:
+                    return await operation_task
+                if remaining is not None and remaining <= (wait_timeout or 0):
+                    await _cancel_operation_task(operation_task)
+                    self.run_budget.check_time()
+                    raise BudgetExceeded(
+                        "TIME_BUDGET_EXHAUSTED",
+                        "Run wall-time budget expired while an operation was active",
+                    )
+                if progress_callback is not None:
+                    await progress_callback(
+                        asyncio.get_running_loop().time() - started
+                    )
+        except asyncio.CancelledError:
+            await _cancel_operation_task(operation_task)
+            raise
         finally:
             cancel_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -800,5 +830,33 @@ class AgentRunner:
         )
         state.apply_event(event.to_dict())
         return event
+
+
 def _serialize_call(call: ToolCall) -> dict[str, Any]:
     return {"id": call.id, "name": call.name, "arguments": call.arguments}
+
+
+async def _cancel_operation_task(task: asyncio.Future[Any]) -> None:
+    """Cancel an operation without letting cancellation-resistant I/O freeze the run."""
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(task), timeout=OPERATION_CANCEL_GRACE_SECONDS
+        )
+    except TimeoutError:
+        task.add_done_callback(_consume_background_task)
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        # The caller is already terminating the operation; its original
+        # failure must not replace the cancellation/budget outcome.
+        pass
+
+
+def _consume_background_task(task: asyncio.Future[Any]) -> None:
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        pass

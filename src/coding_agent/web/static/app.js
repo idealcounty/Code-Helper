@@ -520,6 +520,12 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     case "model_started": addActivity("模型处理中", "正在选择下一步操作"); break;
+    case "model_progress": {
+      const elapsed = Number(payload.elapsed_seconds || 0);
+      const timeout = Number(payload.request_timeout_seconds || 0);
+      addActivity("模型仍在处理", `已等待 ${elapsed.toFixed(0)} 秒${timeout ? ` · 单次请求上限 ${timeout} 秒` : ""}`, "warning");
+      break;
+    }
     case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
     case "assistant_response": finishAssistantResponse(payload); break;
     case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;

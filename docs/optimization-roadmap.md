@@ -25,7 +25,7 @@
 
 ## 3. 当前完成基线
 
-截至 2026-08-29，仓库全量测试为 `145 passed`。以下主闭环已完成，不建议重复建设：
+截至 2026-08-29，仓库全量测试为 `147 passed`。以下主闭环已完成，不建议重复建设：
 
 | 能力 | 当前状态 | 主要实现 |
 | --- | --- | --- |
@@ -69,11 +69,11 @@
 
 **实施状态：V1 已完成（2026-08-28）**
 
-- 共享 `CancellationToken` 可中断模型请求、审批等待和 Tool Task；Web 停止接口发布请求与完成事件。
+- 共享 `CancellationToken` 可中断模型请求、审批等待和 Tool Task；底层协程若暂时不响应取消，受控等待只给予 1 秒清理窗口，Web 再以 2 秒看门狗强制取消 Turn，避免界面永久停在“正在停止”。
 - `RunBudget` 统一执行 wall-time、Step 和供应商回报 Token 预算，耗尽后以带原因的 `PARTIAL` 结束。
 - shell 在 Windows 使用 `taskkill /T /F`、在 POSIX 使用独立进程组终止子进程树；超时和取消返回不同结构化代码。
 - Web“智能”面板展示 Step、时间和 Token 遥测，“轨迹”面板展示停止与预算耗尽原因。
-- 已有模型请求中断、Web 端到端停止、时间/Token 门禁和 Windows 子进程树清理测试。
+- 已有普通及暂时拒绝取消的模型请求、Web 端到端停止、时间/Token 门禁和 Windows 子进程树清理测试。
 
 已知边界：供应商仅在响应结束后返回 usage 时，Token 是请求间硬门禁，不能在单次生成的任意 Token 点精确中断。Windows 本地与 Ubuntu CI 已通过同一子进程树测试。
 
@@ -380,6 +380,7 @@ shell 现在并发读取 stdout/stderr，并在进程运行期间通过 Agent Ev
 - 并发读取 stdout/stderr，发布带 Tool Call ID、流类型和顺序号的 `tool_output_delta`；最终 `tool_result` 标记 `output_streamed`，前端避免重复渲染。
 - 每次读取最多 4 KiB，完整内容仍由原有工具结果存储和脱敏引用机制处理；观察器异常不会改变命令结果。
 - Web 终端实时显示增量，智能接口统计增量事件数量，WebSocket 继续使用 sequence 去重和补发。
+- 模型请求每等待 10 秒发布一次不含思维内容的 `model_progress` 心跳，Web 轨迹显示累计等待时间和单次请求上限。
 
 **已知边界与后续加固**
 

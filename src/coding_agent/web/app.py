@@ -132,6 +132,7 @@ REASONING_PROFILES = {
     "balanced": "medium",
     "deep": "high",
 }
+WEB_CANCEL_FORCE_SECONDS = 2.0
 
 
 def _reasoning_profile(value: str | None) -> tuple[str, str | None]:
@@ -226,6 +227,7 @@ class WebSession:
     runtime: AgentRuntime
     approval_broker: ApprovalBroker
     task: asyncio.Task[AgentRunResult] | None = None
+    cancel_watchdog: asyncio.Task[None] | None = None
     last_error: str | None = None
 
     @property
@@ -746,7 +748,27 @@ def create_app(
                     payload={"reason": "user_requested"},
                 )
             )
-        return {"cancel_requested": True, "already_requested": not newly_requested}
+        active_task = session.task
+        if active_task is not None and not active_task.done() and (
+            session.cancel_watchdog is None or session.cancel_watchdog.done()
+        ):
+            async def enforce_cancel() -> None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(active_task), timeout=WEB_CANCEL_FORCE_SECONDS
+                    )
+                except TimeoutError:
+                    if not active_task.done():
+                        active_task.cancel()
+                except asyncio.CancelledError:
+                    pass
+
+            session.cancel_watchdog = asyncio.create_task(enforce_cancel())
+        return {
+            "cancel_requested": True,
+            "already_requested": not newly_requested,
+            "force_after_seconds": WEB_CANCEL_FORCE_SECONDS,
+        }
 
     @app.get("/api/sessions/{session_id}/events")
     async def get_events(session_id: str) -> list[dict[str, Any]]:
