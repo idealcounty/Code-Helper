@@ -14,4 +14,4 @@
 | --- | ---: | ---: | --- |
 | `correct_candidate` | 15 | 0 | `—` |
 | `constant_wrong` | 1 | 14 | `'0\n'` |
-| `negative_boundary_bug` | 11 | 4 | `'0\n'` |
+| `zero_boundary_bug` | 14 | 1 | `'0\n'` |

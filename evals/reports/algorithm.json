@@ -37,18 +37,18 @@
       "minimized_input": "0\n"
     },
     {
-      "id": "negative_boundary_bug",
+      "id": "zero_boundary_bug",
       "expected_fault": true,
       "judge_ok": false,
       "code": "ALGORITHM_JUDGE_FAILED",
-      "passed": 11,
-      "failed": 4,
+      "passed": 14,
+      "failed": 1,
       "total": 15,
       "first_failure": {
-        "label": "case-3",
+        "label": "case-1",
         "status": "wrong_answer",
-        "expected": "-2",
-        "actual": "-1",
+        "expected": "0",
+        "actual": "1",
         "detail": "normalized output differs"
       },
       "minimized_input": "0\n"

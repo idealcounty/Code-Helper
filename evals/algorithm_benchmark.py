@@ -71,9 +71,9 @@ async def run_benchmark() -> dict[str, Any]:
     candidates = {
         "correct_candidate": "import sys\nvalue = int(sys.stdin.read())\nprint(value * 2)\n",
         "constant_wrong": "print(0)\n",
-        "negative_boundary_bug": (
+        "zero_boundary_bug": (
             "import sys\nvalue = int(sys.stdin.read())\n"
-            "print(value * 2 if value >= 0 else value)\n"
+            "print(1 if value == 0 else value * 2)\n"
         ),
     }
     with tempfile.TemporaryDirectory(prefix="code-helper-algorithm-") as temporary:

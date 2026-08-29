@@ -193,7 +193,7 @@ async def _minimize_failure(
     timeout: float,
     cancellation: CancellationToken | None,
 ) -> str | None:
-    """Shrink a wrong-answer input while re-running the same candidate command."""
+    """Shrink a wrong-answer input, retaining the original when already minimal."""
     current = case.input_data
     expected = normalize_output(case.expected_output)
     for candidate in shrink_input_candidates(current):
@@ -204,4 +204,6 @@ async def _minimize_failure(
         )
         if status == "ok" and normalize_output(actual) != expected:
             current = candidate
-    return current if current != case.input_data else None
+    # A one-token boundary case may have no strictly smaller executable input;
+    # retain it as the reproducible witness instead of dropping the evidence.
+    return current
