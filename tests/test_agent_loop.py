@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pytest
@@ -22,6 +23,7 @@ from coding_agent.tools import (
     register_filesystem_tools,
     register_shell_tools,
 )
+from coding_agent.tools.base import ToolResult, ToolRisk, ToolSpec
 
 
 class ScriptedModel:
@@ -503,3 +505,62 @@ def test_token_budget_stops_before_requested_tools_execute(tmp_path: Path) -> No
     event_types = [event["type"] for event in store.load()]
     assert "tool_started" not in event_types
     assert "run_budget_exhausted" in event_types
+
+
+def test_independent_read_calls_run_in_parallel_and_results_keep_call_order(tmp_path: Path) -> None:
+    async def scenario() -> tuple[float, list[dict[str, Any]]]:
+        registry = ToolRegistry()
+
+        async def delayed_read(arguments: dict[str, Any]) -> ToolResult:
+            await asyncio.sleep(float(arguments["delay"]))
+            return ToolResult.success(str(arguments["value"]))
+
+        registry.register(
+            ToolSpec(
+                "delayed_read",
+                "Read-only test tool",
+                {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "delay": {"type": "number"},
+                        "value": {"type": "string"},
+                    },
+                    "required": ["path", "delay", "value"],
+                    "additionalProperties": False,
+                },
+                ToolRisk.READ,
+                delayed_read,
+            )
+        )
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=[
+                        ToolCall("slow", "delayed_read", {"path": "slow", "delay": 0.18, "value": "slow"}),
+                        ToolCall("fast", "delayed_read", {"path": "fast", "delay": 0.02, "value": "fast"}),
+                    ]
+                ),
+                ModelResponse(content="done"),
+            ]
+        )
+        store = EventStore(tmp_path / ".events", "parallel")
+        runner = AgentRunner(
+            model_client=model,
+            context_manager=ContextManager(),
+            registry=registry,
+            tool_executor=ToolExecutor(registry),
+            permission_policy=PermissionPolicy(),
+            event_bus=EventBus(store),
+        )
+        started = perf_counter()
+        result = await runner.run_turn(AgentState.create(session_id="parallel"), "read both")
+        assert result.status is AgentStatus.COMPLETED
+        return perf_counter() - started, store.load()
+
+    elapsed, events = asyncio.run(scenario())
+    assert elapsed < 0.30
+    results = [event["payload"]["id"] for event in events if event["type"] == "tool_result"]
+    assert results == ["slow", "fast"]
+    requested = [event["payload"].get("execution") for event in events if event["type"] == "tool_requested"]
+    assert requested == ["parallel_read", "parallel_read"]

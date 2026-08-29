@@ -328,6 +328,10 @@ class AgentRunner:
     async def _handle_tool_calls(
         self, state: AgentState, calls: list[ToolCall]
     ) -> AgentRunResult | None:
+        parallel_specs = self._parallel_read_specs(state, calls)
+        if parallel_specs is not None:
+            await self._handle_parallel_reads(state, parallel_specs)
+            return None
         for index, call in enumerate(calls):
             self.cancellation.raise_if_cancelled()
             self.run_budget.check_time()
@@ -407,6 +411,90 @@ class AgentRunner:
 
             await self._execute_and_observe(state, call)
         return None
+
+    def _parallel_read_specs(
+        self, state: AgentState, calls: list[ToolCall]
+    ) -> list[tuple[ToolCall, Any]] | None:
+        """Return an eligible read batch, or None to keep strict sequencing."""
+        if len(calls) < 2:
+            return None
+        hooks = self.tool_executor.hooks
+        if hooks.pre or hooks.post:
+            return None
+        paths: set[str] = set()
+        prepared: list[tuple[ToolCall, Any]] = []
+        for call in calls:
+            try:
+                spec = self.registry.get(call.name)
+                spec.validate(call.arguments)
+            except ToolError:
+                return None
+            if spec.risk is not ToolRisk.READ:
+                return None
+            path = call.arguments.get("path")
+            if isinstance(path, str):
+                normalized = path.replace("\\", "/").strip().lower()
+                if normalized in paths:
+                    return None
+                paths.add(normalized)
+            permission = self.permission_policy.evaluate(
+                mode=state.mode, spec=spec, arguments=call.arguments
+            )
+            if permission.decision is not PermissionDecision.ALLOW:
+                return None
+            prepared.append((call, spec))
+        return prepared
+
+    async def _handle_parallel_reads(
+        self, state: AgentState, prepared: list[tuple[ToolCall, Any]]
+    ) -> None:
+        """Execute independent reads concurrently, recording results in call order."""
+        for call, spec in prepared:
+            permission = self.permission_policy.evaluate(
+                mode=state.mode, spec=spec, arguments=call.arguments
+            )
+            await self._emit(
+                state,
+                "tool_requested",
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "arguments": call.arguments,
+                    "risk": spec.risk,
+                    "permission": permission.decision,
+                    "reason": permission.reason,
+                    "capabilities": permission.capabilities,
+                    "execution": "parallel_read",
+                },
+            )
+        started_sequences: dict[str, int] = {}
+        for call, _ in prepared:
+            started = await self._emit(
+                state,
+                "tool_started",
+                {"id": call.id, "name": call.name, "arguments": call.arguments},
+            )
+            started_sequences[call.id] = started.sequence
+
+        async def execute_one(call: ToolCall) -> ToolResult:
+            return await self._await_controlled(
+                self.tool_executor.execute(call.name, call.arguments),
+                allow_cancel_result=True,
+            )
+
+        tasks = [asyncio.create_task(execute_one(call)) for call, _ in prepared]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        for (call, _), result in zip(prepared, results):
+            await self._record_tool_result(
+                state, call, result, started_sequence=started_sequences.get(call.id, 0)
+            )
 
     async def _execute_and_observe(self, state: AgentState, call: ToolCall) -> None:
         spec = self.registry.get(call.name)
