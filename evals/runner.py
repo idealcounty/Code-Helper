@@ -198,9 +198,13 @@ def write_report(
     json_path = output_dir / f"{report_name}.json"
     markdown_path = output_dir / f"{report_name}.md"
     json_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
-    markdown_path.write_text(_markdown_report(report), encoding="utf-8")
+    markdown_path.write_text(
+        _markdown_report(report), encoding="utf-8", newline="\n"
+    )
     return json_path, markdown_path
 
 

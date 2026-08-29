@@ -29,9 +29,22 @@ jobs:
       - name: Install package and development dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e .[dev]
       - name: Compile Python sources
-        run: python -m compileall -q src
+        run: python -m compileall -q src evals
       - name: Run test suite
         run: python -m pytest -q
+      - name: Enforce deterministic Agent Eval baseline
+        if: matrix.python-version == '3.11'
+        run: >-
+          python -m evals.runner
+          --output-dir .eval-results
+          --compare evals/reports/baseline.json
+      - name: Upload Agent Eval report
+        if: always() && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-report
+          path: .eval-results/*
+          if-no-files-found: error
 
   package:
     name: Build distributable package
