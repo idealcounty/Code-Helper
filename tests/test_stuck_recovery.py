@@ -78,6 +78,56 @@ def test_successful_write_loop_is_reported_as_recoverable() -> None:
     assert detector.is_successful_write_loop(actions) is True
 
 
+def test_duplicate_blocked_write_loop_is_reported_as_recoverable() -> None:
+    """Ignoring the duplicate observation must not fall through to AGENT_STUCK."""
+    signature = json.dumps(
+        {"name": "apply_patch", "arguments": {"path": "sample.py"}},
+        sort_keys=True,
+    )
+    actions = [
+        {
+            "signature": signature,
+            "result_code": "DUPLICATE_TOOL_CALL",
+            "result_fingerprint": None,
+        }
+    ] * 3
+
+    assert StuckDetector().is_successful_write_loop(actions) is True
+
+
+def test_repeated_duplicate_writes_finish_partial_in_agent_loop(tmp_path: Path) -> None:
+    """A model that ignores duplicate observations must terminate cleanly."""
+    path = tmp_path / "sample.py"
+    path.write_text("value = 1\n", encoding="utf-8")
+    no_op_patch = {
+        "path": "sample.py",
+        "old_text": "value = 1",
+        "new_text": "value = 1",
+    }
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("read-1", "read_file", {"path": "sample.py"})]
+            ),
+            *[
+                ModelResponse(
+                    tool_calls=[ToolCall(f"edit-{index}", "apply_patch", no_op_patch)]
+                )
+                for index in range(1, 5)
+            ],
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=8, mode="act")
+
+    result = asyncio.run(runner.run_turn(state, "Apply the requested edit"))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert "Repeated writes were stopped" in result.message
+    assert any(event["type"] == "stuck_terminal" for event in store.load())
+    assert path.read_text(encoding="utf-8") == "value = 1\n"
+
+
 def test_repeated_patch_with_progress_is_not_marked_stuck(tmp_path: Path) -> None:
     """A repeated action with a new file version represents progress."""
     signature = json.dumps(

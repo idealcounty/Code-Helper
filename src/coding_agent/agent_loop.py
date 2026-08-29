@@ -476,7 +476,7 @@ class AgentRunner:
                             {
                                 "status": AgentStatus.PARTIAL,
                                 "message": (
-                                    "Repeated successful writes were stopped; "
+                                    "Repeated writes were stopped; "
                                     "the latest file changes were preserved."
                                 ),
                                 "action": latest.get("signature"),
@@ -485,7 +485,7 @@ class AgentRunner:
                         return await self._finish(
                             state,
                             AgentStatus.PARTIAL,
-                            "Repeated successful writes were stopped; the latest file changes were preserved. Verify the result before continuing.",
+                            "Repeated writes were stopped; the latest file changes were preserved. Verify the result before continuing.",
                         )
                     return await self._finish(
                         state,

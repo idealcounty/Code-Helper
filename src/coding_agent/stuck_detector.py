@@ -15,6 +15,13 @@ RECOVERABLE_RESULT_CODES = frozenset(
     }
 )
 RECOVERABLE_TOOL_NAMES = frozenset({"apply_patch", "write_file"})
+# A duplicate write is deliberately converted into an observation by the
+# runner.  If the model ignores that observation and emits the same write
+# again, the loop is still a write loop and should finish as a recoverable
+# partial result instead of surfacing the generic AGENT_STUCK failure.
+TERMINAL_WRITE_RESULT_CODES = frozenset(
+    {"OK", "NO_CHANGES", "DUPLICATE_TOOL_CALL"}
+)
 
 
 class StuckDetector:
@@ -74,18 +81,18 @@ class StuckDetector:
         return None
 
     def is_successful_write_loop(self, recent_actions: list[dict[str, Any]]) -> bool:
-        """Return whether a stuck window contains only successful writes.
+        """Return whether a stuck window contains only completed writes.
 
         A repeated read loop is unsafe to continue and remains a hard failure.
-        A repeated successful write is different: the requested mutation may
-        already be present, so the caller can stop further writes and report a
-        recoverable partial result instead of presenting it as an execution
-        crash.
+        A repeated successful or duplicate-blocked write is different: the
+        requested mutation may already be present, so the caller can stop
+        further writes and report a recoverable partial result instead of
+        presenting it as an execution crash.
         """
         if not self.is_stuck(recent_actions):
             return False
         latest = recent_actions[-1]
-        if str(latest.get("result_code") or "") != "OK":
+        if str(latest.get("result_code") or "") not in TERMINAL_WRITE_RESULT_CODES:
             return False
         try:
             signature = json.loads(str(latest.get("signature") or "{}"))
