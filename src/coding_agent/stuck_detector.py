@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+import json
 from typing import Any
+
+
+RECOVERABLE_RESULT_CODES = frozenset(
+    {
+        "NO_CHANGES",
+        "EDIT_NOT_FOUND",
+        "EDIT_NOT_UNIQUE",
+        "FILE_CHANGED",
+        "CHECKPOINT_CONFLICT",
+        "FILE_EXISTS",
+    }
+)
+RECOVERABLE_TOOL_NAMES = frozenset({"apply_patch", "write_file"})
 
 
 class StuckDetector:
@@ -16,3 +30,29 @@ class StuckDetector:
             (item.get("signature"), item.get("result_code")) for item in window
         }
         return len(signatures) == 1
+
+    def recovery_hint(self, recent_actions: list[dict[str, Any]]) -> str | None:
+        """Suggest one safe recovery for repeated edit failures.
+
+        Repeated reads are still terminated by the detector. Edit failures are
+        different: a previous attempt may have changed the file, or the model
+        may be using stale ``old_text``. Give it one bounded chance to re-read
+        the file before declaring the run stuck.
+        """
+        if not self.is_stuck(recent_actions):
+            return None
+        latest = recent_actions[-1]
+        if str(latest.get("result_code") or "") not in RECOVERABLE_RESULT_CODES:
+            return None
+        try:
+            signature = json.loads(str(latest.get("signature") or "{}"))
+        except (TypeError, ValueError):
+            return None
+        if str(signature.get("name") or "") not in RECOVERABLE_TOOL_NAMES:
+            return None
+        return (
+            "The same edit failed repeatedly. Do not repeat the identical tool call. "
+            "Re-read the target file to refresh its current contents, then choose a "
+            "corrected edit; if the requested change is already present, explain that "
+            "no further write is needed."
+        )

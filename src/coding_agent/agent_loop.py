@@ -68,6 +68,7 @@ class AgentRunner:
         self.turn_summarizer = turn_summarizer
         self.cancellation = cancellation or CancellationToken()
         self.run_budget = run_budget or RunBudget()
+        self._stuck_recovery_attempts = 0
 
     async def run_turn(
         self, state: AgentState, user_message: str | None = None
@@ -96,6 +97,8 @@ class AgentRunner:
             )
 
         if user_message is not None or not self.run_budget.active:
+            if user_message is not None:
+                self._stuck_recovery_attempts = 0
             await self._start_run_controls(state)
 
         return await self._run_safely(state)
@@ -331,6 +334,23 @@ class AgentRunner:
                 if outcome is not None:
                     return outcome
                 if self.stuck_detector.is_stuck(state.recent_actions):
+                    recovery_hint = self.stuck_detector.recovery_hint(
+                        state.recent_actions
+                    )
+                    if recovery_hint and self._stuck_recovery_attempts < 1:
+                        self._stuck_recovery_attempts += 1
+                        await self._emit(
+                            state,
+                            "stuck_recovery",
+                            {
+                                "attempt": self._stuck_recovery_attempts,
+                                "message": recovery_hint,
+                            },
+                        )
+                        state.messages.append(
+                            {"role": "system", "content": recovery_hint}
+                        )
+                        continue
                     return await self._finish(
                         state,
                         AgentStatus.FAILED,

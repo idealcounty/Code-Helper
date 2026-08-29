@@ -819,6 +819,9 @@ function handleEvent(event) {
       addActivity("模型仍在处理", `已等待 ${elapsed.toFixed(0)} 秒${timeout ? ` · 单次请求上限 ${timeout} 秒` : ""}`, "warning");
       break;
     }
+    case "stuck_recovery":
+      addActivity("检测到重复编辑，正在恢复", payload.message || "请重新读取文件后选择下一步", "warning");
+      break;
     case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
     case "assistant_response": finishAssistantResponse(payload); break;
     case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;
