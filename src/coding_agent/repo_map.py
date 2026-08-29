@@ -32,6 +32,7 @@ _GENERIC_CODE_SUFFIXES = {
 }
 _JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".ts", ".tsx"}
 _JAVA_SUFFIXES = {".java"}
+_C_CPP_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +543,10 @@ def _resolve_item_dependencies(item: RepoMapFile, indexes: dict[str, Any]) -> se
                 for target in _resolve_java_import(imported, indexes["java_modules"], indexes["java_files"])
                 if target != item.path
             )
+        elif suffix in _C_CPP_SUFFIXES:
+            target = _resolve_c_cpp_include(item.path, imported, indexes["paths"])
+            if target is not None:
+                dependencies.add(target)
     return dependencies
 
 
@@ -553,6 +558,20 @@ def _resolve_javascript_import(source_path: str, imported: str, paths: set[str])
     extensions = ("", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".d.ts")
     candidates = [base + extension for extension in extensions]
     candidates.extend(posixpath.join(base, "index" + extension) for extension in extensions[1:])
+    return next((candidate for candidate in candidates if candidate in paths), None)
+
+
+def _resolve_c_cpp_include(
+    source_path: str, imported: str, paths: set[str]
+) -> str | None:
+    """Resolve local C/C++ quoted includes while ignoring system headers."""
+    if imported.startswith("<") or imported.startswith("/"):
+        return None
+    normalized_import = imported.replace("\\", "/")
+    candidates = [
+        posixpath.normpath(posixpath.join(posixpath.dirname(source_path), normalized_import)),
+        posixpath.normpath(normalized_import),
+    ]
     return next((candidate for candidate in candidates if candidate in paths), None)
 
 

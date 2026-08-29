@@ -88,6 +88,24 @@ def test_repo_map_extracts_cpp_and_java_symbols_and_imports(tmp_path: Path) -> N
     assert "def run" in by_path["Service.java"]["symbols"]
 
 
+def test_repo_map_links_local_cpp_include_edges(tmp_path: Path) -> None:
+    include = tmp_path / "include"
+    source = tmp_path / "src"
+    include.mkdir()
+    source.mkdir()
+    (include / "math.hpp").write_text("int add(int a, int b);\n", encoding="utf-8")
+    (source / "main.cpp").write_text(
+        '#include "../include/math.hpp"\nint main() { return add(1, 2); }\n',
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="main", max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "../include/math.hpp" in by_path["src/main.cpp"]["imports"]
+    assert by_path["src/main.cpp"]["dependencies"] == ["include/math.hpp"]
+
+
 def test_repo_map_links_local_javascript_and_typescript_imports(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
