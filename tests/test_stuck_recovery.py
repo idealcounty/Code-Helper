@@ -96,3 +96,40 @@ def test_duplicate_successful_write_is_reported_without_reapplying(
         and event["payload"]["result"]["code"] == "DUPLICATE_TOOL_CALL"
     ]
     assert len(duplicate) == 1
+
+
+def test_duplicate_write_that_is_already_applied_finishes_partial(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sample.py"
+    path.write_text("value = 2\n", encoding="utf-8")
+    patch = {
+        "path": "sample.py",
+        "old_text": "value = 1",
+        "new_text": "value = 2",
+    }
+    model = ScriptedModel([])
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=8, mode="act")
+    state.recent_actions.append(
+        {
+            "signature": json.dumps(
+                {"name": "apply_patch", "arguments": patch}, sort_keys=True
+            ),
+            "result_code": "OK",
+        }
+    )
+
+    result = asyncio.run(
+        runner._handle_tool_calls(
+            state, [ToolCall("edit-2", "apply_patch", patch)]
+        )
+    )
+
+    assert result is not None
+    assert result.status is AgentStatus.PARTIAL
+    assert path.read_text(encoding="utf-8") == "value = 2\n"
+    assert any(
+        event["type"] == "duplicate_write_satisfied" for event in store.load()
+    )
+    assert store.load()[-1]["type"] == "turn_finished"

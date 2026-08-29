@@ -613,6 +613,22 @@ class AgentRunner:
                         "An identical write already succeeded. Inspect the current file and continue without repeating it.",
                     ),
                 )
+                if self._duplicate_write_is_satisfied(call):
+                    await self._emit(
+                        state,
+                        "duplicate_write_satisfied",
+                        {
+                            "id": call.id,
+                            "name": call.name,
+                            "path": call.arguments.get("path"),
+                            "message": "The requested write is already present; duplicate execution was blocked.",
+                        },
+                    )
+                    return await self._finish(
+                        state,
+                        AgentStatus.PARTIAL,
+                        "The requested write is already applied; the duplicate operation was blocked. Verification is still required.",
+                    )
                 continue
 
             await self._execute_and_observe(state, call)
@@ -645,6 +661,35 @@ class AgentRunner:
                 continue
             if signature.get("name") == call.name and signature.get("arguments") == call.arguments:
                 return True
+        return False
+
+    def _duplicate_write_is_satisfied(self, call: ToolCall) -> bool:
+        """Check whether a blocked duplicate write already produced its target state."""
+        workspace = self.workspace
+        if workspace is None and self.checkpoint_manager is not None:
+            workspace = self.checkpoint_manager.workspace
+        if workspace is None:
+            return False
+        raw_path = call.arguments.get("path")
+        if not isinstance(raw_path, str):
+            return False
+        try:
+            path = workspace.resolve(raw_path, must_exist=True)
+            current = path.read_text(encoding="utf-8")
+        except (ToolError, OSError, UnicodeDecodeError):
+            return False
+        if call.name == "write_file":
+            content = call.arguments.get("content")
+            return isinstance(content, str) and current == content
+        if call.name == "apply_patch":
+            old_text = call.arguments.get("old_text")
+            new_text = call.arguments.get("new_text")
+            if not isinstance(old_text, str) or not isinstance(new_text, str):
+                return False
+            # A successful replacement normally removes the unique old span.
+            # Require the new span and no remaining old span to avoid treating
+            # an unrelated external edit as proof that the patch was applied.
+            return new_text in current and old_text not in current
         return False
 
     def _parallel_read_specs(
