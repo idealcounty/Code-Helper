@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 
@@ -45,6 +45,7 @@ class JudgeReport:
     failed: int
     cases: tuple[JudgeCaseResult, ...] = ()
     first_failure: dict[str, str] | None = None
+    minimized_input: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -59,6 +60,7 @@ class JudgeReport:
             "ok": self.ok,
             "cases": [item.to_dict() for item in self.cases],
             "first_failure": self.first_failure,
+            "minimized_input": self.minimized_input,
         }
 
 
@@ -103,6 +105,35 @@ class AlgorithmJudge:
             cases=tuple(results),
             first_failure=first,
         )
+
+    @staticmethod
+    def with_minimized_input(report: JudgeReport, input_data: str) -> JudgeReport:
+        return replace(report, minimized_input=str(input_data))
+
+
+def shrink_input_candidates(input_data: str, *, limit: int = 32) -> list[str]:
+    """Generate deterministic smaller inputs for reproducing a failing case."""
+    text = str(input_data)
+    candidates: list[str] = []
+    lines = text.splitlines(keepends=True)
+    for index in range(len(lines)):
+        candidates.append("".join(lines[:index] + lines[index + 1 :]))
+    tokens = re.findall(r"-?\d+|\S+", text)
+    for index, token in enumerate(tokens):
+        if re.fullmatch(r"-?\d+", token):
+            value = int(token)
+            replacement = str(value // 2)
+            candidates.append(
+                " ".join(tokens[:index] + [replacement] + tokens[index + 1 :]) + "\n"
+            )
+    candidates.extend([text.strip() + "\n", "0\n", ""])
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate != text and candidate not in unique:
+            unique.append(candidate)
+        if len(unique) >= limit:
+            break
+    return unique
 
 
 def normalize_output(value: str) -> str:

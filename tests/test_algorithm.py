@@ -51,3 +51,23 @@ def test_judge_algorithm_tool_runs_cases_through_tool_executor(tmp_path: Path) -
     assert result.ok is True
     assert result.data["judge"]["seed"] == 42
     assert result.data["judge"]["passed"] == 2
+
+
+def test_judge_algorithm_records_reproducible_minimized_failure(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_algorithm_tools(registry, Workspace(tmp_path))
+    executor = ToolExecutor(registry)
+    command = f'"{sys.executable}" -c "print(0)"'
+    result = asyncio.run(
+        executor.execute(
+            "judge_algorithm",
+            {
+                "command": command,
+                "seed": 9,
+                "cases": [{"input": "123 456\n", "expected": "1\n"}],
+            },
+        )
+    )
+    assert result.ok is False
+    assert result.code == "ALGORITHM_JUDGE_FAILED"
+    assert result.data["judge"]["minimized_input"] is not None

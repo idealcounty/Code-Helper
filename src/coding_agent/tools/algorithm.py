@@ -5,9 +5,10 @@ import contextlib
 import os
 import signal
 import subprocess
+from dataclasses import replace
 from typing import Any
 
-from ..algorithm.judge import AlgorithmJudge, JudgeCase
+from ..algorithm.judge import AlgorithmJudge, JudgeCase, normalize_output, shrink_input_candidates
 from ..cancellation import CancellationToken
 from .base import ToolResult, ToolRisk, ToolSpec
 from .registry import ToolRegistry
@@ -62,6 +63,20 @@ def register_algorithm_tools(
             if status in {"timeout", "cancelled", "output_limit"}:
                 break
         report = AlgorithmJudge(seed=seed).evaluate(cases[: len(outputs)], outputs)
+        failed_index = next(
+            (index for index, item in enumerate(report.cases) if item.status != "passed"),
+            None,
+        )
+        if failed_index is not None and report.cases[failed_index].status == "wrong_answer":
+            minimized = await _minimize_failure(
+                command,
+                cases[failed_index],
+                workspace,
+                timeout,
+                cancellation,
+            )
+            if minimized is not None:
+                report = replace(report, minimized_input=minimized)
         metadata = {
             "purpose": "verify",
             "judge": True,
@@ -169,3 +184,24 @@ async def _run_case(
         detail = stderr.decode(errors="replace")[:2_000]
         return actual, "runtime_error", detail or f"exit code {process.returncode}"
     return actual, "ok", None
+
+
+async def _minimize_failure(
+    command: str,
+    case: JudgeCase,
+    workspace: Workspace,
+    timeout: float,
+    cancellation: CancellationToken | None,
+) -> str | None:
+    """Shrink a wrong-answer input while re-running the same candidate command."""
+    current = case.input_data
+    expected = normalize_output(case.expected_output)
+    for candidate in shrink_input_candidates(current):
+        if cancellation is not None and cancellation.requested:
+            break
+        actual, status, _ = await _run_case(
+            command, candidate, workspace, timeout, cancellation
+        )
+        if status == "ok" and normalize_output(actual) != expected:
+            current = candidate
+    return current if current != case.input_data else None
