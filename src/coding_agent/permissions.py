@@ -194,6 +194,25 @@ class PermissionPolicy:
     def revoke(self, grant_id: str) -> bool:
         return self._grants.pop(grant_id, None) is not None
 
+    def grants_snapshot(self) -> list[dict[str, Any]]:
+        """Return non-expired, non-secret scope metadata for UI/audit views."""
+        now = time()
+        snapshot: list[dict[str, Any]] = []
+        for grant_id, grant in tuple(self._grants.items()):
+            if grant.expires_at is not None and grant.expires_at <= now:
+                self._grants.pop(grant_id, None)
+                continue
+            snapshot.append(
+                {
+                    "grant_id": grant.grant_id,
+                    "capabilities": sorted(grant.capabilities),
+                    "path_prefix": grant.path_prefix,
+                    "command_prefix": grant.command_prefix,
+                    "expires_at": grant.expires_at,
+                }
+            )
+        return sorted(snapshot, key=lambda item: str(item["grant_id"]))
+
     def _matching_grant(
         self,
         spec: ToolSpec,

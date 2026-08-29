@@ -162,6 +162,8 @@ class MessageRequest(BaseModel):
 class ApprovalRequest(BaseModel):
     tool_call_id: str
     approved: bool
+    scope: Literal["once", "session"] = "once"
+    ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
 
 
 class ModeRequest(BaseModel):
@@ -501,6 +503,9 @@ def create_app(
                 "verification": len(runtime.tool_executor.hooks.verification),
                 "task_end": len(runtime.tool_executor.hooks.task_end),
             },
+            "permissions": {
+                "grants": runtime.runner.permission_policy.grants_snapshot(),
+            },
             "observability": {"tool_output_deltas": output_deltas},
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
@@ -639,11 +644,92 @@ def create_app(
         session_id: str, request: ApprovalRequest
     ) -> dict[str, Any]:
         session = manager.get(session_id)
+        grant_details: dict[str, Any] | None = None
+        if request.approved and request.scope == "session":
+            state = session.runtime.state
+            pending = state.pending_approval or {}
+            call = pending.get("call") or {}
+            if str(call.get("id") or "") != request.tool_call_id:
+                raise HTTPException(status_code=409, detail="Approval is no longer pending")
+            if pending.get("redacted"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Persisted approval data was redacted; resubmit the operation before granting a session scope",
+                )
+            try:
+                spec = session.runtime.registry.get(str(call.get("name") or ""))
+                arguments = dict(call.get("arguments") or {})
+                spec.validate(arguments)
+            except (KeyError, TypeError, ToolError) as exc:
+                raise HTTPException(status_code=409, detail=f"Cannot create session grant: {exc}") from exc
+            permission = session.runtime.runner.permission_policy.evaluate(
+                mode=state.mode, spec=spec, arguments=arguments
+            )
+            if permission.decision.value == "deny":
+                raise HTTPException(status_code=403, detail=permission.reason)
+            path_prefix = arguments.get("path") if isinstance(arguments.get("path"), str) else None
+            command_prefix = arguments.get("command") if spec.risk.value == "command" else None
+            grant = session.runtime.runner.permission_policy.grant(
+                permission.capabilities,
+                path_prefix=path_prefix,
+                command_prefix=command_prefix if isinstance(command_prefix, str) else None,
+                ttl_seconds=request.ttl_seconds,
+            )
+            grant_details = {
+                "grant_id": grant.grant_id,
+                "capabilities": sorted(grant.capabilities),
+                "path_prefix": grant.path_prefix,
+                "command_prefix": grant.command_prefix,
+                "expires_at": grant.expires_at,
+                "tool_name": spec.name,
+            }
+            await session.runtime.event_bus.publish(
+                AgentEvent(
+                    type="permission_granted",
+                    session_id=state.session_id,
+                    turn_id=state.turn_id,
+                    payload={
+                        "grant_id": grant.grant_id,
+                        "capabilities": sorted(grant.capabilities),
+                        "path_prefix": grant.path_prefix,
+                        "command_prefix": grant.command_prefix,
+                        "expires_at": grant.expires_at,
+                        "tool_name": spec.name,
+                    },
+                )
+            )
         try:
             session.approval_broker.resolve(request.tool_call_id, request.approved)
         except KeyError as exc:
             raise HTTPException(status_code=409, detail="Approval is no longer pending") from exc
-        return {"resolved": True, "approved": request.approved}
+        return {
+            "resolved": True,
+            "approved": request.approved,
+            "scope": request.scope,
+            **({"grant": grant_details} if grant_details else {}),
+        }
+
+    @app.get("/api/sessions/{session_id}/permissions")
+    async def list_permissions(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        grants = session.runtime.runner.permission_policy.grants_snapshot()
+        return {"grants": grants}
+
+    @app.delete("/api/sessions/{session_id}/permissions/{grant_id}")
+    async def revoke_permission(session_id: str, grant_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        revoked = session.runtime.runner.permission_policy.revoke(grant_id)
+        if not revoked:
+            raise HTTPException(status_code=404, detail="Permission grant not found")
+        await session.runtime.event_bus.publish(
+            AgentEvent(
+                type="permission_revoked",
+                session_id=session.runtime.state.session_id,
+                turn_id=session.runtime.state.turn_id,
+                payload={"grant_id": grant_id},
+            )
+        )
+        return {"revoked": True, "grant_id": grant_id}
 
     @app.post("/api/sessions/{session_id}/cancel")
     async def cancel(session_id: str) -> dict[str, Any]:

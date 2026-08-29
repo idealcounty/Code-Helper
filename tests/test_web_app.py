@@ -45,6 +45,8 @@ def test_health_and_static_index() -> None:
     assert frontend_bundle.headers["cache-control"] == "no-store, max-age=0"
     assert frontend_bundle.text.index("CodeHelperRendering") < frontend_bundle.text.index("const state")
     assert "file-preview-notice" in frontend_bundle.text
+    assert "grantButton" in frontend_bundle.text
+    assert "本会话允许" in index.text
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:
@@ -241,6 +243,41 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert intelligence.json()["budget"]["max_steps"] == 20
     assert changed.json() == {"profile": "fast", "reasoning_effort": "low"}
     assert details.json()["reasoning_profile"] == "fast"
+
+
+def test_session_scoped_approval_grant_is_limited_and_revocable(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        session = app.state.session_manager.get(session_id)
+        session.runtime.state.pending_approval = {
+            "call": {
+                "id": "call-1",
+                "name": "write_file",
+                "arguments": {"path": "src/output.py", "content": "value = 1\n"},
+            },
+            "remaining": [],
+            "reason": "File changes require approval",
+        }
+
+        resolved = client.post(
+            f"/api/sessions/{session_id}/approval",
+            json={"tool_call_id": "call-1", "approved": True, "scope": "session"},
+        )
+        grants = client.get(f"/api/sessions/{session_id}/permissions")
+        grant_id = grants.json()["grants"][0]["grant_id"]
+        revoked = client.delete(f"/api/sessions/{session_id}/permissions/{grant_id}")
+
+    assert resolved.status_code == 200
+    assert resolved.json()["scope"] == "session"
+    assert resolved.json()["grant"]["capabilities"] == ["workspace.write"]
+    assert resolved.json()["grant"]["path_prefix"].endswith("src\\output.py")
+    assert grants.status_code == 200
+    assert len(grants.json()["grants"]) == 1
+    assert revoked.json() == {"revoked": True, "grant_id": grant_id}
 
 
 def test_intelligence_endpoint_exposes_project_memory(tmp_path: Path) -> None:

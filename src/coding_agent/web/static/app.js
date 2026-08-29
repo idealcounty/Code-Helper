@@ -30,7 +30,7 @@ const elements = Object.fromEntries([
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
   "approvalBackdrop", "approvalTitle", "approvalReason", "approvalArguments",
-  "approveButton", "denyButton", "toast",
+  "approveButton", "grantButton", "denyButton", "toast",
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 async function api(path, options = {}) {
@@ -467,12 +467,17 @@ function requestCheckpointRestore(force, confirmedHashes = null) {
   });
 }
 
-async function resolveApproval(approved) {
+async function resolveApproval(approved, scope = "once") {
   if (!state.pendingApproval) return;
   try {
-    await api(`/api/sessions/${state.sessionId}/approval`, { method: "POST", body: JSON.stringify({ tool_call_id: state.pendingApproval.id, approved }) });
+    const result = await api(`/api/sessions/${state.sessionId}/approval`, { method: "POST", body: JSON.stringify({ tool_call_id: state.pendingApproval.id, approved, scope }) });
     elements.approvalBackdrop.classList.add("hidden");
     state.pendingApproval = null;
+    if (result.grant) {
+      const scopeText = result.grant.path_prefix || result.grant.command_prefix || "当前工作区范围";
+      showToast(`已授予本会话权限（${scopeText}）`);
+      loadIntelligence();
+    }
   } catch (error) { showToast(error.message); }
 }
 
@@ -714,12 +719,18 @@ function renderIntelligence(data) {
   const memory = data.memory || { count: 0, categories: {}, recent: [], recalled: [] };
   const summaryMemory = memory.summaries || { count: 0, pending_candidates: 0, candidates: [] };
   const userMemory = data.user_memory || { enabled: false, count: 0, recent: [], recalled: [] };
+  const permissions = data.permissions || { grants: [] };
   const memoryCategories = memory.categories || {};
   const recalledIds = new Set((memory.recalled || []).map((item) => item.memory?.id || item.id));
   const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   const candidateRows = (summaryMemory.candidates || []).map((item) => `<li class="memory-candidate"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">保留</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
   const userRows = (userMemory.recent || []).map((item) => `<li><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   const evidenceRows = (verification.evidence || []).slice(-5).reverse().map((item) => `<li class="evidence-row ${item.accepted ? "accepted" : "rejected"}"><div><span><b>${escapeHtml(String(item.kind || "unknown").toUpperCase())}</b><em>${escapeHtml(item.source || "untrusted")}</em></span><code>${escapeHtml(item.command || "")}</code><small>${escapeHtml(item.reason || "")}</small></div><i title="${item.accepted ? "满足完成契约" : "不满足完成契约"}">${item.accepted ? "✓" : "!"}</i></li>`).join("");
+  const permissionRows = (permissions.grants || []).map((grant) => {
+    const scope = grant.path_prefix || grant.command_prefix || "当前工作区";
+    const expiry = grant.expires_at ? new Date(grant.expires_at * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "未知";
+    return `<li class="permission-row"><div><b>${escapeHtml((grant.capabilities || []).join(" · "))}</b><span title="${escapeHtml(scope)}">${escapeHtml(scope)}</span><small>到期 ${escapeHtml(expiry)}</small></div><button data-permission-action="revoke" data-grant-id="${escapeHtml(grant.grant_id)}" type="button">撤销</button></li>`;
+  }).join("");
   elements.intelligenceContent.innerHTML = `
     <section class="intelligence-section run-budget-section ${runBudgetState}">
       <div class="intelligence-heading"><div><span class="intel-icon">RUN</span><strong>运行预算</strong></div><b>${runBudgetState === "warning" ? "LIMIT" : "ACTIVE"}</b></div>
@@ -762,6 +773,11 @@ function renderIntelligence(data) {
       <ul class="memory-list">${userRows || '<li class="empty"><span>没有跨项目用户记忆</span></li>'}</ul>
       <p class="intel-note">${userMemory.count || 0} 条，存放于工作区之外；当前会话召回 ${(userMemory.recalled || []).length} 条。</p>
     </section>
+    <section class="intelligence-section permission-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">PER</span><strong>本会话授权</strong></div><b>${(permissions.grants || []).length} 条</b></div>
+      <ul class="permission-list">${permissionRows || '<li class="empty"><span>没有长期授权；审批默认只对当前操作生效</span></li>'}</ul>
+      <p class="intel-note">授权仅限当前会话，并受能力、路径/命令范围和到期时间约束。</p>
+    </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>
       <div class="intel-facts"><span>${totals.files_seen || 0} 文件</span><span>${totals.python_files || 0} Python</span><span>${totals.test_files || 0} 测试</span></div>
@@ -790,6 +806,15 @@ function renderIntelligence(data) {
 }
 
 async function handleIntelligenceAction(event) {
+  const permissionButton = event.target.closest("[data-permission-action]");
+  if (permissionButton) {
+    if (permissionButton.dataset.permissionAction !== "revoke") return;
+    try {
+      await api(`/api/sessions/${state.sessionId}/permissions/${encodeURIComponent(permissionButton.dataset.grantId)}`, { method: "DELETE" });
+      showToast("会话授权已撤销");
+      return loadIntelligence();
+    } catch (error) { return showToast(error.message); }
+  }
   const candidateButton = event.target.closest("[data-memory-action]");
   if (candidateButton) {
     try {
@@ -950,6 +975,7 @@ elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
 elements.copyTerminalButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(elements.terminalOutput.innerText); showToast("终端输出已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });
 elements.approveButton.addEventListener("click", () => resolveApproval(true));
+elements.grantButton.addEventListener("click", () => resolveApproval(true, "session"));
 elements.denyButton.addEventListener("click", () => resolveApproval(false));
 elements.closeBrowserButton.addEventListener("click", closeBrowser);
 elements.cancelBrowserButton.addEventListener("click", closeBrowser);
