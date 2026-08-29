@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/modern.css?v=20260829.1" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260829.2" />
   </head>
   <body>
     <div class="app-shell">
@@ -20,7 +20,8 @@
           <button class="open-button" id="createSessionButton" type="button">打开工作区</button>
         </div>
         <div class="topbar-actions">
-          <label class="mode-control"><span>权限</span><select id="modeSelect" aria-label="Agent 权限模式"><option value="act">Act</option><option value="plan">Plan</option><option value="ask">Ask</option></select></label>
+          <label class="mode-control"><span>模式</span><select id="modeSelect" aria-label="Agent 工作模式"><option value="act">Act</option><option value="plan">Plan</option><option value="ask">Ask</option></select></label>
+          <label class="mode-control approval-policy-control" data-policy="ask" title="控制当前会话遇到写文件、执行命令等操作时的审批方式"><span>审批</span><select id="approvalPolicySelect" aria-label="工具审批策略" disabled><option value="ask">请求批准</option><option value="auto">帮我批准</option><option value="full">完全放开</option></select></label>
           <label class="mode-control reasoning-control"><span>推理</span><select id="reasoningSelect" aria-label="推理档位"><option value="auto">Auto</option><option value="fast">Fast</option><option value="balanced">Balanced</option><option value="deep">Deep</option></select></label>
           <label class="mode-control"><span>任务</span><select id="taskProfileSelect" aria-label="任务类型"><option value="auto">自动</option><option value="project">项目</option><option value="algorithm">算法</option></select></label>
           <div class="health" id="healthBadge" role="status"><i></i><span>检查服务</span></div>
@@ -88,6 +89,6 @@
       <div class="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approvalTitle"><div class="approval-icon"><svg viewBox="0 0 24 24"><path d="M12 3 3.5 19h17zM12 9v4M12 16.5v.1" /></svg></div><span class="eyebrow warning">APPROVAL REQUIRED</span><h2 id="approvalTitle">Agent 请求执行操作</h2><p id="approvalReason"></p><pre id="approvalArguments"></pre><p class="approval-scope-note">“本会话允许”仅授予当前操作所需能力，并限制在当前路径或命令范围内，最多 1 小时。</p><div class="approval-actions"><button class="dialog-secondary" id="denyButton" type="button">拒绝操作</button><button class="dialog-secondary" id="approveButton" type="button">仅允许本次</button><button class="dialog-primary" id="grantButton" type="button">本会话允许</button></div></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260829.1" defer></script>
+    <script src="/assets/app.bundle.js?v=20260829.2" defer></script>
   </body>
 </html>

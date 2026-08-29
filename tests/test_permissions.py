@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from coding_agent.permissions import (
+    ApprovalMode,
     PermissionDecision,
     PermissionPolicy,
     ToolCapability,
@@ -105,3 +106,50 @@ def test_power_shell_style_recursive_delete_is_denied() -> None:
     )
 
     assert result.decision is PermissionDecision.DENY
+
+
+def test_auto_approval_allows_routine_writes_but_keeps_hard_denials() -> None:
+    policy = PermissionPolicy(
+        workspace_root=Path("D:/workspace"), approval_mode=ApprovalMode.AUTO
+    )
+    write = _spec(ToolRisk.WRITE)
+    command = ToolSpec(
+        "run_command",
+        "run",
+        {"type": "object", "properties": {}},
+        ToolRisk.COMMAND,
+        _noop,
+    )
+
+    assert policy.evaluate(
+        mode="act", spec=write, arguments={"path": "notes.md"}
+    ).decision is PermissionDecision.ALLOW
+    assert policy.evaluate(
+        mode="act", spec=write, arguments={"path": "../outside.md"}
+    ).decision is PermissionDecision.DENY
+    assert policy.evaluate(
+        mode="act", spec=command, arguments={"command": "git reset --hard HEAD"}
+    ).decision is PermissionDecision.DENY
+
+
+def test_full_access_bypasses_approval_denials_only_in_act_mode() -> None:
+    policy = PermissionPolicy(
+        workspace_root=Path("D:/workspace"), approval_mode=ApprovalMode.FULL
+    )
+    command = ToolSpec(
+        "run_command",
+        "run",
+        {"type": "object", "properties": {}},
+        ToolRisk.COMMAND,
+        _noop,
+    )
+
+    allowed = policy.evaluate(
+        mode="act", spec=command, arguments={"command": "git reset --hard HEAD"}
+    )
+    unavailable = policy.evaluate(
+        mode="plan", spec=_spec(ToolRisk.WRITE), arguments={"path": "notes.md"}
+    )
+
+    assert allowed.decision is PermissionDecision.ALLOW
+    assert unavailable.decision is PermissionDecision.DENY

@@ -7,6 +7,7 @@ const state = {
   runSyncTimer: null,
   runEpoch: 0,
   pendingUserEchoes: [],
+  approvalPolicy: "ask",
   pendingApproval: null,
   seenSequences: new Set(),
   selectedFilePath: null,
@@ -21,7 +22,7 @@ const state = {
 };
 
 const elements = Object.fromEntries([
-  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect",
+  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
   "editorTabs", "editorBreadcrumbs", "editorLanguage", "copyFileButton",
@@ -88,6 +89,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
         session_id: sessionId,
         reasoning_profile: elements.reasoningSelect.value,
         task_profile: elements.taskProfileSelect.value,
+        approval_policy: elements.approvalPolicySelect.value,
       }),
     });
     closeSocket();
@@ -104,6 +106,9 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     elements.explorerPath.textContent = result.workspace;
     elements.reasoningSelect.value = result.reasoning_profile || elements.reasoningSelect.value;
     elements.taskProfileSelect.value = result.task_profile || elements.taskProfileSelect.value;
+    state.approvalPolicy = result.approval_policy || "ask";
+    elements.approvalPolicySelect.value = state.approvalPolicy;
+    updateApprovalPolicyVisual();
     enableWorkspaceControls(true);
     resetConversationSurface();
     if (!preserveEditor) resetEditor();
@@ -123,6 +128,7 @@ function enableWorkspaceControls(enabled) {
   elements.refreshDiffButton.disabled = !enabled;
   elements.restoreButton.disabled = !enabled;
   elements.newSessionButton.disabled = !enabled;
+  elements.approvalPolicySelect.disabled = !enabled;
 }
 
 function resetConversationSurface() {
@@ -535,6 +541,47 @@ async function resolveApproval(approved, scope = "once") {
   } catch (error) { showToast(error.message); }
 }
 
+function updateApprovalPolicyVisual() {
+  const control = elements.approvalPolicySelect.closest(".approval-policy-control");
+  if (control) control.dataset.policy = state.approvalPolicy;
+  const descriptions = {
+    ask: "写文件和执行命令前请求你的批准",
+    auto: "自动批准常规操作，仍拒绝越界路径和危险命令",
+    full: "当前 Act 会话不再拦截工具操作；请仅在可信任务中使用",
+  };
+  if (control) control.title = descriptions[state.approvalPolicy] || "工具审批策略";
+}
+
+async function changeApprovalPolicy() {
+  if (!state.sessionId) return;
+  const requested = elements.approvalPolicySelect.value;
+  const previous = state.approvalPolicy;
+  if (requested === "full" && !window.confirm(
+    "完全放开会允许当前 Act 会话执行原本会被拒绝的危险命令和越界操作。\n\n仅在你信任当前任务时启用。是否继续？",
+  )) {
+    elements.approvalPolicySelect.value = previous;
+    return;
+  }
+  try {
+    const result = await api(`/api/sessions/${state.sessionId}/approval-policy`, {
+      method: "POST",
+      body: JSON.stringify({ policy: requested }),
+    });
+    state.approvalPolicy = result.approval_policy || requested;
+    elements.approvalPolicySelect.value = state.approvalPolicy;
+    updateApprovalPolicyVisual();
+    if (result.approved_pending) {
+      elements.approvalBackdrop.classList.add("hidden");
+      state.pendingApproval = null;
+    }
+    showToast(`审批策略：${approvalPolicyLabel(state.approvalPolicy)}${result.approved_pending ? "，当前操作已批准" : ""}`);
+    loadIntelligence();
+  } catch (error) {
+    elements.approvalPolicySelect.value = previous;
+    showToast(error.message);
+  }
+}
+
 function handleEvent(event) {
   if (event.sequence && state.seenSequences.has(event.sequence)) return;
   if (event.sequence) state.seenSequences.add(event.sequence);
@@ -569,6 +616,17 @@ function handleEvent(event) {
       break;
     case "run_failed":
       addActivity("任务执行失败", `${payload.code || "UNEXPECTED_AGENT_ERROR"} · ${payload.message || ""}`, "failure");
+      break;
+    case "approval_policy_changed":
+      state.approvalPolicy = payload.policy || "ask";
+      elements.approvalPolicySelect.value = state.approvalPolicy;
+      updateApprovalPolicyVisual();
+      if (payload.approved_pending) {
+        elements.approvalBackdrop.classList.add("hidden");
+        state.pendingApproval = null;
+      }
+      addActivity("审批策略已更改", approvalPolicyLabel(state.approvalPolicy), state.approvalPolicy === "full" ? "warning" : "success");
+      refreshIntelligenceIfVisible();
       break;
     case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
     case "context_built": {
@@ -709,6 +767,7 @@ function showApproval(payload) {
 function summarizeArguments(args = {}) { return String(args.path || args.command || args.query || args.pattern || JSON.stringify(args)).slice(0, 180); }
 function statusLabel(status) { return ({ completed: "已完成", partial: "部分完成", failed: "失败", cancelled: "已停止" })[status] || status; }
 function cancellationReason(reason) { return ({ user_requested: "用户主动停止", task_cancelled: "后台任务被中止", state_cancel_requested: "会话请求停止" })[reason] || reason || "运行已取消"; }
+function approvalPolicyLabel(policy) { return ({ ask: "请求批准", auto: "帮我批准", full: "完全放开" })[policy] || policy; }
 
 function mirrorCommandResult(result) {
   const data = result.data || {};
@@ -801,6 +860,7 @@ function renderIntelligence(data) {
   const summaryMemory = memory.summaries || { count: 0, pending_candidates: 0, candidates: [] };
   const userMemory = data.user_memory || { enabled: false, count: 0, recent: [], recalled: [] };
   const permissions = data.permissions || { grants: [] };
+  const approvalPolicy = permissions.approval_policy || state.approvalPolicy || "ask";
   const memoryCategories = memory.categories || {};
   const recalledIds = new Set((memory.recalled || []).map((item) => item.memory?.id || item.id));
   const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
@@ -855,9 +915,9 @@ function renderIntelligence(data) {
       <p class="intel-note">${userMemory.count || 0} 条，存放于工作区之外；当前会话召回 ${(userMemory.recalled || []).length} 条。</p>
     </section>
     <section class="intelligence-section permission-section">
-      <div class="intelligence-heading"><div><span class="intel-icon">PER</span><strong>本会话授权</strong></div><b>${(permissions.grants || []).length} 条</b></div>
+      <div class="intelligence-heading"><div><span class="intel-icon">PER</span><strong>审批与授权</strong></div><b class="${approvalPolicy === "full" ? "status-off" : "status-on"}">${escapeHtml(approvalPolicyLabel(approvalPolicy))}</b></div>
       <ul class="permission-list">${permissionRows || '<li class="empty"><span>没有长期授权；审批默认只对当前操作生效</span></li>'}</ul>
-      <p class="intel-note">授权仅限当前会话，并受能力、路径/命令范围和到期时间约束。</p>
+      <p class="intel-note">${approvalPolicy === "ask" ? "写入与命令会请求批准。" : approvalPolicy === "auto" ? "常规操作自动批准，硬性安全拒绝仍生效。" : "Act 模式工具已完全放开；Ask/Plan 的工具集合不会因此扩大。"} 范围授权 ${(permissions.grants || []).length} 条。</p>
     </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>
@@ -1049,6 +1109,7 @@ elements.reasoningSelect.addEventListener("change", async () => {
     loadIntelligence();
   } catch (error) { showToast(error.message); }
 });
+elements.approvalPolicySelect.addEventListener("change", changeApprovalPolicy);
 document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
 elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
 elements.intelligenceContent.addEventListener("click", handleIntelligenceAction);

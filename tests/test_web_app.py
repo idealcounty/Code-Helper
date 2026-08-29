@@ -9,7 +9,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from coding_agent.config import AppConfig
-from coding_agent.model import ModelResponse
+from coding_agent.model import ModelResponse, ToolCall
 from coding_agent.web.app import create_app
 from coding_agent.session import AgentStatus
 
@@ -51,6 +51,11 @@ def test_health_and_static_index() -> None:
     assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text
     assert "runEpoch" in frontend_bundle.text
     assert "pendingUserEchoes" in frontend_bundle.text
+    assert "approvalPolicySelect" in frontend_bundle.text
+    assert 'case "approval_policy_changed"' in frontend_bundle.text
+    assert "请求批准" in index.text
+    assert "帮我批准" in index.text
+    assert "完全放开" in index.text
     assert "本会话允许" in index.text
 
 
@@ -287,6 +292,70 @@ def test_session_scoped_approval_grant_is_limited_and_revocable(tmp_path: Path) 
     assert revoked.json() == {"revoked": True, "grant_id": grant_id}
 
 
+def test_session_approval_policy_is_configurable_and_observable(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        changed = client.post(
+            f"/api/sessions/{session_id}/approval-policy",
+            json={"policy": "auto"},
+        )
+        details = client.get(f"/api/sessions/{session_id}")
+        permissions = client.get(f"/api/sessions/{session_id}/permissions")
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence")
+        events = client.get(f"/api/sessions/{session_id}/events").json()
+
+    assert created.json()["approval_policy"] == "ask"
+    assert changed.json()["approval_policy"] == "auto"
+    assert changed.json()["approved_pending"] is False
+    assert details.json()["approval_policy"] == "auto"
+    assert permissions.json()["approval_policy"] == "auto"
+    assert intelligence.json()["permissions"]["approval_policy"] == "auto"
+    assert events[-1]["type"] == "approval_policy_changed"
+
+
+def test_switching_to_auto_approves_the_current_pending_operation(
+    tmp_path: Path,
+) -> None:
+    model = ApprovalWriteModel()
+    app = create_app(_config(), model_client_factory=lambda: model)
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        sent = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"content": "Create generated.md"},
+        )
+        assert sent.status_code == 202
+
+        deadline = time.monotonic() + 2
+        details = client.get(f"/api/sessions/{session_id}").json()
+        while details["pending_approval"] is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+            details = client.get(f"/api/sessions/{session_id}").json()
+
+        changed = client.post(
+            f"/api/sessions/{session_id}/approval-policy",
+            json={"policy": "auto"},
+        )
+        while not (tmp_path / "generated.md").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        client.post(f"/api/sessions/{session_id}/cancel")
+        events = client.get(f"/api/sessions/{session_id}/events").json()
+
+    assert details["pending_approval"]["call"]["id"] == "write-1"
+    assert changed.status_code == 200
+    assert changed.json()["approved_pending"] is True
+    assert (tmp_path / "generated.md").read_text(encoding="utf-8") == "# Generated\n"
+    approval = next(event for event in events if event["type"] == "approval_result")
+    assert approval["payload"]["approved"] is True
+
+
 def test_intelligence_endpoint_exposes_project_memory(tmp_path: Path) -> None:
     app = create_app(_config())
     with TestClient(app) as client:
@@ -345,6 +414,32 @@ class BlockingWebModel:
             return ModelResponse(content="too late")
         finally:
             self.closed.set()
+
+
+class ApprovalWriteModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+    ) -> ModelResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "write-1",
+                        "write_file",
+                        {"path": "generated.md", "content": "# Generated\n"},
+                    )
+                ]
+            )
+        await asyncio.sleep(60)
+        return ModelResponse(content="done")
 
 
 def test_cancel_endpoint_interrupts_active_web_run(tmp_path: Path) -> None:

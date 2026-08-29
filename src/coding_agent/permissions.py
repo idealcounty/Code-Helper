@@ -17,6 +17,12 @@ class PermissionDecision(StrEnum):
     DENY = "deny"
 
 
+class ApprovalMode(StrEnum):
+    ASK = "ask"
+    AUTO = "auto"
+    FULL = "full"
+
+
 class ToolCapability(StrEnum):
     WORKSPACE_READ = "workspace.read"
     WORKSPACE_WRITE = "workspace.write"
@@ -66,9 +72,19 @@ class PermissionPolicy:
         r"(?i)\b(?:pip|pip3|npm|pnpm|yarn|poetry|uv)\s+(?:install|add)\b"
     )
 
-    def __init__(self, *, workspace_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        workspace_root: Path | None = None,
+        approval_mode: ApprovalMode | str = ApprovalMode.ASK,
+    ) -> None:
         self.workspace_root = workspace_root.resolve() if workspace_root else None
+        self.approval_mode = ApprovalMode(approval_mode)
         self._grants: dict[str, CapabilityGrant] = {}
+
+    def set_approval_mode(self, value: ApprovalMode | str) -> ApprovalMode:
+        self.approval_mode = ApprovalMode(value)
+        return self.approval_mode
 
     def evaluate(
         self,
@@ -79,6 +95,12 @@ class PermissionPolicy:
     ) -> PermissionResult:
         capabilities = self.capabilities_for(spec, arguments)
         capability_names = tuple(sorted(item.value for item in capabilities))
+        if self.approval_mode is ApprovalMode.FULL and mode == "act":
+            return PermissionResult(
+                PermissionDecision.ALLOW,
+                "Allowed by the current session's full-access policy",
+                capability_names,
+            )
         if ToolCapability.PATH_OUTSIDE_WORKSPACE in capabilities:
             return PermissionResult(
                 PermissionDecision.DENY,
@@ -115,8 +137,16 @@ class PermissionPolicy:
                     capability_names,
                 )
             return PermissionResult(
-                PermissionDecision.ASK,
-                "Commands require explicit user approval (" + ", ".join(capability_names) + ")",
+                PermissionDecision.ALLOW
+                if self.approval_mode is ApprovalMode.AUTO
+                else PermissionDecision.ASK,
+                (
+                    "Automatically approved by the current session policy ("
+                    if self.approval_mode is ApprovalMode.AUTO
+                    else "Commands require explicit user approval ("
+                )
+                + ", ".join(capability_names)
+                + ")",
                 capability_names,
             )
 
@@ -128,8 +158,16 @@ class PermissionPolicy:
                     capability_names,
                 )
             return PermissionResult(
-                PermissionDecision.ASK,
-                "File changes require explicit user approval (" + ", ".join(capability_names) + ")",
+                PermissionDecision.ALLOW
+                if self.approval_mode is ApprovalMode.AUTO
+                else PermissionDecision.ASK,
+                (
+                    "Automatically approved by the current session policy ("
+                    if self.approval_mode is ApprovalMode.AUTO
+                    else "File changes require explicit user approval ("
+                )
+                + ", ".join(capability_names)
+                + ")",
                 capability_names,
             )
         return PermissionResult(

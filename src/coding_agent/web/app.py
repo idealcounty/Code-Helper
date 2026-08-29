@@ -20,7 +20,7 @@ from ..agent_loop import AgentRunResult
 from ..config import AppConfig
 from ..events import AgentEvent
 from ..model import ModelClient, ToolCall
-from ..permissions import PermissionResult
+from ..permissions import ApprovalMode, PermissionResult
 from ..repo_map import RepoMapBuilder
 from ..runtime import AgentRuntime, create_runtime
 from ..session import AgentStatus
@@ -156,6 +156,7 @@ class CreateSessionRequest(BaseModel):
     session_id: str | None = None
     reasoning_profile: Literal["auto", "fast", "balanced", "deep"] = "auto"
     task_profile: Literal["auto", "project", "algorithm"] = "auto"
+    approval_policy: Literal["ask", "auto", "full"] = "ask"
 
 
 class MessageRequest(BaseModel):
@@ -175,6 +176,10 @@ class ModeRequest(BaseModel):
 
 class ReasoningRequest(BaseModel):
     profile: Literal["auto", "fast", "balanced", "deep"]
+
+
+class ApprovalPolicyRequest(BaseModel):
+    policy: Literal["ask", "auto", "full"]
 
 
 class MemoryCandidateRequest(BaseModel):
@@ -250,6 +255,7 @@ class WebSessionManager:
         session_id: str | None = None,
         reasoning_profile: str = "auto",
         task_profile: str = "auto",
+        approval_policy: str = "ask",
     ) -> WebSession:
         if not self.config.api_key:
             raise ValueError(
@@ -277,6 +283,7 @@ class WebSessionManager:
             approval_handler=broker.request,
         )
         _, runtime.state.reasoning_mode = _reasoning_profile(reasoning_profile)
+        runtime.runner.permission_policy.set_approval_mode(approval_policy)
         if session_id:
             events = runtime.event_store.load()
             runtime.state.restore_from_events(
@@ -383,6 +390,7 @@ def create_app(
                 request.session_id,
                 request.reasoning_profile,
                 request.task_profile,
+                request.approval_policy,
             )
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -393,6 +401,7 @@ def create_app(
             "mode": runtime.state.mode,
             "reasoning_profile": _profile_from_effort(runtime.state.reasoning_mode),
             "task_profile": runtime.state.requested_task_profile,
+            "approval_policy": runtime.runner.permission_policy.approval_mode,
         }
 
     @app.get("/api/sessions/{session_id}")
@@ -407,6 +416,7 @@ def create_app(
             "mode": state.mode,
             "reasoning_profile": _profile_from_effort(state.reasoning_mode),
             "task_profile": state.task_profile,
+            "approval_policy": session.runtime.runner.permission_policy.approval_mode,
             "step": state.step,
             "running": session.running,
             "changed_files": sorted(state.changed_files),
@@ -517,6 +527,7 @@ def create_app(
             },
             "permissions": {
                 "grants": runtime.runner.permission_policy.grants_snapshot(),
+                "approval_policy": runtime.runner.permission_policy.approval_mode,
             },
             "observability": {"tool_output_deltas": output_deltas},
             "token_usage": state.token_usage,
@@ -665,6 +676,42 @@ def create_app(
         session.runtime.state.reasoning_mode = effort
         return {"profile": profile, "reasoning_effort": effort}
 
+    @app.post("/api/sessions/{session_id}/approval-policy")
+    async def set_approval_policy(
+        session_id: str, request: ApprovalPolicyRequest
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        policy = session.runtime.runner.permission_policy
+        previous = policy.approval_mode
+        current = policy.set_approval_mode(request.policy)
+        pending = session.runtime.state.pending_approval or {}
+        pending_call = pending.get("call") or {}
+        pending_call_id = str(pending_call.get("id") or "")
+        approved_pending = False
+        if current is not ApprovalMode.ASK and pending_call_id:
+            try:
+                session.approval_broker.resolve(pending_call_id, True)
+                approved_pending = True
+            except KeyError:
+                pass
+        await session.runtime.event_bus.publish(
+            AgentEvent(
+                type="approval_policy_changed",
+                session_id=session.runtime.state.session_id,
+                turn_id=session.runtime.state.turn_id,
+                payload={
+                    "previous": previous,
+                    "policy": current,
+                    "approved_pending": approved_pending,
+                },
+            )
+        )
+        return {
+            "approval_policy": current,
+            "previous": previous,
+            "approved_pending": approved_pending,
+        }
+
     @app.post("/api/sessions/{session_id}/approval")
     async def resolve_approval(
         session_id: str, request: ApprovalRequest
@@ -738,8 +785,11 @@ def create_app(
     @app.get("/api/sessions/{session_id}/permissions")
     async def list_permissions(session_id: str) -> dict[str, Any]:
         session = manager.get(session_id)
-        grants = session.runtime.runner.permission_policy.grants_snapshot()
-        return {"grants": grants}
+        policy = session.runtime.runner.permission_policy
+        return {
+            "grants": policy.grants_snapshot(),
+            "approval_policy": policy.approval_mode,
+        }
 
     @app.delete("/api/sessions/{session_id}/permissions/{grant_id}")
     async def revoke_permission(session_id: str, grant_id: str) -> dict[str, Any]:

@@ -25,14 +25,14 @@
 
 ## 3. 当前完成基线
 
-截至 2026-08-29，仓库全量测试为 `153 passed`。以下主闭环已完成，不建议重复建设：
+截至 2026-08-29，仓库全量测试为 `157 passed`。以下主闭环已完成，不建议重复建设：
 
 | 能力 | 当前状态 | 主要实现 |
 | --- | --- | --- |
 | 自研 Agent Loop | 已完成 | `agent_loop.py`、`session.py` |
 | 原生 Tool Calling 与流式响应 | 已完成 | `model.py` |
 | 工作区文件、搜索、Patch、命令和 Git Diff | 已完成 | `tools/` |
-| Ask / Plan / Act 与统一审批 | 已完成基础版 | `permissions.py`、`agent_loop.py` |
+| Ask / Plan / Act 与三档审批策略 | 已完成基础版 | `permissions.py`、`agent_loop.py`、Web UI |
 | 读取哈希和外部修改保护 | 已完成 | `tools/workspace.py`、`tools/filesystem.py` |
 | JSONL 事件和 Session 恢复 | 已完成基础版 | `events.py`、`AgentState.restore_from_events` |
 | 验证新鲜度和有限修复 | 已完成基础版 | `verifier.py`、`agent_loop.py` |
@@ -162,6 +162,8 @@
 - `PermissionPolicy` 将工具请求归一化为 `workspace.read/write`、`process.exec`、`network.egress`、`dependency.install`、`path.outside_workspace` 和 `destructive.restore` 能力，并在 `tool_requested` 事件中展示。
 - 能力边界先于审批策略判断：工作区外路径直接拒绝；Ask/Plan 继续拒绝写和命令能力；Act 模式对非破坏性写入与命令按既有策略询问。
 - 增加仅存于当前 Runtime 的范围化会话授权，绑定能力、路径/命令前缀和过期时间；授权不会写入 Session 或跨新会话继承。Web 审批对话框支持“本会话允许”，智能面板可查看并撤销授权。
+- Web 顶栏新增会话级 `请求批准 / 帮我批准 / 完全放开` 审批策略：请求批准保留逐次审批；帮我批准只自动放行普通 Act 写入与命令，仍拒绝危险命令和工作区越界；完全放开经二次确认后允许 Act 执行原本会拒绝或询问的操作。切换到后两档时，当前正在等待的审批会自动通过。
+- 审批策略只改变 Act 的决策方式，不会扩大 Ask/Plan 的工具集合；策略仅存在于当前 Runtime，服务重启后回到保守的“请求批准”。
 - 危险命令识别补充 PowerShell 删除别名、磁盘擦除等等价形式；网络访问、依赖安装和长时命令作为独立能力暴露并继续要求审批。
 
 **剩余差距**
