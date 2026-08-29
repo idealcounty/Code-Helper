@@ -437,6 +437,19 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str], list[str]]:
         for name in function_pattern.findall(text)
         if name not in excluded
     )
+    if suffix == ".go":
+        # Go methods have an optional receiver between ``func`` and the
+        # method name (for example ``func (s *Server) Run()``), which the
+        # generic C-like expression above intentionally does not match.
+        # Index both free functions and receiver methods; unique-name
+        # resolution later keeps polymorphic calls conservative.
+        symbols.extend(
+            f"def {name}"
+            for name in re.findall(
+                r"\bfunc\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(",
+                text,
+            )
+        )
     calls = _generic_call_names(text)
     return sorted(set(imports)), symbols[:MAX_SYMBOLS_PER_FILE], calls[:MAX_SYMBOLS_PER_FILE]
 

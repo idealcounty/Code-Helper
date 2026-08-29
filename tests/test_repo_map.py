@@ -158,6 +158,33 @@ def test_repo_map_links_go_module_package_imports(tmp_path: Path) -> None:
     assert by_path["main.go"]["dependencies"] == ["internal/mathx/math.go"]
 
 
+def test_repo_map_indexes_go_receiver_methods_for_unique_calls(tmp_path: Path) -> None:
+    package = tmp_path / "service"
+    package.mkdir()
+    (package / "service.go").write_text(
+        "package service\n\n"
+        "type Service struct{}\n"
+        "func (s *Service) Execute() int { return 1 }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.go").write_text(
+        "package main\n\n"
+        "import \"example.com/demo/service\"\n\n"
+        "func main() { service.Service{}.Execute() }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "go.mod").write_text(
+        "module example.com/demo\n\ngo 1.22\n", encoding="utf-8"
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "def Execute" in by_path["service/service.go"]["symbols"]
+    assert "Execute" in by_path["main.go"]["calls"]
+    assert by_path["main.go"]["dependencies"] == ["service/service.go"]
+
+
 def test_repo_map_links_local_javascript_and_typescript_imports(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
