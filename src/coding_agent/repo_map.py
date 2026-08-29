@@ -352,9 +352,19 @@ def _python_summary(path: Path) -> tuple[list[str], list[str], list[str]]:
         elif isinstance(node, ast.ImportFrom):
             module = "." * node.level + (node.module or "")
             imports.append(module)
-        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            prefix = "class" if isinstance(node, ast.ClassDef) else "def"
-            symbols.append(f"{prefix} {node.name}")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            symbols.append(f"def {node.name}")
+        elif isinstance(node, ast.ClassDef):
+            symbols.append(f"class {node.name}")
+            # Method names are useful call-graph anchors for expressions such
+            # as ``service.execute()``.  Keep this conservative: only direct
+            # class members are indexed, and normal unique-name resolution
+            # still prevents ambiguous edges.
+            symbols.extend(
+                f"def {member.name}"
+                for member in node.body
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
     # Include only statically knowable dynamic imports. Runtime-computed
     # module names are intentionally ignored so the graph remains conservative.
     for node in ast.walk(tree):

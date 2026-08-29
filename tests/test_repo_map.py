@@ -68,6 +68,24 @@ def test_repo_map_links_unique_python_call_targets(tmp_path: Path) -> None:
     assert by_path["core.py"]["dependents"] == ["app.py"]
 
 
+def test_repo_map_links_unique_python_method_calls(tmp_path: Path) -> None:
+    (tmp_path / "service.py").write_text(
+        "class Service:\n    def execute(self):\n        return 1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text(
+        "from service import Service\n\ndef run():\n    return Service().execute()\n",
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "def execute" in by_path["service.py"]["symbols"]
+    assert "execute" in by_path["app.py"]["calls"]
+    assert by_path["app.py"]["dependencies"] == ["service.py"]
+
+
 def test_repo_map_links_static_python_dynamic_imports(tmp_path: Path) -> None:
     (tmp_path / "plugin.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / "loader.py").write_text(
