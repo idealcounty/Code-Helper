@@ -1156,7 +1156,8 @@ function renderIntelligence(data) {
     </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>
-      <div class="intel-facts"><span>${totals.files_seen || 0} 文件</span><span>${totals.python_files || 0} Python</span><span>${totals.test_files || 0} 测试</span></div>
+      <div class="intel-facts"><span>${totals.files_seen || 0} 文件</span><span>${totals.python_files || 0} Python</span><span>${totals.test_files || 0} 测试</span><span>${(totals.build_roots || []).length} 构建入口</span></div>
+      ${(totals.build_roots || []).length ? `<details><summary>查看构建入口</summary><ul class="context-source-list">${totals.build_roots.slice(0, 8).map((path) => `<li><span>入口 · ${escapeHtml(path)}</span><em>build root</em></li>`).join("")}</ul></details>` : ""}
       <ol class="repo-rank">${topFiles || '<li><span>暂无可排名文件</span></li>'}</ol>
     </section>
     <section class="intelligence-section">
