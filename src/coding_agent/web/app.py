@@ -261,7 +261,11 @@ class WebSessionManager:
         )
         _, runtime.state.reasoning_mode = _reasoning_profile(reasoning_profile)
         if session_id:
-            runtime.state.restore_from_events(runtime.event_store.load())
+            events = runtime.event_store.load()
+            runtime.state.restore_from_events(
+                events,
+                recovery_diagnostics=runtime.event_store.last_load_diagnostics,
+            )
         session = WebSession(runtime=runtime, approval_broker=broker)
         self.sessions[runtime.state.session_id] = session
         return session
@@ -391,6 +395,9 @@ def create_app(
             "tool_stats": state.tool_stats,
             "budget": _budget_view(session.runtime),
             "verification_evidence": state.verification_evidence,
+            "pending_approval": state.pending_approval,
+            "interrupted_tool_calls": state.interrupted_tool_calls,
+            "recovery_warnings": state.recovery_warnings,
             "last_error": session.last_error,
         }
 
@@ -663,6 +670,9 @@ def create_app(
             "tool_stats": state.tool_stats,
             "context_summary": state.context_summary,
             "budget": _budget_view(runtime),
+            "pending_approval": state.pending_approval,
+            "interrupted_tool_calls": state.interrupted_tool_calls,
+            "recovery_warnings": state.recovery_warnings,
         }
 
     @app.get("/api/sessions/{session_id}/files")

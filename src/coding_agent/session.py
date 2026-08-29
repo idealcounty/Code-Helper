@@ -49,6 +49,16 @@ class AgentState:
     max_repair_attempts: int = 3
     run_budget: dict[str, Any] = field(default_factory=dict)
     verification_evidence: list[dict[str, Any]] = field(default_factory=list)
+    interrupted_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    recovery_warnings: list[dict[str, Any]] = field(default_factory=list)
+    completed_tool_call_ids: set[str] = field(default_factory=set)
+    last_applied_event_sequence: int = 0
+    _reducer: Any = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        from .session_reducer import SessionReducer
+
+        self._reducer = SessionReducer(self)
 
     @classmethod
     def create(
@@ -85,6 +95,12 @@ class AgentState:
         self.repair_attempts = 0
         self.run_budget.clear()
         self.verification_evidence.clear()
+        self.interrupted_tool_calls.clear()
+        self.recovery_warnings.clear()
+        self.completed_tool_call_ids.clear()
+        self.last_applied_event_sequence = 0
+        if self._reducer is not None:
+            self._reducer.reset()
 
     @property
     def verification_is_fresh(self) -> bool:
@@ -94,7 +110,16 @@ class AgentState:
             > self.last_mutation_sequence
         )
 
-    def restore_from_events(self, events: list[dict[str, Any]]) -> None:
+    def apply_event(self, event: dict[str, Any]) -> None:
+        """Apply one durable event through the same reducer used by recovery."""
+        self._reducer.apply(event)
+
+    def restore_from_events(
+        self,
+        events: list[dict[str, Any]],
+        *,
+        recovery_diagnostics: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Rehydrate durable conversation and observable state after a restart."""
         self.messages.clear()
         self.plan.clear()
@@ -109,79 +134,11 @@ class AgentState:
         self.repair_attempts = 0
         self.run_budget.clear()
         self.verification_evidence.clear()
+        self.interrupted_tool_calls.clear()
+        self.recovery_warnings = list(recovery_diagnostics or [])
+        self.completed_tool_call_ids.clear()
+        self.last_applied_event_sequence = 0
+        self._reducer.reset()
         for event in events:
-            payload = event.get("payload") or {}
-            event_type = event.get("type")
-            if event.get("turn_id"):
-                self.turn_id = str(event["turn_id"])
-            if event_type == "turn_started":
-                self.changed_files.clear()
-                self.last_mutation_sequence = 0
-                self.last_successful_verification_sequence = 0
-                self.verification_evidence.clear()
-                self.pending_approval = None
-                self.repair_attempts = 0
-                self.completion_rejections = 0
-                self.current_objective = str(payload.get("message", ""))
-                self.messages.append({"role": "user", "content": self.current_objective})
-                self.step = 0
-            elif event_type == "step_started":
-                self.step = int(payload.get("step", self.step))
-            elif event_type == "assistant_response":
-                calls = payload.get("tool_calls") or []
-                self.messages.append({
-                    "role": "assistant",
-                    "content": payload.get("content") or "",
-                    **({"tool_calls": calls} if calls else {}),
-                })
-                usage = payload.get("usage") or {}
-                for key, value in usage.items():
-                    if isinstance(value, int):
-                        self.token_usage[key] = self.token_usage.get(key, 0) + value
-            elif event_type == "tool_result":
-                result = payload.get("result") or {}
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": payload.get("id", "recovered"),
-                    "name": payload.get("name", "unknown"),
-                    "content": json.dumps(result, ensure_ascii=False),
-                })
-                name = str(payload.get("name", "unknown"))
-                stats = self.tool_stats.setdefault(name, {"calls": 0, "successes": 0, "failures": 0, "duration_ms": 0})
-                stats["calls"] += 1
-                stats["successes" if result.get("ok") else "failures"] += 1
-                duration = (result.get("metadata") or {}).get("duration_ms", 0)
-                if isinstance(duration, int):
-                    stats["duration_ms"] += duration
-                metadata = result.get("metadata") or {}
-                mutated_files = list(map(str, metadata.get("mutated_files", [])))
-                self.changed_files.update(mutated_files)
-                if mutated_files:
-                    self.last_mutation_sequence = int(event.get("sequence", 0))
-            elif event_type == "plan_updated":
-                self.plan = list(payload.get("plan") or [])
-            elif event_type == "context_compacted":
-                self.context_summary = str(payload.get("summary") or "")
-            elif event_type == "repair_attempt":
-                self.repair_attempts = max(self.repair_attempts, int(payload.get("attempt", 0)))
-            elif event_type == "verification_recorded":
-                evidence = payload.get("evidence")
-                if isinstance(evidence, dict):
-                    self.verification_evidence.append(dict(evidence))
-                    if evidence.get("accepted"):
-                        self.last_successful_verification_sequence = int(
-                            event.get("sequence", 0)
-                        )
-            elif event_type == "checkpoint_restored":
-                self.changed_files.clear()
-                self.last_mutation_sequence = int(event.get("sequence", 0))
-                self.last_successful_verification_sequence = 0
-            elif event_type in {"run_budget_started", "run_budget_updated", "run_budget_exhausted"}:
-                self.run_budget = dict(payload.get("budget") or self.run_budget)
-            elif event_type == "turn_finished":
-                try:
-                    self.status = AgentStatus(payload.get("status", self.status))
-                except ValueError:
-                    pass
-                self.token_usage.update(payload.get("token_usage") or {})
-                self.tool_stats.update(payload.get("tool_stats") or {})
+            self._reducer.apply(event)
+        self._reducer.finalize_recovery()

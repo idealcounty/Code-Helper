@@ -25,7 +25,7 @@
 
 ## 3. 当前完成基线
 
-截至 2026-08-29，仓库全量测试为 `96 passed`。以下主闭环已完成，不建议重复建设：
+截至 2026-08-29，仓库全量测试为 `104 passed`。以下主闭环已完成，不建议重复建设：
 
 | 能力 | 当前状态 | 主要实现 |
 | --- | --- | --- |
@@ -96,11 +96,19 @@
 
 ### R2. 事件归约器与可恢复审批
 
-**当前差距**
+**实施状态：V1 已完成（2026-08-29）**
 
-- `restore_from_events` 可以恢复消息、计划和统计，但没有完整重建 `pending_approval`、最近 Action、修改序列和验证序列。
-- 审批请求发生后若进程重启，无法严格恢复到“等待同一个 Tool Call”的状态。
-- EventStore 遇到一行损坏 JSON 会使整个 Session 加载失败；事件没有 schema version 和稳定 event id。
+- 新增 `SessionReducer.apply(event)`，在线 AgentLoop 与离线 `restore_from_events` 使用同一归约逻辑；parity 测试覆盖消息、状态、统计、预算稳定字段和验证事实。
+- 事件自动携带 `schema_version`、稳定 `event_id` 和可选 `causation_id`；同一事件 ID 与同一 Tool Call ID 的重复结果不会重复计入状态或副作用事实。
+- `approval_requested` 会持久化待审批 Tool Call 和剩余调用，重启后可继续调用 `resume_approval`；只有存在 `tool_result` 才会视为工具已完成。
+- 恢复时发现 `tool_started` 没有对应结果，会标记 `INTERRUPTED_UNKNOWN` 并生成恢复警告，绝不自动重放工具。
+- EventStore 只容忍尾部半写/损坏行并保留诊断；中间损坏仍拒绝静默恢复。Web Session/Report 会暴露待审批、未知中断和恢复警告。
+
+**剩余差距**
+
+- 事件尚未加入内容校验和、`causation_id` 的生产级链路关联，以及可视化的恢复诊断时间线。
+- 仍需补充四个关键崩溃点的端到端重启测试，并验证跨进程/跨主机恢复时的版本兼容策略。
+- `INTERRUPTED_UNKNOWN` 目前只进入恢复状态和报告，尚未提供逐个调用的人工重试/放弃 UI。
 
 **建议实现**
 

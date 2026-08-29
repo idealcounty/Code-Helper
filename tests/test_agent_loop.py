@@ -142,6 +142,36 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     assert "tool_result" in event_types
 
 
+def test_live_reducer_and_event_replay_have_matching_projection(tmp_path: Path) -> None:
+    model = ScriptedModel([ModelResponse(content="done")])
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=2)
+
+    result = asyncio.run(runner.run_turn(state, "finish safely"))
+    recovered = AgentState.create(session_id="session", max_steps=2)
+    recovered.restore_from_events(store.load())
+
+    assert result.status is AgentStatus.COMPLETED
+    assert recovered.status is state.status
+    assert recovered.turn_id == state.turn_id
+    assert recovered.step == state.step
+    assert recovered.current_objective == state.current_objective
+    assert recovered.messages == state.messages
+    assert recovered.token_usage == state.token_usage
+    assert recovered.tool_stats == state.tool_stats
+    stable_budget_keys = {
+        "max_seconds",
+        "max_steps",
+        "token_limit",
+        "consumed_tokens",
+        "consumed_steps",
+        "exhausted_code",
+    }
+    assert {
+        key: recovered.run_budget.get(key) for key in stable_budget_keys
+    } == {key: state.run_budget.get(key) for key in stable_budget_keys}
+
+
 def test_agent_emits_context_compaction_event(tmp_path: Path) -> None:
     model = ScriptedModel([ModelResponse(content="done")])
     runner, store = _make_runner(tmp_path, model)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -80,8 +79,6 @@ class AgentRunner:
                 raise RuntimeError("Cannot start a new turn while another turn is active")
             if state.status is not AgentStatus.READY:
                 state.begin_new_turn()
-            state.current_objective = user_message
-            state.messages.append({"role": "user", "content": user_message})
             await self._emit(state, "turn_started", {"message": user_message})
 
         if user_message is not None or not self.run_budget.active:
@@ -110,7 +107,6 @@ class AgentRunner:
         approved: bool,
     ) -> AgentRunResult:
 
-        state.pending_approval = None
         call = ToolCall(
             id=pending["call"]["id"],
             name=pending["call"]["name"],
@@ -147,7 +143,6 @@ class AgentRunner:
         self.cancellation.reset()
         state.cancel_requested = False
         self.run_budget.start(max_steps=state.max_steps)
-        state.run_budget = self.run_budget.snapshot()
         await self._emit(
             state,
             "run_budget_started",
@@ -189,7 +184,6 @@ class AgentRunner:
             )
         except asyncio.CancelledError:
             self.cancellation.cancel("task_cancelled")
-            state.cancel_requested = True
             current = asyncio.current_task()
             while current is not None and current.cancelling():
                 current.uncancel()
@@ -212,19 +206,17 @@ class AgentRunner:
             self.run_budget.check_time()
             self.run_budget.check_step(state.step + 1)
 
-            state.step += 1
-            state.status = AgentStatus.BUILDING_CONTEXT
             schemas = self._allowed_tool_schemas(state.mode)
             context = self.context_manager.build(state, schemas)
             self.run_budget.check_time()
-            await self._emit(state, "step_started", {"step": state.step})
+            next_step = state.step + 1
+            await self._emit(state, "step_started", {"step": next_step})
             if context.truncated:
                 await self._emit(state, "context_compacted", {
                     "estimated_chars": context.estimated_chars,
                     "summary": state.context_summary,
                 })
 
-            state.status = AgentStatus.CALLING_MODEL
             await self._emit(state, "model_started", {"step": state.step})
             try:
                 stream_method = getattr(self.model_client, "complete_stream", None)
@@ -241,8 +233,6 @@ class AgentRunner:
             except ModelError as exc:
                 return await self._finish(state, AgentStatus.FAILED, str(exc))
 
-            state.messages.append(response.to_assistant_message())
-            self._merge_usage(state, response.usage)
             self.run_budget.record_usage(response.usage)
             await self._emit(
                 state,
@@ -275,7 +265,6 @@ class AgentRunner:
                     )
                 continue
 
-            state.status = AgentStatus.VERIFYING
             decision = self.verifier.evaluate(state, response)
             await self._emit(
                 state,
@@ -289,12 +278,6 @@ class AgentRunner:
             if decision.status is CompletionStatus.PARTIAL:
                 return await self._finish(state, AgentStatus.PARTIAL, decision.reason)
 
-            state.messages.append(
-                {
-                    "role": "user",
-                    "content": f"SYSTEM OBSERVATION: {decision.reason}",
-                }
-            )
             await self._emit(
                 state, "verification_required", {"reason": decision.reason}
             )
@@ -347,14 +330,12 @@ class AgentRunner:
                         "name": call.name,
                         "arguments": call.arguments,
                         "reason": permission.reason,
+                        "remaining": [
+                            _serialize_call(item) for item in calls[index + 1 :]
+                        ],
                     },
                 )
-                state.status = AgentStatus.WAITING_APPROVAL
                 if self.approval_handler is None:
-                    state.pending_approval = {
-                        "call": _serialize_call(call),
-                        "remaining": [_serialize_call(item) for item in calls[index + 1 :]],
-                    }
                     return AgentRunResult(
                         AgentStatus.WAITING_APPROVAL,
                         f"Approval required for {call.name}",
@@ -407,7 +388,6 @@ class AgentRunner:
                             "existed": capture.existed,
                         },
                     )
-        state.status = AgentStatus.EXECUTING_TOOL
         started_event = await self._emit(
             state,
             "tool_started",
@@ -474,40 +454,19 @@ class AgentRunner:
         *,
         started_sequence: int = 0,
     ) -> None:
-        state.status = AgentStatus.OBSERVING
         event = await self._emit(
             state,
             "tool_result",
-            {"id": call.id, "name": call.name, "result": result.to_dict()},
-        )
-        state.messages.append(
             {
-                "role": "tool",
-                "tool_call_id": call.id,
+                "id": call.id,
                 "name": call.name,
-                "content": json.dumps(result.to_dict(), ensure_ascii=False),
-            }
+                "arguments": call.arguments,
+                "result": result.to_dict(),
+            },
         )
-        signature = json.dumps(
-            {"name": call.name, "arguments": call.arguments},
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        state.recent_actions.append(
-            {"signature": signature, "result_code": result.code}
-        )
-        state.recent_actions[:] = state.recent_actions[-20:]
-        stats = state.tool_stats.setdefault(call.name, {"calls": 0, "successes": 0, "failures": 0, "duration_ms": 0})
-        stats["calls"] += 1
-        stats["successes" if result.ok else "failures"] += 1
-        duration = result.metadata.get("duration_ms", 0)
-        if isinstance(duration, int):
-            stats["duration_ms"] += duration
 
         mutated_files = result.metadata.get("mutated_files", []) if result.ok else []
         if mutated_files:
-            state.changed_files.update(map(str, mutated_files))
-            state.last_mutation_sequence = event.sequence
             if self.checkpoint_manager is not None:
                 for path in map(str, mutated_files):
                     try:
@@ -543,16 +502,12 @@ class AgentRunner:
                 finished_sequence=event.sequence,
             )
             evidence_payload = evidence.to_dict()
-            state.verification_evidence.append(evidence_payload)
-            evidence_event = await self._emit(
+            await self._emit(
                 state, "verification_recorded", {"evidence": evidence_payload}
             )
-            if evidence.accepted:
-                state.last_successful_verification_sequence = evidence_event.sequence
-            else:
-                state.repair_attempts += 1
+            if not evidence.accepted:
                 await self._emit(state, "repair_attempt", {
-                    "attempt": state.repair_attempts,
+                    "attempt": state.repair_attempts + 1,
                     "max_attempts": state.max_repair_attempts,
                     "reason": evidence.reason,
                 })
@@ -574,7 +529,6 @@ class AgentRunner:
     async def _finish(
         self, state: AgentState, status: AgentStatus, message: str
     ) -> AgentRunResult:
-        state.status = status
         await self._emit(
             state,
             "turn_finished",
@@ -609,7 +563,7 @@ class AgentRunner:
     async def _emit(
         self, state: AgentState, event_type: str, payload: dict[str, Any]
     ) -> AgentEvent:
-        return await self.event_bus.publish(
+        event = await self.event_bus.publish(
             AgentEvent(
                 type=event_type,
                 session_id=state.session_id,
@@ -617,13 +571,7 @@ class AgentRunner:
                 payload=payload,
             )
         )
-
-    @staticmethod
-    def _merge_usage(state: AgentState, usage: dict[str, Any]) -> None:
-        for key, value in usage.items():
-            if isinstance(value, int):
-                state.token_usage[key] = state.token_usage.get(key, 0) + value
-
-
+        state.apply_event(event.to_dict())
+        return event
 def _serialize_call(call: ToolCall) -> dict[str, Any]:
     return {"id": call.id, "name": call.name, "arguments": call.arguments}

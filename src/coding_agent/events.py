@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass(slots=True)
@@ -20,6 +21,9 @@ class AgentEvent:
     timestamp: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="milliseconds")
     )
+    schema_version: int = 1
+    event_id: str = field(default_factory=lambda: uuid4().hex)
+    causation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -35,6 +39,7 @@ class EventStore:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / f"{session_id}.jsonl"
+        self.last_load_diagnostics: list[dict[str, Any]] = []
 
     def append(self, event: AgentEvent) -> None:
         line = json.dumps(event.to_dict(), ensure_ascii=False, default=str)
@@ -43,19 +48,34 @@ class EventStore:
             handle.write("\n")
 
     def load(self) -> list[dict[str, Any]]:
+        self.last_load_diagnostics = []
         if not self.path.exists():
             return []
         events: list[dict[str, Any]] = []
         with self.path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
+            lines = handle.readlines()
+        non_empty_lines = [
+            number for number, line in enumerate(lines, start=1) if line.strip()
+        ]
+        last_non_empty_line = non_empty_lines[-1] if non_empty_lines else 0
+        for line_number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                if line_number == last_non_empty_line:
+                    self.last_load_diagnostics.append(
+                        {
+                            "code": "TRAILING_EVENT_CORRUPT",
+                            "line": line_number,
+                            "message": str(exc),
+                        }
+                    )
                     continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"Invalid session event at line {line_number}: {exc}"
-                    ) from exc
+                raise ValueError(
+                    f"Invalid session event at line {line_number}: {exc}"
+                ) from exc
         return events
 
 
@@ -89,6 +109,8 @@ class EventBus:
         async with self._lock:
             self._sequence += 1
             event.sequence = self._sequence
+            if not event.event_id:
+                event.event_id = uuid4().hex
             self.store.append(event)
 
         for listener in tuple(self._listeners):
