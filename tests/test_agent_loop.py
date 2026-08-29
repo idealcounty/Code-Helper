@@ -173,6 +173,50 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     assert "tool_output_delta" in event_types
 
 
+def test_deepseek_reasoning_state_is_replayed_to_next_tool_round_only_in_memory(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("1", "read_file", {"path": "sample.py"})],
+                reasoning_content="private provider protocol state",
+            ),
+            ModelResponse(content="The file contains value = 1."),
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=3, mode="ask")
+
+    result = asyncio.run(runner.run_turn(state, "Read sample.py"))
+
+    assert result.status is AgentStatus.COMPLETED
+    second_request = model.seen_messages[1]
+    tool_call_message = next(
+        message for message in second_request if message.get("tool_calls")
+    )
+    assert tool_call_message["reasoning_content"] == (
+        "private provider protocol state"
+    )
+    assert tool_call_message["tool_calls"][0] == {
+        "id": "1",
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "arguments": '{"path": "sample.py"}',
+        },
+    }
+    persisted = (tmp_path / ".events" / "session.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "private provider protocol state" not in persisted
+    assert all(
+        "reasoning_content" not in event.get("payload", {})
+        for event in store.load()
+    )
+
+
 def test_live_reducer_and_event_replay_have_matching_projection(tmp_path: Path) -> None:
     model = ScriptedModel([ModelResponse(content="done")])
     runner, store = _make_runner(tmp_path, model)

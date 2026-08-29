@@ -165,6 +165,11 @@ class OpenAICompatibleModelClient:
         try:
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 async with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=body) as response:
+                    if response.is_error:
+                        # Streaming responses are not buffered automatically. Read
+                        # the error body before leaving the context so diagnostics
+                        # remain available to _safe_error_detail.
+                        await response.aread()
                     response.raise_for_status()
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):

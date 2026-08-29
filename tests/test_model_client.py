@@ -5,8 +5,9 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
-from coding_agent.model import OpenAICompatibleModelClient
+from coding_agent.model import ModelError, OpenAICompatibleModelClient
 
 
 def test_deepseek_request_and_thinking_tool_state_round_trip() -> None:
@@ -130,6 +131,26 @@ def test_streaming_client_emits_text_deltas() -> None:
     assert captured["body"]["stream"] is True
     assert deltas == ["hel", "lo"]
     assert response.content == "hello"
+
+
+def test_streaming_client_preserves_http_error_detail() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"message": "invalid assistant tool message"}},
+        )
+
+    client = OpenAICompatibleModelClient(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ModelError, match="invalid assistant tool message"):
+        asyncio.run(
+            client.complete_stream(messages=[], tools=[], on_delta=lambda _: None)
+        )
 
 
 def test_streaming_client_merges_interleaved_tool_calls_by_protocol_index() -> None:

@@ -142,7 +142,11 @@ class SessionReducer:
         self.state.messages.append({"role": "user", "content": objective})
 
     def _assistant_response(self, payload: Mapping[str, Any]) -> None:
-        calls = payload.get("tool_calls") or []
+        calls = [
+            _provider_tool_call(call)
+            for call in payload.get("tool_calls") or []
+            if isinstance(call, Mapping)
+        ]
         self.state.messages.append(
             {
                 "role": "assistant",
@@ -288,6 +292,23 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _provider_tool_call(call: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert durable/UI tool-call data into the provider message schema."""
+    function = call.get("function")
+    if isinstance(function, Mapping):
+        return copy.deepcopy(dict(call))
+    return {
+        "id": str(call.get("id") or ""),
+        "type": "function",
+        "function": {
+            "name": str(call.get("name") or ""),
+            "arguments": json.dumps(
+                call.get("arguments") or {}, ensure_ascii=False, separators=(",", ":")
+            ),
+        },
+    }
 
 
 def _contains_redacted(value: Any) -> bool:

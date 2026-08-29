@@ -311,6 +311,7 @@ class AgentRunner:
                     "usage": response.usage,
                 },
             )
+            self._attach_private_model_state(state, response)
             self.run_budget.check_tokens()
 
             if response.tool_calls:
@@ -341,6 +342,19 @@ class AgentRunner:
             await self._emit(
                 state, "verification_required", {"reason": decision.reason}
             )
+
+    @staticmethod
+    def _attach_private_model_state(
+        state: AgentState, response: ModelResponse
+    ) -> None:
+        """Keep provider protocol state in memory without persisting model reasoning."""
+        if not response.reasoning_content or not response.tool_calls:
+            return
+        for message in reversed(state.messages):
+            if message.get("role") == "assistant":
+                message.clear()
+                message.update(response.to_assistant_message())
+                return
 
     async def _handle_tool_calls(
         self, state: AgentState, calls: list[ToolCall]
