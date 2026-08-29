@@ -59,6 +59,10 @@ async def run_comparison(
         no_rag_summary["cross_file"]["metrics"],
         keys=("contract_pass_rate", "completion_rate", "verification_rate"),
     )
+    repetition_stats = _cross_file_repetition_stats(samples)
+    stable_improvement = _stable_cross_file_improvement(
+        repetitions, repetition_stats
+    )
     return {
         "schema_version": 1,
         "mode": mode,
@@ -71,12 +75,14 @@ async def run_comparison(
         "samples": samples,
         "delta": _delta(repo_summary["metrics"], no_rag_summary["metrics"]),
         "cross_file_delta": cross_file_delta,
-        "cross_file_repetitions": _cross_file_repetition_stats(samples),
+        "cross_file_repetitions": repetition_stats,
         "quality_evidence": {
             "status": "real_model_required" if mode != "real" else "real_model_observed",
             "cross_file_completion_improved": (
                 cross_file_delta["completion_rate"] > 0
             ),
+            "cross_file_improvement_stable": stable_improvement,
+            "minimum_repetitions": 2,
         },
         "interpretation": (
             "This is a controlled A/B report on the same task set. Deterministic "
@@ -164,9 +170,21 @@ def _cross_file_repetition_stats(samples: list[dict[str, Any]]) -> dict[str, Any
         "count": len(deltas),
         "positive_count": sum(delta > 0 for delta in deltas),
         "non_negative_count": sum(delta >= 0 for delta in deltas),
+        "all_non_negative": bool(deltas) and all(delta >= 0 for delta in deltas),
         "mean_delta": round(sum(deltas) / len(deltas), 4) if deltas else 0.0,
         "deltas": deltas,
     }
+
+
+def _stable_cross_file_improvement(
+    repetitions: int, repetition_stats: dict[str, Any]
+) -> bool:
+    """Require repeatable, non-regressing improvement before claiming proof."""
+    return bool(
+        repetitions >= 2
+        and repetition_stats.get("all_non_negative")
+        and float(repetition_stats.get("mean_delta", 0.0)) > 0
+    )
 
 
 def _task_rate(tasks: list[dict[str, Any]], field: str) -> float:
@@ -227,7 +245,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             "Paired repetitions: "
             f"{report['cross_file_repetitions']['positive_count']}/"
             f"{report['cross_file_repetitions']['count']} positive, "
-            f"mean completion delta={report['cross_file_repetitions']['mean_delta']:+.1%}",
+            f"mean completion delta={report['cross_file_repetitions']['mean_delta']:+.1%}; "
+            f"stable={report['quality_evidence']['cross_file_improvement_stable']}",
             "",
         ]
     )
@@ -245,7 +264,7 @@ def main() -> int:
     parser.add_argument(
         "--require-cross-file-improvement",
         action="store_true",
-        help="In real mode, return failure unless cross-file completion improves.",
+        help="In real mode, require at least two paired repetitions with no cross-file regression and positive mean improvement.",
     )
     parser.add_argument("--output-dir", type=Path, default=Path(".eval-results/rag"))
     args = parser.parse_args()
@@ -268,7 +287,11 @@ def main() -> int:
     if args.require_cross_file_improvement:
         if args.mode != "real":
             raise SystemExit("--require-cross-file-improvement requires --mode real")
-        if not report["quality_evidence"]["cross_file_completion_improved"]:
+        if not report["quality_evidence"]["cross_file_improvement_stable"]:
+            print(
+                "Cross-file improvement gate requires at least two paired repetitions, "
+                "no non-negative regression, and a positive mean completion delta."
+            )
             return 1
     return 0
 
