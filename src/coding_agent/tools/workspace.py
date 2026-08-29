@@ -44,7 +44,9 @@ class Workspace:
         self.summary_cache: dict[Path, tuple[str, dict[str, object]]] = {}
         # Parsed Repo Map summaries are keyed by content hash so a new
         # builder instance can reuse work while external edits invalidate it.
-        self.repo_map_cache: dict[Path, tuple[str, tuple[str, ...], tuple[str, ...]]] = {}
+        self.repo_map_cache: dict[
+            Path, tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+        ] = {}
         # Dependency edges are independent of the query score, so cache the
         # graph metadata by the complete path/content signature.
         self.repo_graph_cache: tuple[
@@ -141,8 +143,9 @@ class Workspace:
                 "sha256": digest,
                 "imports": list(imports),
                 "symbols": list(symbols),
+                "calls": list(calls),
             }
-            for path, (digest, imports, symbols) in self.repo_map_cache.items()
+            for path, (digest, imports, symbols, calls) in self.repo_map_cache.items()
             if path.exists() and path.is_file()
         }
         graph: dict[str, object] | None = None
@@ -187,7 +190,8 @@ class Workspace:
             digest = item.get("sha256")
             imports = item.get("imports")
             symbols = item.get("symbols")
-            if not isinstance(digest, str) or not isinstance(imports, list) or not isinstance(symbols, list):
+            calls = item.get("calls", [])
+            if not isinstance(digest, str) or not isinstance(imports, list) or not isinstance(symbols, list) or not isinstance(calls, list):
                 continue
             try:
                 path = (self.root / relative).resolve()
@@ -196,6 +200,7 @@ class Workspace:
                         digest,
                         tuple(str(value) for value in imports),
                         tuple(str(value) for value in symbols),
+                        tuple(str(value) for value in calls),
                     )
             except (OSError, ValueError):
                 continue

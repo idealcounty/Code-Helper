@@ -43,6 +43,7 @@ class RepoMapFile:
     reason: list[str] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)
     symbols: list[str] = field(default_factory=list)
+    calls: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
     dependents: list[str] = field(default_factory=list)
     centrality: int = 0
@@ -55,6 +56,7 @@ class RepoMapFile:
             "reason": self.reason,
             "imports": self.imports,
             "symbols": self.symbols,
+            "calls": self.calls,
             "dependencies": self.dependencies,
             "dependents": self.dependents,
             "centrality": self.centrality,
@@ -109,24 +111,28 @@ class RepoMapBuilder:
                 reason.append("recently touched")
             imports: list[str]
             symbols: list[str]
+            calls: list[str]
             observation = self.workspace.observe(path)
             cached = self.workspace.repo_map_cache.get(path.resolve())
             if cached is not None and cached[0] == observation.sha256:
                 imports = list(cached[1])
                 symbols = list(cached[2])
+                calls = list(cached[3]) if len(cached) > 3 else []
                 totals["summary_cache_hits"] += 1
             else:
                 totals["summary_cache_misses"] += 1
                 imports = []
                 symbols = []
+                calls = []
                 if path.suffix.lower() == ".py":
-                    imports, symbols = _python_summary(path)
+                    imports, symbols, calls = _python_summary(path)
                 elif path.suffix.lower() in _GENERIC_CODE_SUFFIXES:
-                    imports, symbols = _generic_code_summary(path)
+                    imports, symbols, calls = _generic_code_summary(path)
                 self.workspace.repo_map_cache[path.resolve()] = (
                     observation.sha256,
                     tuple(imports),
                     tuple(symbols),
+                    tuple(calls),
                 )
             if path.suffix.lower() == ".py":
                 totals["python_files"] += 1
@@ -144,6 +150,7 @@ class RepoMapBuilder:
                     reason=reason,
                     imports=imports[:MAX_SYMBOLS_PER_FILE],
                     symbols=symbols[:MAX_SYMBOLS_PER_FILE],
+                    calls=calls[:MAX_SYMBOLS_PER_FILE],
                 )
             )
 
@@ -227,14 +234,15 @@ def _score_file(relative: str, kind: str, keywords: set[str]) -> tuple[int, list
     return score, reason
 
 
-def _python_summary(path: Path) -> tuple[list[str], list[str]]:
+def _python_summary(path: Path) -> tuple[list[str], list[str], list[str]]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
-        return [], []
+        return [], [], []
 
     imports: list[str] = []
     symbols: list[str] = []
+    calls: list[str] = []
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Import):
             imports.extend(alias.name for alias in node.names)
@@ -247,6 +255,11 @@ def _python_summary(path: Path) -> tuple[list[str], list[str]]:
     # Include only statically knowable dynamic imports. Runtime-computed
     # module names are intentionally ignored so the graph remains conservative.
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                calls.append(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                calls.append(node.func.attr)
         if not isinstance(node, ast.Call) or not node.args:
             continue
         function = node.func
@@ -257,15 +270,15 @@ def _python_summary(path: Path) -> tuple[list[str], list[str]]:
         )
         if is_dynamic_import and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
             imports.append(node.args[0].value)
-    return sorted(set(imports)), symbols
+    return sorted(set(imports)), symbols, sorted(set(calls))
 
 
-def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
+def _generic_code_summary(path: Path) -> tuple[list[str], list[str], list[str]]:
     """Extract conservative imports and top-level symbols without an LSP."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return [], []
+        return [], [], []
 
     suffix = path.suffix.lower()
     imports: list[str] = []
@@ -311,7 +324,15 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
         for name in function_pattern.findall(text)
         if name not in excluded
     )
-    return sorted(set(imports)), symbols[:MAX_SYMBOLS_PER_FILE]
+    calls = _generic_call_names(text)
+    return sorted(set(imports)), symbols[:MAX_SYMBOLS_PER_FILE], calls[:MAX_SYMBOLS_PER_FILE]
+
+
+def _generic_call_names(text: str) -> list[str]:
+    """Extract identifier calls; dependency resolution filters unknown names."""
+    names = re.findall(r"\b([A-Za-z_$][\w$]*)\s*\(", text)
+    excluded = {"if", "for", "while", "switch", "catch", "sizeof"}
+    return sorted({name for name in names if name not in excluded})
 
 
 def _attach_dependency_graph(
@@ -346,6 +367,7 @@ def _attach_dependency_graph(
                 reason=reason,
                 imports=item.imports,
                 symbols=item.symbols,
+                calls=item.calls,
                 dependencies=dependencies,
                 dependents=dependents,
                 centrality=centrality,
@@ -524,7 +546,18 @@ def _dependency_indexes(
         "java_files": java_files,
         "go_module": go_module,
         "go_packages": go_packages,
+        "symbols": _symbol_index(files),
     }
+
+
+def _symbol_index(files: list[RepoMapFile]) -> dict[str, set[str]]:
+    index: dict[str, set[str]] = {}
+    for item in files:
+        for symbol in item.symbols:
+            _kind, separator, name = symbol.partition(" ")
+            if separator and name:
+                index.setdefault(name, set()).add(item.path)
+    return index
 
 
 def _java_package_name(path: Path) -> str:
@@ -575,6 +608,12 @@ def _resolve_item_dependencies(item: RepoMapFile, indexes: dict[str, Any]) -> se
                 dependencies.add(target)
         elif suffix == ".go":
             dependencies.update(_resolve_go_import(imported, indexes))
+    for call in item.calls:
+        dependencies.update(
+            target
+            for target in indexes.get("symbols", {}).get(call, ())
+            if target != item.path
+        )
     return dependencies
 
 
@@ -647,6 +686,7 @@ def _apply_dependency_metadata(
                 reason=reason,
                 imports=item.imports,
                 symbols=item.symbols,
+                calls=item.calls,
                 dependencies=list(dependencies),
                 dependents=list(dependents),
                 centrality=centrality,
@@ -672,8 +712,9 @@ def _import_candidates(imported: str, source_package: str) -> list[str]:
 
 def _render_file(item: RepoMapFile) -> str:
     symbols = ", ".join(item.symbols[:8])
+    calls = ", ".join(item.calls[:4])
     deps = ", ".join(item.dependencies[:4])
-    return f"{item.path} [{item.kind}] score={item.score} symbols={symbols} deps={deps}"
+    return f"{item.path} [{item.kind}] score={item.score} symbols={symbols} calls={calls} deps={deps}"
 
 
 def _keywords(query: str) -> set[str]:

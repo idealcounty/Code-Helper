@@ -51,6 +51,22 @@ def test_repo_map_adds_python_import_edges_and_centrality(tmp_path: Path) -> Non
     assert "imported by:2" in by_path["src/core.py"]["reason"]
 
 
+def test_repo_map_links_unique_python_call_targets(tmp_path: Path) -> None:
+    (tmp_path / "core.py").write_text(
+        "def normalize(value):\n    return value.strip()\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text(
+        "def run(value):\n    return normalize(value)\n", encoding="utf-8"
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "normalize" in by_path["app.py"]["calls"]
+    assert by_path["app.py"]["dependencies"] == ["core.py"]
+    assert by_path["core.py"]["dependents"] == ["app.py"]
+
+
 def test_repo_map_links_static_python_dynamic_imports(tmp_path: Path) -> None:
     (tmp_path / "plugin.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / "loader.py").write_text(

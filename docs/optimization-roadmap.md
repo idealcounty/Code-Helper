@@ -240,7 +240,7 @@ Cline 提供按时间点比较和恢复文件/任务的体验。本项目应只�
 
 - 确定性结果验证的是 Agent 契约和执行管线，不代表真实模型智能水平。
 - 真实模型首版只启用项目问答、单文件缺陷和跨文件功能三类任务，其余安全场景仍由确定性层控制变量。
-- `evals/algorithm_benchmark.py` 提供固定 seed 的 15-case 算法基准，覆盖样例、边界、随机输入、错误候选检测和失败输入最小化，并输出 `algorithm.json`/`algorithm.md`。
+- `evals/algorithm_benchmark.py` 提供固定 seed 的 15-case 算法基准，覆盖样例、边界、随机输入、错误候选检测和失败输入最小化，并输出 `algorithm.json`/`algorithm.md`；算法 Profile 另提供只读 `analyze_complexity` 工具，用 AST/保守启发式报告循环嵌套和递归风险。
 - Agent Eval 报告按实际选中的 `project`/`algorithm` Profile 分组，分别记录契约、完成、验证、检索和资源指标，避免总平均掩盖模式差异。
 - `evals/profile_comparison.py` 在同一组跨文件/算法任务上显式运行两个 Profile，并输出确定性对照报告；该报告只证明管线隔离和安全契约，不替代真实模型质量评测。
 - `sensitive_environment` 当前只证明命令环境不会继承 API Key；运行时统一脱敏已在 R7 V1 落地，凭据格式覆盖仍是 best-effort。
@@ -331,7 +331,7 @@ Aider 的 Repo Map 使用文件依赖图、关键符号和动态 Token 预算选
 
 **已知边界与后续加固**
 
-- 当前依赖解析仍是轻量启发式；Python 已支持静态字符串动态导入，JavaScript/TypeScript 已支持本地相对路径与重导出，C/C++ 已支持本地 `#include`，Go 已支持 `go.mod` 模块内包，Java 已支持 `package` 声明映射；运行时计算出的动态导入、调用关系和构建工具的复杂源码根映射尚未覆盖，外部依赖仍会被忽略。
+- 当前依赖解析仍是轻量启发式；Python 已支持静态字符串动态导入，JavaScript/TypeScript 已支持本地相对路径与重导出，C/C++ 已支持本地 `#include`，Go 已支持 `go.mod` 模块内包，Java 已支持 `package` 声明映射；对能唯一映射到仓库符号的静态函数调用也建立保守边。运行时计算出的动态导入、更完整的调用图和构建工具的复杂源码根映射尚未覆盖，外部依赖仍会被忽略。
 - 文件列表仍会在每次构造上下文时重新扫描；代码摘要和依赖图元数据已使用 Workspace 级 SHA-256 缓存，并持久化到 `.code-helper/cache/repo-map.json`，外部修改或删除会自动失效。发生变更时，V1 仅重算受影响的源文件和引用其模块/路径的导入方，并保留未受影响的图边；模块新增、删除和重命名采用保守失效策略。更细粒度的索引迁移仍待在真实仓库探索成为瓶颈时实现。
 
 ### R10. 高保真上下文压缩
