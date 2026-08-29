@@ -147,6 +147,15 @@ def test_natural_language_paths_extract_multiple_targets() -> None:
     ]
 
 
+def test_natural_language_paths_support_quoted_spaces() -> None:
+    query = 'Refactor "src/legacy code/app.py" and `docs/user guide.md`.'
+
+    assert _natural_language_paths(query) == [
+        "src/legacy code/app.py",
+        "docs/user guide.md",
+    ]
+
+
 def test_project_rules_follow_multiple_paths_named_in_user_request(tmp_path: Path) -> None:
     src = tmp_path / "src"
     docs = tmp_path / "docs"

@@ -56,6 +56,10 @@ _NATURAL_PATH_RE = re.compile(
     r"(?![\w])",
     flags=re.IGNORECASE,
 )
+_QUOTED_PATH_RE = re.compile(
+    r"(?P<quote>[\"'`])(?P<path>(?:[A-Za-z]:[\\/]|\.\.?[\\/]|[\w.-]+[\\/])[^\"'`\r\n]+)(?P=quote)",
+    flags=re.IGNORECASE,
+)
 
 
 class ContextManager:
@@ -591,7 +595,15 @@ def _natural_language_paths(query: str) -> list[str]:
     if not query:
         return []
     found: list[str] = []
+    quoted_spans: list[tuple[int, int]] = []
+    for match in _QUOTED_PATH_RE.finditer(query):
+        value = match.group("path").strip().rstrip("./\\")
+        if value and value not in found:
+            found.append(value)
+            quoted_spans.append(match.span())
     for match in _NATURAL_PATH_RE.finditer(query):
+        if any(start < match.end() and match.start() < end for start, end in quoted_spans):
+            continue
         value = match.group(0).strip().rstrip("./\\")
         if value and value not in found:
             found.append(value)
