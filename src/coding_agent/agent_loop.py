@@ -1108,15 +1108,22 @@ class AgentRunner:
         decisions_awaitable: Awaitable[list[Any]],
     ) -> None:
         """Run hooks and persist their decisions without granting policy authority."""
+        hook_started = perf_counter()
+        hook_span_id = await self._start_span(
+            state, "hook_pipeline", {"lifecycle": lifecycle}
+        )
         try:
-            decisions = await decisions_awaitable
-        except Exception as exc:  # HookManager normally normalizes this; keep loop safe.
-            decisions = [{
-                "allow": False,
-                "code": "HOOK_FAILED",
-                "reason": f"{type(exc).__name__}: {exc}",
-                "hook": "HookManager",
-            }]
+            try:
+                decisions = await decisions_awaitable
+            except Exception as exc:  # HookManager normally normalizes this; keep loop safe.
+                decisions = [{
+                    "allow": False,
+                    "code": "HOOK_FAILED",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "hook": "HookManager",
+                }]
+        finally:
+            await self._finish_span(state, hook_span_id, "hook_pipeline", hook_started)
         for decision in decisions:
             if hasattr(decision, "allow"):
                 data = {

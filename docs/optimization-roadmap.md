@@ -393,7 +393,7 @@ shell 现在并发读取 stdout/stderr，并在进程运行期间通过 Agent Ev
 **已知边界与后续加固**
 
 - V1 已在 Agent Loop 层按 50ms/16KiB 窗口合并 stdout/stderr 增量，降低极高频输出对 UI 和 WebSocket 的压力；更细粒度的 EventBus 批量策略仍可按真实负载加固。
-- 模型请求、审批等待和上下文构造已统一产生 `span_started`/`span_finished` 事件并记录毫秒耗时；Hook 细分和跨进程 Span 聚合仍待加固。
+- 模型请求、审批等待、上下文构造和 Hook 管线已统一产生 `span_started`/`span_finished` 事件并记录毫秒耗时，事件读取天然支持跨进程聚合；按单个 Hook 拆分和外部追踪系统导出仍待加固。
 
 ## 7. P2：收益明确后再做
 

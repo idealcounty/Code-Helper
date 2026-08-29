@@ -178,6 +178,7 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
         "context_build",
         "model_request",
         "approval_wait",
+        "hook_pipeline",
     }
     assert all(event["payload"]["duration_ms"] >= 0 for event in spans)
 
