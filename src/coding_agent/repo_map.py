@@ -78,6 +78,8 @@ class RepoMapBuilder:
             "test_files": 0,
             "summary_cache_hits": 0,
             "summary_cache_misses": 0,
+            "dependency_graph_cache_hits": 0,
+            "dependency_graph_cache_misses": 0,
         }
         focus = {item.replace("\\", "/").lstrip("./") for item in (focus_paths or [])}
         seen_paths: set[Path] = set()
@@ -147,7 +149,10 @@ class RepoMapBuilder:
                 self.workspace.repo_map_cache.pop(cached_path, None)
 
         if include_dependency_graph:
-            files = _attach_dependency_graph(files)
+            files, graph_cache_hit = _attach_dependency_graph_cached(files, self.workspace)
+            totals[
+                "dependency_graph_cache_hits" if graph_cache_hit else "dependency_graph_cache_misses"
+            ] += 1
         ranked = sorted(files, key=lambda item: (-item.score, -item.centrality, item.path))
         ranked = ranked[:max_files]
         budget_truncated = False
@@ -317,6 +322,64 @@ def _attach_dependency_graph(files: list[RepoMapFile]) -> list[RepoMapFile]:
                 symbols=item.symbols,
                 dependencies=dependencies,
                 dependents=dependents,
+                centrality=centrality,
+            )
+        )
+    return enriched
+
+
+def _attach_dependency_graph_cached(
+    files: list[RepoMapFile], workspace: Workspace
+) -> tuple[list[RepoMapFile], bool]:
+    signature = tuple(
+        sorted(
+            (
+                item.path,
+                workspace.repo_map_cache.get(
+                    (workspace.root / item.path).resolve(), ("", (), ())
+                )[0],
+            )
+            for item in files
+        )
+    )
+    cached = workspace.repo_graph_cache
+    if cached is not None and cached[0] == signature:
+        metadata = cached[1]
+        return _apply_dependency_metadata(files, metadata), True
+
+    enriched = _attach_dependency_graph(files)
+    metadata = {
+        item.path: (
+            tuple(item.dependencies),
+            tuple(item.dependents),
+            item.centrality,
+        )
+        for item in enriched
+    }
+    workspace.repo_graph_cache = (signature, metadata)
+    return enriched, False
+
+
+def _apply_dependency_metadata(
+    files: list[RepoMapFile],
+    metadata: dict[str, tuple[tuple[str, ...], tuple[str, ...], int]],
+) -> list[RepoMapFile]:
+    enriched: list[RepoMapFile] = []
+    for item in files:
+        dependencies, dependents, centrality = metadata.get(item.path, ((), (), 0))
+        reason = list(item.reason)
+        if centrality:
+            reason.append(f"imported by:{centrality}")
+        enriched.append(
+            RepoMapFile(
+                path=item.path,
+                kind=item.kind,
+                score=item.score + min(centrality * 2, 8),
+                reason=reason,
+                imports=item.imports,
+                symbols=item.symbols,
+                dependencies=list(dependencies),
+                dependents=list(dependents),
                 centrality=centrality,
             )
         )

@@ -43,6 +43,12 @@ class Workspace:
         # Parsed Repo Map summaries are keyed by content hash so a new
         # builder instance can reuse work while external edits invalidate it.
         self.repo_map_cache: dict[Path, tuple[str, tuple[str, ...], tuple[str, ...]]] = {}
+        # Dependency edges are independent of the query score, so cache the
+        # graph metadata by the complete path/content signature.
+        self.repo_graph_cache: tuple[
+            tuple[tuple[str, str], ...],
+            dict[str, tuple[tuple[str, ...], tuple[str, ...], int]],
+        ] | None = None
 
     def resolve(
         self,

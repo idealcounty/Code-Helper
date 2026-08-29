@@ -104,6 +104,24 @@ def test_repo_map_reuses_hash_keyed_summary_and_invalidates_external_edit(tmp_pa
     assert "class Second" in third["files"][0]["symbols"]
 
 
+def test_repo_map_reuses_dependency_graph_until_importer_changes(tmp_path: Path) -> None:
+    (tmp_path / "core.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    importer = tmp_path / "app.py"
+    importer.write_text("from core import shared\n", encoding="utf-8")
+    workspace = Workspace(tmp_path)
+    builder = RepoMapBuilder(workspace)
+
+    first = builder.build(query="core")
+    second = builder.build(query="core")
+    assert first["totals"]["dependency_graph_cache_misses"] == 1
+    assert second["totals"]["dependency_graph_cache_hits"] == 1
+
+    importer.write_text("# import removed\n", encoding="utf-8")
+    third = builder.build(query="core")
+    assert third["totals"]["dependency_graph_cache_misses"] == 1
+    assert third["files"][0]["centrality"] == 0
+
+
 def test_get_repo_map_is_registered_as_read_tool(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     workspace = Workspace(tmp_path)
