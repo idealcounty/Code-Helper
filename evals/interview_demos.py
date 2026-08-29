@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from coding_agent.config import AppConfig
+
 from .runner import run_suite
 
 
@@ -17,13 +19,22 @@ DEMOS = {
 }
 
 
-async def run_demos(selected: set[str] | None = None) -> dict[str, Any]:
+async def run_demos(
+    selected: set[str] | None = None,
+    *,
+    mode: str = "deterministic",
+    real_config: AppConfig | None = None,
+) -> dict[str, Any]:
     names = selected or set(DEMOS)
     demos: dict[str, Any] = {}
     for name in sorted(names):
         task_id, profile = DEMOS[name]
         report = await run_suite(
-            task_ids={task_id}, profile_override=profile, retrieval_enabled=True
+            mode=mode,
+            real_config=real_config,
+            task_ids={task_id},
+            profile_override=profile,
+            retrieval_enabled=True,
         )
         demos[name] = {
             "task_id": task_id,
@@ -33,6 +44,7 @@ async def run_demos(selected: set[str] | None = None) -> dict[str, Any]:
         }
     return {
         "schema_version": 1,
+        "mode": mode,
         "demos": demos,
         "interpretation": (
             "Deterministic demos exercise the same Runtime, permissions, events, "
@@ -62,10 +74,19 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("deterministic", "real"), default="deterministic")
+    parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--demo", choices=sorted(DEMOS), action="append")
     parser.add_argument("--output-dir", type=Path, default=Path(".eval-results/demos"))
     args = parser.parse_args()
-    report = asyncio.run(run_demos(set(args.demo) if args.demo else None))
+    if args.mode == "real" and not args.allow_paid:
+        raise SystemExit("Real interview demos require --allow-paid and consume API credits")
+    config = AppConfig.from_env() if args.mode == "real" else None
+    if config is not None and not config.api_key:
+        raise SystemExit("Real interview demos require a configured model API key")
+    report = asyncio.run(
+        run_demos(set(args.demo) if args.demo else None, mode=args.mode, real_config=config)
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "interview-demos.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"

@@ -65,6 +65,16 @@ python -m evals.interview_demos --output-dir .eval-results/demos
 
 其中 `algorithm` 演示固定种子 Judge 的缺陷发现与修复，`project` 演示跨文件修改和验证；两者都复用产品 Runtime、权限、事件、工具和验证管线。
 
+有预算时可显式切换为 DeepSeek：
+
+```powershell
+python -m evals.rag_comparison --mode real --allow-paid --output-dir .eval-results/rag-real
+python -m evals.profile_comparison --mode real --allow-paid --output-dir .eval-results/profile-real
+python -m evals.interview_demos --mode real --allow-paid --output-dir .eval-results/demos-real
+```
+
+三条命令都要求已配置 API Key，并将模型、提交、Profile/检索开关和任务指标写入报告；不带 `--allow-paid` 时不会发起真实请求。
+
 真实层当前只运行标记为 `real_enabled` 的项目问答、单文件缺陷和跨文件功能，其他任务会明确记为 skipped。报告会保存供应商、模型、推理档位、供应商默认 temperature、Token 预算、Prompt 哈希与代码提交。由于模型输出存在波动，真实层不会成为唯一 CI 阻塞条件。
 
 ## 已知边界

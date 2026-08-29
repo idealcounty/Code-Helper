@@ -8,22 +8,32 @@ import json
 from pathlib import Path
 from typing import Any
 
+from coding_agent.config import AppConfig
+
 from .runner import run_suite
 
 
 TASK_IDS = {"cross_file_feature", "algorithm_profile_repair"}
 
 
-async def run_comparison() -> dict[str, Any]:
+async def run_comparison(
+    *, mode: str = "deterministic", real_config: AppConfig | None = None
+) -> dict[str, Any]:
     runs: dict[str, dict[str, Any]] = {}
     for profile in ("project", "algorithm"):
-        report = await run_suite(task_ids=TASK_IDS, profile_override=profile)
+        report = await run_suite(
+            mode=mode,
+            real_config=real_config,
+            task_ids=TASK_IDS,
+            profile_override=profile,
+        )
         runs[profile] = {
             "metrics": report["metrics"],
             "tasks": report["tasks"],
         }
     return {
         "schema_version": 1,
+        "mode": mode,
         "task_ids": sorted(TASK_IDS),
         "profiles": runs,
         "interpretation": (
@@ -56,9 +66,16 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("deterministic", "real"), default="deterministic")
+    parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=Path(".eval-results"))
     args = parser.parse_args()
-    report = asyncio.run(run_comparison())
+    if args.mode == "real" and not args.allow_paid:
+        raise SystemExit("Real Profile comparison requires --allow-paid and consumes API credits")
+    config = AppConfig.from_env() if args.mode == "real" else None
+    if config is not None and not config.api_key:
+        raise SystemExit("Real Profile comparison requires a configured model API key")
+    report = asyncio.run(run_comparison(mode=args.mode, real_config=config))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "profile-comparison.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
