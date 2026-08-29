@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
-from coding_agent.context import ContextManager
+from coding_agent.context import ContextManager, _natural_language_paths
 from coding_agent.session import AgentState
+from coding_agent.tools import Workspace
 
 
 def _assistant(*call_ids: str) -> dict[str, Any]:
@@ -133,3 +135,36 @@ def test_complete_multi_tool_exchange_is_preserved_without_mutation() -> None:
     _assert_valid_tool_protocol(context.messages)
     assert context.messages[2:] == exchange
     assert context.truncated is False
+
+
+def test_natural_language_paths_extract_multiple_targets() -> None:
+    query = "Update src/app.py and docs/guide.md, but leave tests/test_app.py unchanged."
+
+    assert _natural_language_paths(query) == [
+        "src/app.py",
+        "docs/guide.md",
+        "tests/test_app.py",
+    ]
+
+
+def test_project_rules_follow_multiple_paths_named_in_user_request(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    docs = tmp_path / "docs"
+    src.mkdir()
+    docs.mkdir()
+    (src / "AGENTS.md").write_text("src-only rule", encoding="utf-8")
+    (docs / "AGENTS.md").write_text("docs-only rule", encoding="utf-8")
+
+    state = AgentState.create(session_id="session")
+    state.messages = [
+        {
+            "role": "user",
+            "content": "Please update src/app.py and docs/guide.md.",
+        }
+    ]
+    context = ContextManager(workspace=Workspace(tmp_path)).build(state, [])
+
+    system = context.messages[0]["content"]
+    assert "src-only rule" in system
+    assert "docs-only rule" in system
+    assert context.rule_candidates == 2

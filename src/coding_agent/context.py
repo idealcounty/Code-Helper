@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,16 @@ class _RuleBundle:
     candidates: int
     sources: list[dict[str, Any]]
     truncated: bool
+
+
+_NATURAL_PATH_RE = re.compile(
+    r"(?<![\w])(?:[A-Za-z]:[\\/][^\s`\"'<>，。；、！？,;:]+|"
+    r"(?:\.\.?[\\/])[^\s`\"'<>，。；、！？,;:]+|"
+    r"[\w.-]+(?:[\\/][\w.()@+\-]+)+|"
+    r"[\w.-]+\.(?:py|pyi|js|jsx|mjs|ts|tsx|java|go|c|cc|cpp|cxx|h|hh|hpp|md|rst|txt|json|toml|yaml|yml))"
+    r"(?![\w])",
+    flags=re.IGNORECASE,
+)
 
 
 class ContextManager:
@@ -540,7 +551,7 @@ def _structured_context_summary(
 
 
 def _target_directories(workspace: Workspace, state: AgentState) -> list[Path]:
-    """Infer target directories from changed files and recent tool paths."""
+    """Infer target directories from state paths and explicit user path mentions."""
     paths: list[str] = list(state.changed_files)
     for action in state.recent_actions:
         try:
@@ -551,6 +562,8 @@ def _target_directories(workspace: Workspace, state: AgentState) -> list[Path]:
         path = arguments.get("path")
         if isinstance(path, str) and path:
             paths.append(path)
+    query = _latest_user_query(state.messages)
+    paths.extend(_natural_language_paths(query))
     directories: list[Path] = []
     for value in paths:
         try:
@@ -566,6 +579,23 @@ def _target_directories(workspace: Workspace, state: AgentState) -> list[Path]:
         if directory.is_relative_to(workspace.root) and directory not in directories:
             directories.append(directory)
     return directories or [workspace.root]
+
+
+def _natural_language_paths(query: str) -> list[str]:
+    """Extract conservative file-like paths without treating prose as paths.
+
+    Only tokens containing a separator, a relative prefix, an absolute Windows
+    prefix, or a known source/document extension are considered.  Resolution
+    and workspace-boundary checks remain the responsibility of the caller.
+    """
+    if not query:
+        return []
+    found: list[str] = []
+    for match in _NATURAL_PATH_RE.finditer(query):
+        value = match.group(0).strip().rstrip("./\\")
+        if value and value not in found:
+            found.append(value)
+    return found
 
 
 def _ancestor_directories(root: Path, target: Path) -> list[Path]:
