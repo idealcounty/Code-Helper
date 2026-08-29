@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from time import time
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from .tools.base import ToolRisk, ToolSpec
@@ -77,10 +79,21 @@ class PermissionPolicy:
         *,
         workspace_root: Path | None = None,
         approval_mode: ApprovalMode | str = ApprovalMode.ASK,
+        policy_path: Path | None = None,
     ) -> None:
         self.workspace_root = workspace_root.resolve() if workspace_root else None
         self.approval_mode = ApprovalMode(approval_mode)
         self._grants: dict[str, CapabilityGrant] = {}
+        self.policy_path = policy_path or (
+            self.workspace_root / ".code-helper" / "policy.json"
+            if self.workspace_root is not None
+            else None
+        )
+        self.policy_diagnostics: list[dict[str, str]] = []
+        self._configured_command_patterns: tuple[re.Pattern[str], ...] = ()
+        self._blocked_network_domains: frozenset[str] = frozenset()
+        self._protected_paths: tuple[str, ...] = ()
+        self._load_policy()
 
     def set_approval_mode(self, value: ApprovalMode | str) -> ApprovalMode:
         self.approval_mode = ApprovalMode(value)
@@ -124,7 +137,7 @@ class PermissionPolicy:
 
         if spec.risk is ToolRisk.COMMAND:
             command = _command_text(arguments)
-            if any(pattern.search(command) for pattern in self._dangerous_command_patterns):
+            if self._command_is_blocked(command):
                 return PermissionResult(
                     PermissionDecision.DENY,
                     "Command matches a destructive-operation policy",
@@ -151,6 +164,13 @@ class PermissionPolicy:
             )
 
         if spec.risk in {ToolRisk.WRITE, ToolRisk.DESTRUCTIVE}:
+            protected = self._protected_path_match(arguments.get("path"))
+            if protected is not None:
+                return PermissionResult(
+                    PermissionDecision.DENY,
+                    f"Path is protected by the workspace policy: {protected}",
+                    capability_names,
+                )
             if self._matching_grant(spec, arguments, capabilities):
                 return PermissionResult(
                     PermissionDecision.ALLOW,
@@ -282,6 +302,108 @@ class PermissionPolicy:
                     continue
             return True
         return False
+
+    def _command_is_blocked(self, command: str) -> bool:
+        if any(pattern.search(command) for pattern in self._dangerous_command_patterns):
+            return True
+        if any(pattern.search(command) for pattern in self._configured_command_patterns):
+            return True
+        if self._blocked_network_domains:
+            for match in re.finditer(r"(?i)\b(?:https?|ssh|git)://[^\s'\"]+", command):
+                try:
+                    hostname = (urlsplit(match.group(0)).hostname or "").casefold().rstrip(".")
+                except ValueError:
+                    continue
+                if any(
+                    hostname == domain or hostname.endswith("." + domain)
+                    for domain in self._blocked_network_domains
+                ):
+                    return True
+        return False
+
+    def _protected_path_match(self, value: Any) -> str | None:
+        if not isinstance(value, str) or not value.strip() or self.workspace_root is None:
+            return None
+        normalized = self._normalize_path(value)
+        if normalized is None:
+            return None
+        candidate = Path(normalized)
+        for protected in self._protected_paths:
+            root = Path(protected)
+            try:
+                if candidate == root or candidate.is_relative_to(root):
+                    return protected
+            except ValueError:
+                continue
+        return None
+
+    def _load_policy(self) -> None:
+        if self.policy_path is None:
+            return
+        try:
+            if self.policy_path.stat().st_size > 64 * 1024:
+                raise ValueError("policy file exceeds 64 KiB")
+            payload = json.loads(self.policy_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            self.policy_diagnostics.append({"code": "POLICY_LOAD_FAILED", "message": str(exc)})
+            return
+        if not isinstance(payload, dict):
+            self.policy_diagnostics.append({"code": "POLICY_INVALID", "message": "root must be an object"})
+            return
+
+        raw_patterns = payload.get("deny_command_patterns", [])
+        if isinstance(raw_patterns, list):
+            compiled: list[re.Pattern[str]] = []
+            for index, item in enumerate(raw_patterns[:64]):
+                if not isinstance(item, str) or not item.strip() or len(item) > 500:
+                    self.policy_diagnostics.append({"code": "POLICY_PATTERN_IGNORED", "message": f"deny_command_patterns[{index}] is invalid"})
+                    continue
+                try:
+                    compiled.append(re.compile(item, re.IGNORECASE))
+                except re.error as exc:
+                    self.policy_diagnostics.append({"code": "POLICY_PATTERN_IGNORED", "message": f"deny_command_patterns[{index}]: {exc}"})
+            self._configured_command_patterns = tuple(compiled)
+        elif "deny_command_patterns" in payload:
+            self.policy_diagnostics.append({"code": "POLICY_INVALID", "message": "deny_command_patterns must be an array"})
+
+        raw_domains = payload.get("deny_network_domains", [])
+        if isinstance(raw_domains, list):
+            domains: set[str] = set()
+            for index, item in enumerate(raw_domains[:64]):
+                if not isinstance(item, str):
+                    self.policy_diagnostics.append({"code": "POLICY_DOMAIN_IGNORED", "message": f"deny_network_domains[{index}] is invalid"})
+                    continue
+                domain = item.strip().casefold().rstrip(".")
+                if domain and re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", domain):
+                    domains.add(domain)
+                else:
+                    self.policy_diagnostics.append({"code": "POLICY_DOMAIN_IGNORED", "message": f"deny_network_domains[{index}] is invalid"})
+            self._blocked_network_domains = frozenset(domains)
+        elif "deny_network_domains" in payload:
+            self.policy_diagnostics.append({"code": "POLICY_INVALID", "message": "deny_network_domains must be an array"})
+
+        raw_paths = payload.get("protected_paths", [])
+        if isinstance(raw_paths, list) and self.workspace_root is not None:
+            paths: list[str] = []
+            for index, item in enumerate(raw_paths[:64]):
+                if not isinstance(item, str) or not item.strip():
+                    self.policy_diagnostics.append({"code": "POLICY_PATH_IGNORED", "message": f"protected_paths[{index}] is invalid"})
+                    continue
+                try:
+                    candidate = Path(item)
+                    if not candidate.is_absolute():
+                        candidate = self.workspace_root / candidate
+                    resolved = candidate.resolve()
+                    if not resolved.is_relative_to(self.workspace_root):
+                        raise ValueError("path is outside workspace")
+                    paths.append(str(resolved))
+                except (OSError, ValueError) as exc:
+                    self.policy_diagnostics.append({"code": "POLICY_PATH_IGNORED", "message": f"protected_paths[{index}]: {exc}"})
+            self._protected_paths = tuple(paths)
+        elif "protected_paths" in payload:
+            self.policy_diagnostics.append({"code": "POLICY_INVALID", "message": "protected_paths must be an array"})
 
     def _normalize_path(self, value: str | None) -> str | None:
         if value is None:

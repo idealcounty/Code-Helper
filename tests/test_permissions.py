@@ -73,6 +73,49 @@ def test_structured_argv_uses_same_command_risk_classification() -> None:
     assert ToolCapability.DEPENDENCY_INSTALL in result.capabilities
 
 
+def test_workspace_policy_adds_command_domain_and_path_denials(tmp_path: Path) -> None:
+    policy_file = tmp_path / ".code-helper" / "policy.json"
+    policy_file.parent.mkdir()
+    policy_file.write_text(
+        '{"deny_command_patterns": ["\\\\brelease\\\\b"], '
+        '"deny_network_domains": ["internal.example"], '
+        '"protected_paths": ["secrets"]}',
+        encoding="utf-8",
+    )
+    policy = PermissionPolicy(workspace_root=tmp_path)
+    command = ToolSpec(
+        "run_command", "run", {"type": "object", "properties": {}}, ToolRisk.COMMAND, _noop
+    )
+    write = _spec(ToolRisk.WRITE)
+
+    assert policy.evaluate(
+        mode="act", spec=command, arguments={"command": "release build"}
+    ).decision is PermissionDecision.DENY
+    assert policy.evaluate(
+        mode="act",
+        spec=command,
+        arguments={"argv": ["curl", "https://internal.example/api"]},
+    ).decision is PermissionDecision.DENY
+    assert policy.evaluate(
+        mode="act", spec=write, arguments={"path": "secrets/app.env"}
+    ).decision is PermissionDecision.DENY
+
+
+def test_invalid_workspace_policy_degrades_to_defaults_with_diagnostics(tmp_path: Path) -> None:
+    policy_file = tmp_path / ".code-helper" / "policy.json"
+    policy_file.parent.mkdir()
+    policy_file.write_text('{"deny_command_patterns": ["["]}', encoding="utf-8")
+
+    policy = PermissionPolicy(workspace_root=tmp_path)
+
+    assert policy.policy_diagnostics
+    assert policy.evaluate(
+        mode="act",
+        spec=ToolSpec("run_command", "run", {"type": "object", "properties": {}}, ToolRisk.COMMAND, _noop),
+        arguments={"command": "echo ok"},
+    ).decision is PermissionDecision.ASK
+
+
 def test_workspace_boundary_is_checked_before_approval() -> None:
     policy = PermissionPolicy(workspace_root=Path("D:/workspace"))
     spec = _spec(ToolRisk.WRITE)
