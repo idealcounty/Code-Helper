@@ -228,6 +228,17 @@ class AgentRunner:
             self.run_budget.check_time()
             next_step = state.step + 1
             await self._emit(state, "step_started", {"step": next_step})
+            await self._emit(
+                state,
+                "context_built",
+                {
+                    "estimated_chars": context.estimated_chars,
+                    "rule_candidates": context.rule_candidates,
+                    "rule_chars": context.rule_chars,
+                    "rule_truncated": context.rule_truncated,
+                    "rule_sources": context.rule_sources,
+                },
+            )
             if context.truncated:
                 await self._emit(state, "context_compacted", {
                     "estimated_chars": context.estimated_chars,

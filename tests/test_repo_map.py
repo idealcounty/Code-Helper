@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 
@@ -60,6 +61,64 @@ def test_context_injects_project_rules(tmp_path: Path) -> None:
     system = context.messages[0]["content"]
     assert "Project rules:" in system
     assert "Always inspect tests before editing." in system
+
+
+def test_context_uses_target_path_rule_chain_and_override(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    unrelated = tmp_path / "docs"
+    src.mkdir()
+    unrelated.mkdir()
+    (tmp_path / "AGENTS.md").write_text("root rule", encoding="utf-8")
+    (src / "AGENTS.md").write_text("src default rule", encoding="utf-8")
+    (src / "AGENTS.override.md").write_text("src override rule", encoding="utf-8")
+    (unrelated / "AGENTS.md").write_text("docs rule must stay out", encoding="utf-8")
+    (src / "app.py").write_text("value = 1\n", encoding="utf-8")
+
+    state = AgentState.create()
+    state.changed_files.add("src/app.py")
+    context = ContextManager(workspace=Workspace(tmp_path)).build(state, [])
+    system = context.messages[0]["content"]
+
+    assert "root rule" in system
+    assert "src override rule" in system
+    assert "src default rule" not in system
+    assert "docs rule must stay out" not in system
+    assert [item["path"] for item in context.rule_sources] == [
+        "AGENTS.md",
+        "src/AGENTS.override.md",
+    ]
+    assert context.rule_candidates == 3
+
+
+def test_context_rule_budget_reports_truncation(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("x" * 100, encoding="utf-8")
+    state = AgentState.create()
+    context = ContextManager(
+        workspace=Workspace(tmp_path), max_rule_chars=24
+    ).build(state, [])
+
+    assert context.rule_truncated is True
+    assert context.rule_chars == 24
+    assert context.rule_sources[0]["truncated"] is True
+
+
+def test_context_targets_recent_tool_path_when_no_file_changed(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (tmp_path / "AGENTS.md").write_text("root rule", encoding="utf-8")
+    (src / "AGENTS.md").write_text("src rule", encoding="utf-8")
+    state = AgentState.create()
+    state.recent_actions.append(
+        {
+            "signature": json.dumps(
+                {"name": "read_file", "arguments": {"path": "src/app.py"}}
+            )
+        }
+    )
+
+    context = ContextManager(workspace=Workspace(tmp_path)).build(state, [])
+
+    assert "src rule" in context.messages[0]["content"]
 
 
 def test_get_diff_tool_returns_workspace_diff(tmp_path: Path) -> None:

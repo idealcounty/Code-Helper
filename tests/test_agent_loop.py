@@ -179,7 +179,9 @@ def test_agent_emits_context_compaction_event(tmp_path: Path) -> None:
     state = AgentState.create(session_id="session", max_steps=2)
     state.messages = [{"role": "user", "content": str(index)} for index in range(4)]
     asyncio.run(runner.run_turn(state))
-    assert "context_compacted" in [event["type"] for event in store.load()]
+    event_types = [event["type"] for event in store.load()]
+    assert "context_built" in event_types
+    assert "context_compacted" in event_types
 
 
 def test_summary_failure_preserves_completed_turn_and_raw_events(tmp_path: Path) -> None:

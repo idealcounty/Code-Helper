@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,18 @@ class ModelContext:
     allowed_tools: list[dict[str, Any]]
     estimated_chars: int = 0
     truncated: bool = False
+    rule_candidates: int = 0
+    rule_chars: int = 0
+    rule_truncated: bool = False
+    rule_sources: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class _RuleBundle:
+    text: str
+    candidates: int
+    sources: list[dict[str, Any]]
+    truncated: bool
 
 
 class ContextManager:
@@ -42,6 +55,7 @@ class ContextManager:
         max_messages: int = 48,
         max_message_chars: int = 20_000,
         max_context_chars: int = 80_000,
+        max_rule_chars: int = 20_000,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
@@ -51,6 +65,7 @@ class ContextManager:
         self.max_messages = max_messages
         self.max_message_chars = max_message_chars
         self.max_context_chars = max_context_chars
+        self.max_rule_chars = max_rule_chars
 
     def build(
         self,
@@ -64,9 +79,9 @@ class ContextManager:
         }.get(state.mode, f"Current mode: {state.mode}")
 
         system = f"{self.system_prompt}\n\n{mode_rule}"
-        project_rules = self._project_rules()
-        if project_rules:
-            system += f"\n\nProject rules:\n{project_rules}"
+        rules = self._project_rules(state)
+        if rules.text:
+            system += f"\n\nProject rules:\n{rules.text}"
         if state.plan:
             system += f"\n\nCurrent plan: {state.plan!r}"
         skills = self._skills_summary()
@@ -106,13 +121,41 @@ class ContextManager:
             allowed_tools=tool_schemas,
             estimated_chars=estimated_chars + len(system),
             truncated=truncated,
+            rule_candidates=rules.candidates,
+            rule_chars=len(rules.text),
+            rule_truncated=rules.truncated,
+            rule_sources=rules.sources,
         )
 
-    def _project_rules(self) -> str:
+    def _project_rules(self, state: AgentState) -> _RuleBundle:
         if self.workspace is None:
-            return ""
+            return _RuleBundle("", 0, [], False)
+        target_dirs = _target_directories(self.workspace, state)
+        selected: dict[Path, tuple[Path, str]] = {}
+        candidates = 0
+        for target in target_dirs:
+            for directory in _ancestor_directories(self.workspace.root, target):
+                override = directory / "AGENTS.override.md"
+                regular = directory / "AGENTS.md"
+                available = [
+                    path for path in (override, regular)
+                    if path.is_file()
+                    and not self.workspace.is_ignored(path)
+                    and not self.workspace.is_sensitive(path)
+                ]
+                candidates += len(available)
+                if available and directory not in selected:
+                    selected[directory] = (
+                        available[0],
+                        "override" if available[0].name == "AGENTS.override.md" else "default",
+                    )
         blocks: list[str] = []
-        for path in _find_agent_rule_files(self.workspace):
+        sources: list[dict[str, Any]] = []
+        used_chars = 0
+        truncated = False
+        for directory, (path, kind) in sorted(
+            selected.items(), key=lambda item: len(item[0].relative_to(self.workspace.root).parts)
+        ):
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -121,10 +164,32 @@ class ContextManager:
             if not text:
                 continue
             relative = self.workspace.relative(path)
-            blocks.append(f"[{relative}]\n{text[:4_000]}")
-            if len(blocks) >= 5:
+            scope = self.workspace.relative(directory) or "."
+            separator_chars = 2 if blocks else 0
+            remaining = max(0, self.max_rule_chars - used_chars - separator_chars)
+            header = f"[{relative}]\n"
+            if remaining <= len(header):
+                truncated = True
                 break
-        return "\n\n".join(blocks)
+            content = text[: min(4_000, remaining - len(header))]
+            if len(content) < len(text):
+                truncated = True
+            block = header + content
+            blocks.append(block)
+            used_chars += separator_chars + len(block)
+            sources.append(
+                {
+                    "path": relative,
+                    "scope": scope,
+                    "kind": kind,
+                    "chars": len(content),
+                    "truncated": len(content) < len(text),
+                }
+            )
+            if len(sources) >= 12:
+                truncated = True
+                break
+        return _RuleBundle("\n\n".join(blocks), candidates, sources, truncated)
 
     def _skills_summary(self) -> str:
         if self.skill_library is None:
@@ -174,16 +239,41 @@ class ContextManager:
         return bounded, summary, dropped > 0 or len(bounded) < len(kept) + (1 if dropped else 0)
 
 
-def _find_agent_rule_files(workspace: Workspace) -> list[Path]:
-    files: list[Path] = []
-    root_rule = workspace.root / "AGENTS.md"
-    if root_rule.is_file():
-        files.append(root_rule)
-    for path in sorted(workspace.root.rglob("AGENTS.md")):
-        if path == root_rule or workspace.is_ignored(path) or workspace.is_sensitive(path):
+def _target_directories(workspace: Workspace, state: AgentState) -> list[Path]:
+    """Infer target directories from changed files and recent tool paths."""
+    paths: list[str] = list(state.changed_files)
+    for action in state.recent_actions:
+        try:
+            signature = json.loads(str(action.get("signature") or "{}"))
+        except (TypeError, ValueError):
             continue
-        files.append(path)
-    return files
+        arguments = signature.get("arguments") or {}
+        path = arguments.get("path")
+        if isinstance(path, str) and path:
+            paths.append(path)
+    directories: list[Path] = []
+    for value in paths:
+        try:
+            candidate = workspace.resolve(value, must_exist=False, allow_sensitive=True)
+        except Exception:
+            candidate = (workspace.root / value).resolve()
+        if candidate.is_dir():
+            directory = candidate
+        elif candidate.suffix or not candidate.exists():
+            directory = candidate.parent
+        else:
+            directory = candidate.parent
+        if directory.is_relative_to(workspace.root) and directory not in directories:
+            directories.append(directory)
+    return directories or [workspace.root]
+
+
+def _ancestor_directories(root: Path, target: Path) -> list[Path]:
+    target = target.resolve()
+    if not target.is_relative_to(root):
+        return [root]
+    relative_parts = target.relative_to(root).parts
+    return [root.joinpath(*relative_parts[:index]) for index in range(len(relative_parts) + 1)]
 
 
 def _latest_user_query(messages: list[dict[str, Any]]) -> str:

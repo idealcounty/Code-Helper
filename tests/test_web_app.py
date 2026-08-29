@@ -424,7 +424,7 @@ def test_websocket_receives_agent_events(tmp_path: Path) -> None:
 
             event_types: list[str] = []
             assistant_content = ""
-            for _ in range(8):
+            for _ in range(16):
                 event = websocket.receive_json()
                 event_types.append(event["type"])
                 if event["type"] == "assistant_response":
