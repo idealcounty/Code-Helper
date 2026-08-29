@@ -497,6 +497,13 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
+    case "context_built": {
+      const repoSelection = payload.repo_map?.selected || [];
+      const ruleCount = payload.rule_sources?.length || 0;
+      addActivity("上下文已构建", `规则 ${ruleCount} 条 · Repo Map ${repoSelection.length} 个文件 · ${formatNumber(payload.estimated_chars || 0)} 字符`, "success");
+      refreshIntelligenceIfVisible();
+      break;
+    }
     case "context_compacted":
       addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning");
       refreshIntelligenceIfVisible();
@@ -665,6 +672,10 @@ function refreshIntelligenceIfVisible() {
 
 function renderIntelligence(data) {
   const context = data.context || {};
+  const contextBuild = context.last_build || {};
+  const contextRepo = contextBuild.repo_map || {};
+  const contextRules = contextBuild.rule_sources || [];
+  const contextSummaryMeta = context.summary_meta || {};
   const budget = data.budget || {};
   const verification = data.verification || { evidence: [] };
   const repo = data.repo_map || {};
@@ -720,6 +731,9 @@ function renderIntelligence(data) {
       <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>
       <div class="budget-track"><i style="width:${percent}%"></i></div>
       <div class="intel-facts"><span>${formatNumber(context.estimated_chars || 0)} / ${formatNumber(context.max_chars || 0)} chars</span><span>${context.messages || 0} 条消息</span><span>${context.compactions || 0} 次压缩</span></div>
+      <div class="intel-facts"><span>规则 ${contextRules.length} 条 / ${formatNumber(contextBuild.rule_chars || 0)} chars</span><span>Repo Map ${((contextRepo.selected || []).length)} 文件 / ${formatNumber(contextRepo.selected_chars || 0)} chars</span></div>
+      ${(contextRules.length || (contextRepo.selected || []).length) ? `<details><summary>查看本 Step 上下文来源</summary><ul class="context-source-list">${contextRules.slice(0, 8).map((item) => `<li><span>规则 · ${escapeHtml(item.path || "")}</span><em>${escapeHtml(item.kind || "default")}${item.truncated ? " · 已截断" : ""}</em></li>`).join("")}${(contextRepo.selected || []).slice(0, 8).map((item) => `<li><span>Repo Map · ${escapeHtml(item.path || "")}</span><em>${item.score || 0} · ${(item.reason || []).map(escapeHtml).join(", ")}</em></li>`).join("")}</ul></details>` : ""}
+      ${contextSummaryMeta.version ? `<p class="intel-note">摘要 v${contextSummaryMeta.version}，覆盖 ${contextSummaryMeta.covered_message_count || 0} 条历史消息，事件序列 ≤ ${contextSummaryMeta.covered_event_sequence || 0}</p>` : ""}
       ${context.summary ? `<details><summary>查看历史摘要</summary><p>${escapeHtml(context.summary)}</p></details>` : '<p class="intel-note">尚未触发历史压缩，最近原始上下文会完整保留。</p>'}
     </section>
     <section class="intelligence-section memory-section">

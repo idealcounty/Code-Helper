@@ -42,6 +42,7 @@ class AgentState:
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_stats: dict[str, dict[str, int]] = field(default_factory=dict)
     context_summary: str = ""
+    context_summary_meta: dict[str, Any] = field(default_factory=dict)
     recalled_memories: list[dict[str, Any]] = field(default_factory=list)
     recalled_user_memories: list[dict[str, Any]] = field(default_factory=list)
     current_objective: str = ""
@@ -89,6 +90,8 @@ class AgentState:
         self.completion_rejections = 0
         self.cancel_requested = False
         self.tool_stats.clear()
+        self.context_summary = ""
+        self.context_summary_meta.clear()
         self.recalled_memories.clear()
         self.recalled_user_memories.clear()
         self.current_objective = ""
@@ -128,6 +131,7 @@ class AgentState:
         self.tool_stats.clear()
         self.pending_approval = None
         self.context_summary = ""
+        self.context_summary_meta.clear()
         self.recalled_memories.clear()
         self.recalled_user_memories.clear()
         self.current_objective = ""

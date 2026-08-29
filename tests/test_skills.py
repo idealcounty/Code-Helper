@@ -84,7 +84,14 @@ def test_state_restores_conversation_and_plan_from_events() -> None:
     state.restore_from_events([
         {"type": "turn_started", "turn_id": "turn-1", "payload": {"message": "Fix it"}},
         {"type": "plan_updated", "turn_id": "turn-1", "payload": {"plan": [{"step": "Inspect", "status": "completed"}]}},
-        {"type": "context_compacted", "turn_id": "turn-1", "payload": {"summary": "old context"}},
+        {
+            "type": "context_compacted",
+            "turn_id": "turn-1",
+            "payload": {
+                "summary": "old context",
+                "summary_meta": {"version": 1, "covered_event_sequence": 7},
+            },
+        },
         {"type": "repair_attempt", "turn_id": "turn-1", "payload": {"attempt": 2}},
         {"type": "turn_finished", "turn_id": "turn-1", "payload": {"status": "completed", "token_usage": {"total_tokens": 4}}},
     ])
@@ -93,6 +100,7 @@ def test_state_restores_conversation_and_plan_from_events() -> None:
     assert state.plan[0]["status"] == "completed"
     assert state.token_usage["total_tokens"] == 4
     assert state.context_summary == "old context"
+    assert state.context_summary_meta["covered_event_sequence"] == 7
     assert state.repair_attempts == 2
     state.restore_from_events([])
     assert state.messages == [] and state.plan == []
@@ -102,7 +110,9 @@ def test_context_manager_bounds_history() -> None:
     state = AgentState.create()
     state.messages = [{"role": "user", "content": str(index)} for index in range(5)]
     context = ContextManager(max_messages=2).build(state, [])
-    assert context.messages[1]["content"].startswith("Earlier context summary")
+    assert context.messages[1]["content"].startswith("Context summary v1")
+    assert "Objective" in context.messages[1]["content"]
+    assert context.context_summary_meta["version"] == 1
     assert [item["content"] for item in context.messages[-2:]] == ["3", "4"]
     assert context.truncated and state.context_summary
 

@@ -65,6 +65,9 @@ class SessionReducer:
             self.state.plan = copy.deepcopy(list(payload.get("plan") or []))
         elif event_type == "context_compacted":
             self.state.context_summary = str(payload.get("summary") or "")
+            self.state.context_summary_meta = copy.deepcopy(
+                dict(payload.get("summary_meta") or {})
+            )
         elif event_type == "repair_attempt":
             self.state.repair_attempts = max(
                 self.state.repair_attempts, _int(payload.get("attempt"), 0)
@@ -115,6 +118,7 @@ class SessionReducer:
         self.state.cancel_requested = False
         self.state.tool_stats.clear()
         self.state.context_summary = ""
+        self.state.context_summary_meta.clear()
         self.state.recalled_memories.clear()
         self.state.recalled_user_memories.clear()
         self.state.current_objective = objective

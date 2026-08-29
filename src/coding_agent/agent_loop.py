@@ -238,12 +238,14 @@ class AgentRunner:
                     "rule_truncated": context.rule_truncated,
                     "rule_sources": context.rule_sources,
                     "repo_map": context.repo_map,
+                    "summary_meta": context.context_summary_meta,
                 },
             )
             if context.truncated:
                 await self._emit(state, "context_compacted", {
                     "estimated_chars": context.estimated_chars,
                     "summary": state.context_summary,
+                    "summary_meta": state.context_summary_meta,
                 })
 
             await self._emit(state, "model_started", {"step": state.step})

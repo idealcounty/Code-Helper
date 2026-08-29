@@ -276,6 +276,10 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .evidence-row.rejected > i { color: #7c5b1c; border: 1px solid #dfc689; background: #fff8e7; }
 .empty-evidence { padding: 10px 4px; color: var(--muted); font-size: 8.5px; line-height: 1.5; }
 .intel-facts { display: flex; flex-wrap: wrap; gap: 5px 10px; color: var(--muted); font-family: var(--mono); font-size: 7.5px; }
+.context-source-list { margin: 8px 0 0; padding: 0; list-style: none; }
+.context-source-list li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid #eceeee; color: var(--ink-soft); font-size: 8px; }
+.context-source-list li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-source-list li em { flex: 0 0 auto; color: var(--faint); font-family: var(--mono); font-size: 7px; font-style: normal; }
 .intel-note { margin: 8px 0 0; color: var(--muted); font-size: 8.5px; line-height: 1.5; }
 .intelligence-section details { margin-top: 8px; color: var(--muted); font-size: 8.5px; }
 .intelligence-section summary { cursor: pointer; color: var(--accent); }

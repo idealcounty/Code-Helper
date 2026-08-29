@@ -411,10 +411,13 @@ def create_app(
         compactions = 0
         output_references: list[str] = []
         repo_map_calls = 0
+        last_context_built: dict[str, Any] = {}
         for event in events:
             payload = event.get("payload") or {}
             if event.get("type") == "context_compacted":
                 compactions += 1
+            if event.get("type") == "context_built":
+                last_context_built = dict(payload)
             if event.get("type") != "tool_result":
                 continue
             result = payload.get("result") or {}
@@ -455,6 +458,8 @@ def create_app(
                 "messages": len(state.messages),
                 "compactions": compactions,
                 "summary": state.context_summary,
+                "summary_meta": state.context_summary_meta,
+                "last_build": last_context_built,
             },
             "repo_map": {
                 "calls": repo_map_calls,
