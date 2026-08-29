@@ -87,6 +87,23 @@ def test_context_injects_budgeted_repo_map_metadata(tmp_path: Path) -> None:
     assert context.repo_map["selected_chars"] <= 80
 
 
+def test_repo_map_reuses_hash_keyed_summary_and_invalidates_external_edit(tmp_path: Path) -> None:
+    source = tmp_path / "main.cpp"
+    source.write_text("class First {};\n", encoding="utf-8")
+    workspace = Workspace(tmp_path)
+    builder = RepoMapBuilder(workspace)
+
+    first = builder.build(query="First")
+    second = builder.build(query="First")
+    assert first["totals"]["summary_cache_misses"] == 1
+    assert second["totals"]["summary_cache_hits"] == 1
+
+    source.write_text("class Second {};\n", encoding="utf-8")
+    third = builder.build(query="Second")
+    assert third["totals"]["summary_cache_misses"] == 1
+    assert "class Second" in third["files"][0]["symbols"]
+
+
 def test_get_repo_map_is_registered_as_read_tool(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     workspace = Workspace(tmp_path)

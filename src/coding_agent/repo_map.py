@@ -72,8 +72,15 @@ class RepoMapBuilder:
     ) -> dict[str, Any]:
         keywords = _keywords(query)
         files: list[RepoMapFile] = []
-        totals = {"files_seen": 0, "python_files": 0, "test_files": 0}
+        totals = {
+            "files_seen": 0,
+            "python_files": 0,
+            "test_files": 0,
+            "summary_cache_hits": 0,
+            "summary_cache_misses": 0,
+        }
         focus = {item.replace("\\", "/").lstrip("./") for item in (focus_paths or [])}
+        seen_paths: set[Path] = set()
 
         for path in sorted(self.workspace.root.rglob("*")):
             if (
@@ -86,19 +93,36 @@ class RepoMapBuilder:
                 continue
 
             totals["files_seen"] += 1
+            seen_paths.add(path.resolve())
             relative = self.workspace.relative(path)
             kind = _kind_for(path, relative)
             score, reason = _score_file(relative, kind, keywords)
             if relative in focus:
                 score += 5
                 reason.append("recently touched")
-            imports: list[str] = []
-            symbols: list[str] = []
+            imports: list[str]
+            symbols: list[str]
+            observation = self.workspace.observe(path)
+            cached = self.workspace.repo_map_cache.get(path.resolve())
+            if cached is not None and cached[0] == observation.sha256:
+                imports = list(cached[1])
+                symbols = list(cached[2])
+                totals["summary_cache_hits"] += 1
+            else:
+                totals["summary_cache_misses"] += 1
+                imports = []
+                symbols = []
+                if path.suffix.lower() == ".py":
+                    imports, symbols = _python_summary(path)
+                elif path.suffix.lower() in _GENERIC_CODE_SUFFIXES:
+                    imports, symbols = _generic_code_summary(path)
+                self.workspace.repo_map_cache[path.resolve()] = (
+                    observation.sha256,
+                    tuple(imports),
+                    tuple(symbols),
+                )
             if path.suffix.lower() == ".py":
                 totals["python_files"] += 1
-                imports, symbols = _python_summary(path)
-            elif path.suffix.lower() in _GENERIC_CODE_SUFFIXES:
-                imports, symbols = _generic_code_summary(path)
             if symbols:
                 score += 2
                 reason.append("code symbols")
@@ -115,6 +139,12 @@ class RepoMapBuilder:
                     symbols=symbols[:MAX_SYMBOLS_PER_FILE],
                 )
             )
+
+        # Drop deleted files so a later re-created path cannot reuse stale
+        # metadata with an unrelated content hash.
+        for cached_path in tuple(self.workspace.repo_map_cache):
+            if cached_path not in seen_paths:
+                self.workspace.repo_map_cache.pop(cached_path, None)
 
         if include_dependency_graph:
             files = _attach_dependency_graph(files)

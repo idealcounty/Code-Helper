@@ -40,6 +40,9 @@ class Workspace:
             raise ValueError(f"Workspace is not a directory: {self.root}")
         self.observations: dict[Path, FileObservation] = {}
         self.summary_cache: dict[Path, tuple[str, dict[str, object]]] = {}
+        # Parsed Repo Map summaries are keyed by content hash so a new
+        # builder instance can reuse work while external edits invalidate it.
+        self.repo_map_cache: dict[Path, tuple[str, tuple[str, ...], tuple[str, ...]]] = {}
 
     def resolve(
         self,
