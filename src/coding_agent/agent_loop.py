@@ -73,7 +73,7 @@ class AgentRunner:
         self, state: AgentState, user_message: str | None = None
     ) -> AgentRunResult:
         if user_message is not None:
-            if state.step or state.status not in {
+            if state.status not in {
                 AgentStatus.READY,
                 AgentStatus.COMPLETED,
                 AgentStatus.PARTIAL,
@@ -226,6 +226,18 @@ class AgentRunner:
                 state,
                 AgentStatus.CANCELLED,
                 "RUN_CANCELLED: task_cancelled",
+            )
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            await self._emit(
+                state,
+                "run_failed",
+                {"code": "UNEXPECTED_AGENT_ERROR", "message": message},
+            )
+            return await self._finish(
+                state,
+                AgentStatus.FAILED,
+                f"UNEXPECTED_AGENT_ERROR: {message}",
             )
 
     async def _run_loop(self, state: AgentState) -> AgentRunResult:
@@ -759,6 +771,16 @@ class AgentRunner:
             finish_payload,
             self.tool_executor.hooks.on_task_end(finish_payload),
         )
+        if self.turn_summarizer is not None:
+            try:
+                summary = self.turn_summarizer(state, status, message)
+                await self._emit(state, "session_summarized", {"summary": summary})
+            except Exception as exc:  # Summary persistence must never fail the completed turn.
+                await self._emit(
+                    state,
+                    "session_summary_failed",
+                    {"error": str(exc), "raw_events_preserved": True},
+                )
         await self._emit(
             state,
             "turn_finished",
@@ -778,16 +800,6 @@ class AgentRunner:
                 },
             },
         )
-        if self.turn_summarizer is not None:
-            try:
-                summary = self.turn_summarizer(state, status, message)
-                await self._emit(state, "session_summarized", {"summary": summary})
-            except Exception as exc:  # Summary persistence must never fail the completed turn.
-                await self._emit(
-                    state,
-                    "session_summary_failed",
-                    {"error": str(exc), "raw_events_preserved": True},
-                )
         return AgentRunResult(status, message, state)
 
     async def _run_lifecycle_hooks(

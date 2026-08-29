@@ -247,6 +247,50 @@ def test_live_reducer_and_event_replay_have_matching_projection(tmp_path: Path) 
     } == {key: state.run_budget.get(key) for key in stable_budget_keys}
 
 
+def test_completed_session_accepts_a_second_user_turn(tmp_path: Path) -> None:
+    model = ScriptedModel(
+        [ModelResponse(content="first answer"), ModelResponse(content="second answer")]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=2, mode="ask")
+
+    first = asyncio.run(runner.run_turn(state, "first question"))
+    first_turn_id = state.turn_id
+    second = asyncio.run(runner.run_turn(state, "second question"))
+
+    assert first.status is AgentStatus.COMPLETED
+    assert second.status is AgentStatus.COMPLETED
+    assert state.turn_id != first_turn_id
+    assert [
+        event["payload"]["message"]
+        for event in store.load()
+        if event["type"] == "turn_started"
+    ] == ["first question", "second question"]
+    assert [message["content"] for message in state.messages if message["role"] == "user"] == [
+        "first question",
+        "second question",
+    ]
+
+
+def test_unexpected_model_error_finishes_turn_instead_of_silently_dying(
+    tmp_path: Path,
+) -> None:
+    class ExplodingModel:
+        async def complete(self, **_: Any) -> ModelResponse:
+            raise RuntimeError("unexpected test failure")
+
+    runner, store = _make_runner(tmp_path, ExplodingModel())  # type: ignore[arg-type]
+    state = AgentState.create(session_id="session", max_steps=2, mode="ask")
+
+    result = asyncio.run(runner.run_turn(state, "trigger failure"))
+
+    assert result.status is AgentStatus.FAILED
+    assert result.message.startswith("UNEXPECTED_AGENT_ERROR: RuntimeError")
+    event_types = [event["type"] for event in store.load()]
+    assert "run_failed" in event_types
+    assert event_types[-1] == "turn_finished"
+
+
 def test_agent_emits_context_compaction_event(tmp_path: Path) -> None:
     model = ScriptedModel([ModelResponse(content="done")])
     runner, store = _make_runner(tmp_path, model)
@@ -272,8 +316,8 @@ def test_summary_failure_preserves_completed_turn_and_raw_events(tmp_path: Path)
     events = store.load()
 
     assert result.status is AgentStatus.COMPLETED
-    assert [event["type"] for event in events][-2:] == ["turn_finished", "session_summary_failed"]
-    assert events[-1]["payload"]["raw_events_preserved"] is True
+    assert [event["type"] for event in events][-2:] == ["session_summary_failed", "turn_finished"]
+    assert events[-2]["payload"]["raw_events_preserved"] is True
 
 
 def test_agent_does_not_finish_with_stale_verification(tmp_path: Path) -> None:

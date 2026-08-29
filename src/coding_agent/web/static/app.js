@@ -5,6 +5,8 @@ const state = {
   running: false,
   stopping: false,
   runSyncTimer: null,
+  runEpoch: 0,
+  pendingUserEchoes: [],
   pendingApproval: null,
   seenSequences: new Set(),
   selectedFilePath: null,
@@ -90,6 +92,8 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     });
     closeSocket();
     clearRunSyncTimer();
+    state.runEpoch += 1;
+    state.pendingUserEchoes = [];
     state.sessionId = result.session_id;
     state.workspace = result.workspace;
     state.running = false;
@@ -137,7 +141,7 @@ function connectSocket() {
   const sessionId = state.sessionId;
   const socket = new WebSocket(`${protocol}://${location.host}/ws/sessions/${sessionId}`);
   state.socket = socket;
-  socket.onopen = () => reconcileRunState(sessionId, { quiet: true });
+  socket.onopen = () => reconcileRunState(sessionId, { quiet: true, epoch: state.runEpoch });
   socket.onmessage = (message) => {
     if (state.sessionId === sessionId) handleEvent(JSON.parse(message.data));
   };
@@ -412,12 +416,22 @@ async function sendMessage() {
   if (!state.sessionId || state.running) return;
   const content = elements.messageInput.value.trim();
   if (!content) return;
+  const sessionId = state.sessionId;
+  const requestEpoch = ++state.runEpoch;
+  const echo = { content, node: addMessage("user", content) };
+  state.pendingUserEchoes.push(echo);
   elements.messageInput.value = "";
   try {
-    await api(`/api/sessions/${state.sessionId}/messages`, { method: "POST", body: JSON.stringify({ content }) });
+    await api(`/api/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content }) });
+    if (state.sessionId !== sessionId) return;
     state.stopping = false;
-    setRunning(true);
+    if (state.runEpoch === requestEpoch) setRunning(true);
   } catch (error) {
+    const pendingIndex = state.pendingUserEchoes.indexOf(echo);
+    if (pendingIndex >= 0) {
+      state.pendingUserEchoes.splice(pendingIndex, 1);
+      echo.node?.remove();
+    }
     elements.messageInput.value = content;
     showToast(error.message);
   }
@@ -431,7 +445,7 @@ async function cancelRun() {
     state.stopping = true;
     elements.cancelButton.disabled = true;
     updateRunStatus();
-    reconcileRunState(sessionId);
+    reconcileRunState(sessionId, { epoch: state.runEpoch });
     showToast("已请求停止 Agent");
   } catch (error) { showToast(error.message); }
 }
@@ -441,12 +455,12 @@ function clearRunSyncTimer() {
   state.runSyncTimer = null;
 }
 
-async function reconcileRunState(sessionId, { quiet = false, attempt = 0 } = {}) {
-  if (!sessionId || state.sessionId !== sessionId) return;
+async function reconcileRunState(sessionId, { quiet = false, attempt = 0, epoch = state.runEpoch } = {}) {
+  if (!sessionId || state.sessionId !== sessionId || state.runEpoch !== epoch) return;
   clearRunSyncTimer();
   try {
     const details = await api(`/api/sessions/${sessionId}`);
-    if (state.sessionId !== sessionId) return;
+    if (state.sessionId !== sessionId || state.runEpoch !== epoch) return;
     if (!details.running) {
       state.stopping = false;
       setRunning(false);
@@ -458,10 +472,10 @@ async function reconcileRunState(sessionId, { quiet = false, attempt = 0 } = {})
   } catch (error) {
     if (!quiet && attempt === 0) showToast(`状态同步失败：${error.message}`);
   }
-  if (state.sessionId !== sessionId || attempt >= 60) return;
+  if (state.sessionId !== sessionId || state.runEpoch !== epoch || attempt >= 60) return;
   const delay = attempt < 8 ? 250 : Math.min(2000, 500 + attempt * 50);
   state.runSyncTimer = setTimeout(
-    () => reconcileRunState(sessionId, { quiet: true, attempt: attempt + 1 }),
+    () => reconcileRunState(sessionId, { quiet: true, attempt: attempt + 1, epoch }),
     delay,
   );
 }
@@ -526,7 +540,15 @@ function handleEvent(event) {
   if (event.sequence) state.seenSequences.add(event.sequence);
   const payload = event.payload || {};
   switch (event.type) {
-    case "turn_started": state.stopping = false; addMessage("user", payload.message); setRunning(true); break;
+    case "turn_started": {
+      state.runEpoch += 1;
+      state.stopping = false;
+      const pendingIndex = state.pendingUserEchoes.findIndex((item) => item.content === payload.message);
+      if (pendingIndex >= 0) state.pendingUserEchoes.splice(pendingIndex, 1);
+      else addMessage("user", payload.message);
+      setRunning(true);
+      break;
+    }
     case "run_budget_started":
     case "run_budget_updated":
       refreshIntelligenceIfVisible();
@@ -544,6 +566,9 @@ function handleEvent(event) {
     case "run_budget_exhausted":
       addActivity("运行预算已耗尽", `${payload.code || "BUDGET_EXHAUSTED"} · ${payload.message || ""}`, "warning");
       refreshIntelligenceIfVisible();
+      break;
+    case "run_failed":
+      addActivity("任务执行失败", `${payload.code || "UNEXPECTED_AGENT_ERROR"} · ${payload.message || ""}`, "failure");
       break;
     case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
     case "context_built": {
@@ -593,7 +618,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": clearRunSyncTimer(); state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }

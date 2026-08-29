@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from ..model import ModelClient, ToolCall
 from ..permissions import PermissionResult
 from ..repo_map import RepoMapBuilder
 from ..runtime import AgentRuntime, create_runtime
+from ..session import AgentStatus
 from ..tools.base import ToolError
 
 
@@ -600,7 +602,20 @@ def create_app(
     ) -> dict[str, Any]:
         session = manager.get(session_id)
         if session.running:
-            raise HTTPException(status_code=409, detail="Agent is already running")
+            terminal_statuses = {
+                AgentStatus.COMPLETED,
+                AgentStatus.PARTIAL,
+                AgentStatus.FAILED,
+                AgentStatus.CANCELLED,
+            }
+            if session.runtime.state.status in terminal_statuses and session.task:
+                # turn_finished is delivered just before the task coroutine
+                # returns. Bridge that tiny boundary instead of rejecting an
+                # immediate follow-up message.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.shield(session.task)
+            if session.running:
+                raise HTTPException(status_code=409, detail="Agent is already running")
 
         async def execute() -> AgentRunResult:
             try:
@@ -611,6 +626,7 @@ def create_app(
                 session.last_error = f"{type(exc).__name__}: {exc}"
                 raise
 
+        session.last_error = None
         session.task = asyncio.create_task(execute())
 
         def consume_task_result(task: asyncio.Task[AgentRunResult]) -> None:
@@ -744,6 +760,13 @@ def create_app(
     @app.post("/api/sessions/{session_id}/cancel")
     async def cancel(session_id: str) -> dict[str, Any]:
         session = manager.get(session_id)
+        if not session.running:
+            return {
+                "cancel_requested": False,
+                "already_finished": True,
+                "running": False,
+                "force_after_seconds": WEB_CANCEL_FORCE_SECONDS,
+            }
         session.runtime.state.cancel_requested = True
         newly_requested = session.runtime.cancellation.cancel("user_requested")
         session.approval_broker.reject_all()

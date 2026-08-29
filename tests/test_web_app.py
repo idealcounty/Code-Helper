@@ -47,8 +47,10 @@ def test_health_and_static_index() -> None:
     assert "file-preview-notice" in frontend_bundle.text
     assert "grantButton" in frontend_bundle.text
     assert 'case "model_progress"' in frontend_bundle.text
-    assert "reconcileRunState(sessionId)" in frontend_bundle.text
+    assert "reconcileRunState(sessionId," in frontend_bundle.text
     assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text
+    assert "runEpoch" in frontend_bundle.text
+    assert "pendingUserEchoes" in frontend_bundle.text
     assert "本会话允许" in index.text
 
 
@@ -392,6 +394,23 @@ def test_cancel_endpoint_interrupts_active_web_run(tmp_path: Path) -> None:
     assert "run_cancelled" in event_types
 
 
+def test_cancel_endpoint_is_noop_after_run_finished(tmp_path: Path) -> None:
+    application = create_app(_config())
+    with TestClient(application) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = created.json()["session_id"]
+
+        cancelled = client.post(f"/api/sessions/{session_id}/cancel")
+        events = client.get(f"/api/sessions/{session_id}/events").json()
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["cancel_requested"] is False
+    assert cancelled.json()["already_finished"] is True
+    assert events == []
+
+
 def test_restore_endpoint_requires_second_confirmation_for_external_edits(
     tmp_path: Path,
 ) -> None:
@@ -493,3 +512,32 @@ def test_websocket_receives_agent_events(tmp_path: Path) -> None:
     assert "assistant_response" in event_types
     assert "turn_finished" in event_types
     assert assistant_content == "Hello from the self-written agent loop."
+
+
+def test_websocket_supports_multiple_turns_in_same_session(tmp_path: Path) -> None:
+    application = create_app(_config(), model_client_factory=FinalAnswerModel)
+    with TestClient(application) as client:
+        response = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = response.json()["session_id"]
+
+        observed_messages: list[str] = []
+        finished_turns = 0
+        with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
+            for content in ("First question", "Second question"):
+                sent = client.post(
+                    f"/api/sessions/{session_id}/messages",
+                    json={"content": content},
+                )
+                assert sent.status_code == 202
+                while True:
+                    event = websocket.receive_json()
+                    if event["type"] == "turn_started":
+                        observed_messages.append(event["payload"]["message"])
+                    if event["type"] == "turn_finished":
+                        finished_turns += 1
+                        break
+
+    assert observed_messages == ["First question", "Second question"]
+    assert finished_turns == 2
