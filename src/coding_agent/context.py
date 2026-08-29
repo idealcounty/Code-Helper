@@ -33,6 +33,7 @@ class ModelContext:
     rule_chars: int = 0
     rule_truncated: bool = False
     rule_sources: list[dict[str, Any]] = field(default_factory=list)
+    repo_map: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,7 @@ class ContextManager:
         max_message_chars: int = 20_000,
         max_context_chars: int = 80_000,
         max_rule_chars: int = 20_000,
+        max_repo_map_chars: int = 12_000,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
@@ -66,6 +68,7 @@ class ContextManager:
         self.max_message_chars = max_message_chars
         self.max_context_chars = max_context_chars
         self.max_rule_chars = max_rule_chars
+        self.max_repo_map_chars = max_repo_map_chars
 
     def build(
         self,
@@ -82,6 +85,9 @@ class ContextManager:
         rules = self._project_rules(state)
         if rules.text:
             system += f"\n\nProject rules:\n{rules.text}"
+        repo_map = self._repo_map(state)
+        if repo_map["text"]:
+            system += f"\n\nRepository map (ranked by task relevance and import centrality):\n{repo_map['text']}"
         if state.plan:
             system += f"\n\nCurrent plan: {state.plan!r}"
         skills = self._skills_summary()
@@ -125,7 +131,55 @@ class ContextManager:
             rule_chars=len(rules.text),
             rule_truncated=rules.truncated,
             rule_sources=rules.sources,
+            repo_map=repo_map["metadata"],
         )
+
+    def _repo_map(self, state: AgentState) -> dict[str, Any]:
+        if self.workspace is None:
+            return {"text": "", "metadata": {}}
+        from .repo_map import RepoMapBuilder
+
+        query = _latest_user_query(state.messages)
+        data = RepoMapBuilder(self.workspace).build(
+            query=query,
+            focus_paths=sorted(state.changed_files),
+            max_files=40,
+            max_chars=self.max_repo_map_chars,
+        )
+        lines: list[str] = []
+        selected: list[dict[str, Any]] = []
+        used_chars = 0
+        budget_truncated = bool(data["truncated"])
+        for item in data["files"]:
+            symbols = ", ".join(item.get("symbols", [])[:8]) or "-"
+            deps = ", ".join(item.get("dependencies", [])[:4]) or "-"
+            line = f"- {item['path']} [{item['kind']}; score={item['score']}] symbols: {symbols}; imports: {deps}"
+            separator_chars = 1 if lines else 0
+            if used_chars + separator_chars + len(line) > self.max_repo_map_chars:
+                budget_truncated = True
+                break
+            lines.append(line)
+            used_chars += separator_chars + len(line)
+            selected.append(
+                {
+                    "path": item["path"],
+                    "score": item["score"],
+                    "reason": item.get("reason", []),
+                    "centrality": item.get("centrality", 0),
+                }
+            )
+        text = "\n".join(lines)
+        return {
+            "text": text,
+            "metadata": {
+                "query": query,
+                "candidates": data["totals"]["files_seen"],
+                "selected": selected,
+                "selected_chars": used_chars,
+                "budget": self.max_repo_map_chars,
+                "truncated": budget_truncated,
+            },
+        }
 
     def _project_rules(self, state: AgentState) -> _RuleBundle:
         if self.workspace is None:

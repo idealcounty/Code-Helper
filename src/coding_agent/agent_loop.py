@@ -237,6 +237,7 @@ class AgentRunner:
                     "rule_chars": context.rule_chars,
                     "rule_truncated": context.rule_truncated,
                     "rule_sources": context.rule_sources,
+                    "repo_map": context.repo_map,
                 },
             )
             if context.truncated:

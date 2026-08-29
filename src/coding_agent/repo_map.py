@@ -21,6 +21,9 @@ class RepoMapFile:
     reason: list[str] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)
     symbols: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    dependents: list[str] = field(default_factory=list)
+    centrality: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -30,6 +33,9 @@ class RepoMapFile:
             "reason": self.reason,
             "imports": self.imports,
             "symbols": self.symbols,
+            "dependencies": self.dependencies,
+            "dependents": self.dependents,
+            "centrality": self.centrality,
         }
 
 
@@ -37,10 +43,18 @@ class RepoMapBuilder:
     def __init__(self, workspace: Workspace) -> None:
         self.workspace = workspace
 
-    def build(self, *, query: str = "", max_files: int = MAX_FILES) -> dict[str, Any]:
+    def build(
+        self,
+        *,
+        query: str = "",
+        max_files: int = MAX_FILES,
+        focus_paths: list[str] | None = None,
+        max_chars: int | None = None,
+    ) -> dict[str, Any]:
         keywords = _keywords(query)
         files: list[RepoMapFile] = []
         totals = {"files_seen": 0, "python_files": 0, "test_files": 0}
+        focus = {item.replace("\\", "/").lstrip("./") for item in (focus_paths or [])}
 
         for path in sorted(self.workspace.root.rglob("*")):
             if (
@@ -56,6 +70,9 @@ class RepoMapBuilder:
             relative = self.workspace.relative(path)
             kind = _kind_for(path, relative)
             score, reason = _score_file(relative, kind, keywords)
+            if relative in focus:
+                score += 5
+                reason.append("recently touched")
             imports: list[str] = []
             symbols: list[str] = []
             if path.suffix == ".py":
@@ -78,13 +95,31 @@ class RepoMapBuilder:
                 )
             )
 
-        ranked = sorted(files, key=lambda item: (-item.score, item.path))[:max_files]
+        files = _attach_dependency_graph(files)
+        ranked = sorted(files, key=lambda item: (-item.score, -item.centrality, item.path))
+        ranked = ranked[:max_files]
+        budget_truncated = False
+        if max_chars is not None and max_chars > 0:
+            selected: list[RepoMapFile] = []
+            used_chars = 0
+            for item in ranked:
+                item_chars = len(_render_file(item))
+                separator = 1 if selected else 0
+                if used_chars + separator + item_chars > max_chars:
+                    budget_truncated = True
+                    break
+                selected.append(item)
+                used_chars += separator + item_chars
+            ranked = selected
         return {
             "root": str(self.workspace.root),
             "query": query,
             "totals": totals,
             "files": [item.to_dict() for item in ranked],
-            "truncated": len(files) > len(ranked),
+            "truncated": len(files) > len(ranked) or budget_truncated,
+            "budget": max_chars,
+            "selected_chars": sum(len(_render_file(item)) for item in ranked)
+            + max(0, len(ranked) - 1),
         }
 
 
@@ -142,6 +177,80 @@ def _python_summary(path: Path) -> tuple[list[str], list[str]]:
             prefix = "class" if isinstance(node, ast.ClassDef) else "def"
             symbols.append(f"{prefix} {node.name}")
     return sorted(set(imports)), symbols
+
+
+def _attach_dependency_graph(files: list[RepoMapFile]) -> list[RepoMapFile]:
+    """Attach best-effort Python import edges without requiring an indexer."""
+    modules: dict[str, str] = {}
+    for item in files:
+        if item.kind not in {"python", "test"}:
+            continue
+        module = item.path[:-3].replace("/", ".")
+        if module.endswith(".__init__"):
+            module = module[:-9]
+        modules[module] = item.path
+
+    dependency_map: dict[str, set[str]] = {item.path: set() for item in files}
+    dependent_map: dict[str, set[str]] = {item.path: set() for item in files}
+    for item in files:
+        if item.kind not in {"python", "test"}:
+            continue
+        source_module = item.path[:-3].replace("/", ".")
+        if source_module.endswith(".__init__"):
+            source_module = source_module[:-9]
+        source_package = source_module.rsplit(".", 1)[0] if "." in source_module else ""
+        for imported in item.imports:
+            candidates = _import_candidates(imported, source_package)
+            target = next((modules[name] for name in candidates if name in modules), None)
+            if target is None or target == item.path:
+                continue
+            dependency_map[item.path].add(target)
+            dependent_map[target].add(item.path)
+
+    enriched: list[RepoMapFile] = []
+    for item in files:
+        dependencies = sorted(dependency_map[item.path])
+        dependents = sorted(dependent_map[item.path])
+        centrality = len(dependents)
+        score = item.score + min(centrality * 2, 8)
+        reason = list(item.reason)
+        if centrality:
+            reason.append(f"imported by:{centrality}")
+        enriched.append(
+            RepoMapFile(
+                path=item.path,
+                kind=item.kind,
+                score=score,
+                reason=reason,
+                imports=item.imports,
+                symbols=item.symbols,
+                dependencies=dependencies,
+                dependents=dependents,
+                centrality=centrality,
+            )
+        )
+    return enriched
+
+
+def _import_candidates(imported: str, source_package: str) -> list[str]:
+    if not imported:
+        return []
+    if imported.startswith("."):
+        level = len(imported) - len(imported.lstrip("."))
+        name = imported[level:]
+        package_parts = source_package.split(".") if source_package else []
+        if level > 1:
+            package_parts = package_parts[: max(0, len(package_parts) - level + 1)]
+        qualified = ".".join([*package_parts, name]).strip(".")
+        return [qualified, qualified.rsplit(".", 1)[0] if "." in qualified else qualified]
+    parts = imported.split(".")
+    return [".".join(parts[:index]) for index in range(len(parts), 0, -1)]
+
+
+def _render_file(item: RepoMapFile) -> str:
+    symbols = ", ".join(item.symbols[:8])
+    deps = ", ".join(item.dependencies[:4])
+    return f"{item.path} [{item.kind}] score={item.score} symbols={symbols} deps={deps}"
 
 
 def _keywords(query: str) -> set[str]:

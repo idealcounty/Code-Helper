@@ -36,6 +36,36 @@ def test_repo_map_ranks_query_matches_and_python_symbols(tmp_path: Path) -> None
     assert "decimal" in first["imports"]
 
 
+def test_repo_map_adds_python_import_edges_and_centrality(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "core.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    (src / "app.py").write_text("from src.core import shared\n\ndef run():\n    return shared()\n", encoding="utf-8")
+    (src / "cli.py").write_text("from src.core import shared\n", encoding="utf-8")
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="core")
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "src/core.py" in by_path["src/app.py"]["dependencies"]
+    assert by_path["src/core.py"]["centrality"] == 2
+    assert "imported by:2" in by_path["src/core.py"]["reason"]
+
+
+def test_context_injects_budgeted_repo_map_metadata(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    state = AgentState.create()
+    state.messages = [{"role": "user", "content": "find app"}]
+    context = ContextManager(
+        workspace=Workspace(tmp_path), max_repo_map_chars=80
+    ).build(state, [])
+
+    assert "Repository map" in context.messages[0]["content"]
+    assert context.repo_map["budget"] == 80
+    assert context.repo_map["selected_chars"] <= 80
+
+
 def test_get_repo_map_is_registered_as_read_tool(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     workspace = Workspace(tmp_path)
