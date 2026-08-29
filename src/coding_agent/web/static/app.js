@@ -28,6 +28,7 @@ const state = {
   browserPath: "",
   browserParent: null,
   browserSelection: null,
+  restorePreview: [],
   activeView: "chat",
   panelLayout: loadPanelLayout(),
 };
@@ -48,6 +49,7 @@ const elements = Object.fromEntries([
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
   "approvalBackdrop", "approvalTitle", "approvalReason", "approvalArguments",
   "approveButton", "grantButton", "denyButton", "toast",
+  "restoreBackdrop", "restoreFileList", "restorePreviewDiff", "confirmRestoreButton", "closeRestoreButton", "cancelRestoreButton",
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 async function api(path, options = {}) {
@@ -665,22 +667,46 @@ async function refreshDiff() {
 
 async function restoreCheckpoint() {
   if (!state.sessionId || state.running) return;
-  if (!window.confirm("恢复本轮任务开始前的文件状态？此操作会覆盖 Agent 的修改。")) return;
+  try {
+    const result = await api(`/api/sessions/${state.sessionId}/checkpoint`);
+    state.restorePreview = result.preview || [];
+    renderRestoreDialog();
+    if (!state.restorePreview.length) return showToast("当前会话没有可恢复的检查点");
+    elements.restoreBackdrop.classList.remove("hidden");
+  } catch (error) { showToast(error.message); }
+}
+
+function renderRestoreDialog() {
+  elements.restoreFileList.innerHTML = state.restorePreview.map((item, index) => `<label class="restore-file-item"><input type="checkbox" data-restore-path="${escapeHtml(item.path)}" checked><span><b>${escapeHtml(item.path)}</b><small>${item.conflict ? "检测到外部修改" : "可安全恢复"}</small></span></label>`).join("");
+  elements.restoreFileList.querySelectorAll("input[data-restore-path]").forEach((input) => input.addEventListener("change", () => updateRestorePreview(input.dataset.restorePath || "")));
+  elements.restoreFileList.querySelectorAll(".restore-file-item").forEach((row) => row.addEventListener("click", () => updateRestorePreview(row.querySelector("input")?.dataset.restorePath || "")));
+  updateRestorePreview(state.restorePreview[0]?.path || "");
+}
+
+function updateRestorePreview(path) {
+  const item = state.restorePreview.find((entry) => entry.path === path) || state.restorePreview[0];
+  if (!item) { elements.restorePreviewDiff.textContent = "选择文件查看恢复差异。"; return; }
+  const diff = item.conflict ? (item.external_diff || item.restore_diff) : item.restore_diff;
+  elements.restorePreviewDiff.textContent = `${item.path}\n${item.reason}\n\n${diff || "无文本差异可预览。"}`;
+  elements.restoreFileList.querySelectorAll(".restore-file-item").forEach((row) => row.classList.toggle("active", row.querySelector("input")?.dataset.restorePath === item.path));
+}
+
+async function confirmRestoreSelection() {
+  const paths = [...elements.restoreFileList.querySelectorAll("input[data-restore-path]:checked")].map((input) => input.dataset.restorePath);
+  if (!paths.length) return showToast("至少选择一个文件");
+  if (!window.confirm("恢复选中文件会覆盖 Agent 的修改，是否继续？")) return;
   try {
     let result;
     try {
-      result = await requestCheckpointRestore(false);
+      result = await requestCheckpointRestore(false, null, paths);
     } catch (error) {
       if (error.status !== 409 || error.detail?.code !== "RESTORE_CONFLICT") throw error;
-      const conflicts = error.detail.conflicts || [];
-      const paths = conflicts.map((item) => item.path).join("、");
-      const confirmed = window.confirm(`检测到 Agent 修改后又发生了外部编辑：${paths}\n\n继续会覆盖这些新内容。确认强制回滚吗？`);
-      if (!confirmed) return showToast("已保留外部修改，未执行回滚");
-      result = await requestCheckpointRestore(
-        true,
-        Object.fromEntries(conflicts.map((item) => [item.path, item.current_sha256 ?? null])),
-      );
+      const conflicts = (error.detail.conflicts || []).filter((item) => paths.includes(item.path));
+      const names = conflicts.map((item) => item.path).join("、");
+      if (!window.confirm(`检测到外部编辑：${names}\n\n继续会覆盖这些新内容。确认强制恢复吗？`)) return showToast("已保留外部修改，未执行回滚");
+      result = await requestCheckpointRestore(true, Object.fromEntries(conflicts.map((item) => [item.path, item.current_sha256 ?? null])), paths);
     }
+    elements.restoreBackdrop.classList.add("hidden");
     state.fileCache.clear();
     showToast(`${result.forced ? "已强制恢复" : "已恢复"} ${result.restored.length} 个文件`);
     await Promise.all([refreshDiff(), loadRootFiles()]);
@@ -688,10 +714,10 @@ async function restoreCheckpoint() {
   } catch (error) { showToast(error.message); }
 }
 
-function requestCheckpointRestore(force, confirmedHashes = null) {
+function requestCheckpointRestore(force, confirmedHashes = null, paths = null) {
   return api(`/api/sessions/${state.sessionId}/restore`, {
     method: "POST",
-    body: JSON.stringify({ force, confirmed_hashes: confirmedHashes }),
+    body: JSON.stringify({ force, paths, confirmed_hashes: confirmedHashes }),
   });
 }
 
@@ -1342,6 +1368,9 @@ elements.approvalPolicySelect.addEventListener("change", changeApprovalPolicy);
 document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
 elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
 elements.intelligenceContent.addEventListener("click", handleIntelligenceAction);
+elements.confirmRestoreButton.addEventListener("click", confirmRestoreSelection);
+elements.closeRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
+elements.cancelRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
 elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
 elements.copyTerminalButton.addEventListener("click", () => copyTextToClipboard(elements.terminalOutput.innerText, "终端输出已复制"));
