@@ -51,6 +51,22 @@ def test_repo_map_adds_python_import_edges_and_centrality(tmp_path: Path) -> Non
     assert "imported by:2" in by_path["src/core.py"]["reason"]
 
 
+def test_repo_map_links_static_python_dynamic_imports(tmp_path: Path) -> None:
+    (tmp_path / "plugin.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "loader.py").write_text(
+        "import importlib\n"
+        "plugin = importlib.import_module('plugin')\n"
+        "fallback = __import__('plugin')\n",
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="loader", max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "plugin" in by_path["loader.py"]["imports"]
+    assert by_path["loader.py"]["dependencies"] == ["plugin.py"]
+
+
 def test_repo_map_extracts_cpp_and_java_symbols_and_imports(tmp_path: Path) -> None:
     (tmp_path / "main.cpp").write_text(
         '#include <vector>\n\nclass Runner {};\nint execute(int value) { return value; }\n',

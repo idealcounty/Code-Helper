@@ -243,6 +243,19 @@ def _python_summary(path: Path) -> tuple[list[str], list[str]]:
         elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             prefix = "class" if isinstance(node, ast.ClassDef) else "def"
             symbols.append(f"{prefix} {node.name}")
+    # Include only statically knowable dynamic imports. Runtime-computed
+    # module names are intentionally ignored so the graph remains conservative.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        function = node.func
+        is_dynamic_import = (
+            isinstance(function, ast.Name) and function.id in {"__import__", "import_module"}
+        ) or (
+            isinstance(function, ast.Attribute) and function.attr == "import_module"
+        )
+        if is_dynamic_import and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            imports.append(node.args[0].value)
     return sorted(set(imports)), symbols
 
 
