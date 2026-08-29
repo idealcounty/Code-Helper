@@ -59,7 +59,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 
 ## 3. 当前已经具备的亮点
 
-截至 2026-08-29，仓库全量自动化测试为 `135 passed`。当前最有价值的能力包括：
+截至 2026-08-29，仓库全量自动化测试为 `136 passed`。当前最有价值的能力包括：
 
 ### 3.1 自研 Agent Core
 
@@ -91,7 +91,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 
 ### 3.4 上下文和记忆工程
 
-- Repo Map Lite 提取文件类型和 Python 顶层符号。
+- Repo Map Lite 提取文件类型和 Python、C++、Java、JavaScript/TypeScript、Go 的轻量顶层符号与导入信息。
 - 支持项目 `AGENTS.md` 和三个按需加载的 Skills。
 - 工具长输出保留头尾，完整输出单独落盘。
 - 具备上下文预算、历史裁剪和摘要事件。
@@ -135,7 +135,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 
 ### 4.4 仓库理解
 
-- Repo Map 主要按文件名、类型和 Python 顶层符号评分。
+- Repo Map 主要按文件名、类型和代码顶层符号评分；Python 继续使用 AST，其他语言使用保守正则提取。
 - 尚未利用导入图、调用关系、测试关联和最近交互做综合排名。
 - `AGENTS.md` 已按目标路径构造作用域规则链，支持 `AGENTS.override.md`、字符预算和 `context_built` 事件；自然语言多目标解析与冲突标注 UI 仍待补齐。
 - Step 级历史摘要已改为基于 reducer 事实的结构化模板，记录版本、覆盖消息和事件序列；供应商 tokenizer 和更高保真的语义压缩仍待通过 Eval 后再引入。

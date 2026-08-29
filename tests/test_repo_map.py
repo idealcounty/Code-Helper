@@ -51,6 +51,27 @@ def test_repo_map_adds_python_import_edges_and_centrality(tmp_path: Path) -> Non
     assert "imported by:2" in by_path["src/core.py"]["reason"]
 
 
+def test_repo_map_extracts_cpp_and_java_symbols_and_imports(tmp_path: Path) -> None:
+    (tmp_path / "main.cpp").write_text(
+        '#include <vector>\n\nclass Runner {};\nint execute(int value) { return value; }\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "Service.java").write_text(
+        "import java.util.List;\n\npublic class Service {\n  public void run() {}\n}\n",
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="Runner Service", max_files=5)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "vector" in by_path["main.cpp"]["imports"]
+    assert "class Runner" in by_path["main.cpp"]["symbols"]
+    assert "def execute" in by_path["main.cpp"]["symbols"]
+    assert "java.util.List" in by_path["Service.java"]["imports"]
+    assert "class Service" in by_path["Service.java"]["symbols"]
+    assert "def run" in by_path["Service.java"]["symbols"]
+
+
 def test_context_injects_budgeted_repo_map_metadata(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()

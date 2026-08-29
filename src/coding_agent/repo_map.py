@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,22 @@ if TYPE_CHECKING:
 MAX_SYMBOLS_PER_FILE = 20
 MAX_FILES = 80
 MAX_FILE_BYTES = 200_000
+_GENERIC_CODE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".java",
+    ".go",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".ts",
+    ".tsx",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,12 +94,14 @@ class RepoMapBuilder:
                 reason.append("recently touched")
             imports: list[str] = []
             symbols: list[str] = []
-            if path.suffix == ".py":
+            if path.suffix.lower() == ".py":
                 totals["python_files"] += 1
                 imports, symbols = _python_summary(path)
-                if symbols:
-                    score += 2
-                    reason.append("python symbols")
+            elif path.suffix.lower() in _GENERIC_CODE_SUFFIXES:
+                imports, symbols = _generic_code_summary(path)
+            if symbols:
+                score += 2
+                reason.append("code symbols")
             if kind == "test":
                 totals["test_files"] += 1
 
@@ -180,6 +199,45 @@ def _python_summary(path: Path) -> tuple[list[str], list[str]]:
             prefix = "class" if isinstance(node, ast.ClassDef) else "def"
             symbols.append(f"{prefix} {node.name}")
     return sorted(set(imports)), symbols
+
+
+def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
+    """Extract conservative imports and top-level symbols without an LSP."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], []
+
+    suffix = path.suffix.lower()
+    imports: list[str] = []
+    if suffix in {".js", ".jsx", ".mjs", ".ts", ".tsx"}:
+        imports.extend(re.findall(r"\bimport\s+[^;\n]*?\s+from\s+[\"']([^\"']+)", text))
+        imports.extend(re.findall(r"\b(?:require|import)\s*\(\s*[\"']([^\"']+)", text))
+    elif suffix == ".java":
+        imports.extend(re.findall(r"^\s*import\s+([\w.]+)\s*;", text, flags=re.MULTILINE))
+    elif suffix == ".go":
+        imports.extend(re.findall(r"^\s*import\s+(?:\(\s*)?[\"']([^\"']+)[\"']", text, flags=re.MULTILINE))
+    else:
+        imports.extend(re.findall(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]", text, flags=re.MULTILINE))
+
+    symbols: list[str] = []
+    symbols.extend(
+        f"{kind} {name}"
+        for kind, name in re.findall(
+            r"\b(class|interface|struct|enum)\s+([A-Za-z_]\w*)", text
+        )
+    )
+    function_pattern = re.compile(
+        r"^[ \t]*(?:[\w:<>,~*&\[\].]+[ \t]+)+([A-Za-z_]\w*)[ \t]*\([^;{}\n]*\)[ \t]*(?:const\b[ \t]*)?(?:\{|$)",
+        flags=re.MULTILINE,
+    )
+    excluded = {"if", "for", "while", "switch", "catch"}
+    symbols.extend(
+        f"def {name}"
+        for name in function_pattern.findall(text)
+        if name not in excluded
+    )
+    return sorted(set(imports)), symbols[:MAX_SYMBOLS_PER_FILE]
 
 
 def _attach_dependency_graph(files: list[RepoMapFile]) -> list[RepoMapFile]:
