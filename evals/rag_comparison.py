@@ -221,6 +221,11 @@ def main() -> int:
     parser.add_argument("--mode", choices=("deterministic", "real"), default="deterministic")
     parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--repetitions", type=int, default=1, help="Paired A/B repetitions (1-20).")
+    parser.add_argument(
+        "--require-cross-file-improvement",
+        action="store_true",
+        help="In real mode, return failure unless cross-file completion improves.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path(".eval-results/rag"))
     args = parser.parse_args()
     if args.mode == "real" and not args.allow_paid:
@@ -239,6 +244,11 @@ def main() -> int:
         render_markdown(report), encoding="utf-8", newline="\n"
     )
     print(render_markdown(report))
+    if args.require_cross_file_improvement:
+        if args.mode != "real":
+            raise SystemExit("--require-cross-file-improvement requires --mode real")
+        if not report["quality_evidence"]["cross_file_completion_improved"]:
+            return 1
     return 0
 
 
