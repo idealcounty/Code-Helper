@@ -4,7 +4,7 @@ import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import PurePath
-from typing import Any
+from typing import Any, Collection
 
 
 class VerificationKind(StrEnum):
@@ -103,6 +103,7 @@ def build_verification_evidence(
     changed_files: set[str],
     started_sequence: int,
     finished_sequence: int,
+    project_commands: Collection[str] | None = None,
 ) -> VerificationEvidence:
     normalized = " ".join(command.strip().split())
     data = result.get("data") or {}
@@ -112,9 +113,10 @@ def build_verification_evidence(
     output_summary = _output_summary(data)
     explicitly_requested = bool(normalized) and normalized.casefold() in objective.casefold()
     kind = _classify(normalized)
-    if explicitly_requested and kind is VerificationKind.UNKNOWN:
+    configured = _matches_project_command(normalized, project_commands)
+    if (explicitly_requested or configured) and kind is VerificationKind.UNKNOWN:
         kind = VerificationKind.CUSTOM
-    source = _source(kind, explicitly_requested)
+    source = _source(kind, explicitly_requested, configured)
     passed = bool(result.get("ok")) and exit_code == 0
     related_files = tuple(sorted(changed_files))
 
@@ -123,6 +125,7 @@ def build_verification_evidence(
         purpose=purpose,
         kind=kind,
         source=source,
+        configured=configured,
         changed_files=related_files,
     )
     accepted = passed and applicable
@@ -179,10 +182,12 @@ def _classify(command: str) -> VerificationKind:
 
 
 def _source(
-    kind: VerificationKind, explicitly_requested: bool
+    kind: VerificationKind, explicitly_requested: bool, configured: bool = False
 ) -> VerificationSource:
     if explicitly_requested:
         return VerificationSource.USER_REQUESTED
+    if configured:
+        return VerificationSource.PROJECT_INFERRED
     if kind is VerificationKind.TEST:
         return VerificationSource.RELATED_TEST_INFERRED
     if kind is not VerificationKind.UNKNOWN:
@@ -196,6 +201,7 @@ def _applicability(
     purpose: str,
     kind: VerificationKind,
     source: VerificationSource,
+    configured: bool = False,
     changed_files: tuple[str, ...],
 ) -> tuple[bool, str]:
     if purpose != "verify":
@@ -208,6 +214,8 @@ def _applicability(
         return False, "Unknown command is not trusted only because purpose='verify'"
     if source is VerificationSource.USER_REQUESTED:
         return True, "The user explicitly requested this substantive verification command"
+    if configured:
+        return True, "The command is listed in the workspace verification configuration"
 
     targets = [match.group("path") for match in _TARGET_TOKEN.finditer(command)]
     if kind is VerificationKind.TEST and targets and len(changed_files) > 1:
@@ -230,6 +238,15 @@ def _applicability(
                 + ", ".join(uncovered),
             )
     return True, f"Recognized {kind.value} command with {source.value} scope"
+
+
+def _matches_project_command(
+    command: str, project_commands: Collection[str] | None
+) -> bool:
+    normalized = " ".join(command.strip().split()).casefold()
+    if not normalized or not project_commands:
+        return False
+    return any(" ".join(str(item).strip().split()).casefold() == normalized for item in project_commands)
 
 
 def _output_summary(data: dict[str, Any], limit: int = 600) -> str:

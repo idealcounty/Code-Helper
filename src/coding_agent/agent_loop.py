@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -58,6 +58,7 @@ class AgentRunner:
         turn_summarizer: TurnSummarizer | None = None,
         cancellation: CancellationToken | None = None,
         run_budget: RunBudget | None = None,
+        project_verification_commands: Collection[str] | None = None,
     ) -> None:
         self.model_client = model_client
         self.context_manager = context_manager
@@ -72,6 +73,7 @@ class AgentRunner:
         self.turn_summarizer = turn_summarizer
         self.cancellation = cancellation or CancellationToken()
         self.run_budget = run_budget or RunBudget()
+        self.project_verification_commands = tuple(project_verification_commands or ())
         self._stuck_recovery_attempts = 0
 
     async def run_turn(
@@ -871,7 +873,11 @@ class AgentRunner:
                             },
                         )
         if call.name in {"run_command", "judge_algorithm"} and result.metadata.get("purpose") == "verify":
-            verification_command = str(call.arguments.get("command") or "")
+            verification_command = str(
+                call.arguments.get("command")
+                or (result.data or {}).get("command")
+                or ""
+            )
             verification_result = result.to_dict()
             if call.name == "judge_algorithm":
                 # Judge results are verification evidence even though they do
@@ -887,6 +893,7 @@ class AgentRunner:
                 changed_files=state.changed_files,
                 started_sequence=started_sequence,
                 finished_sequence=event.sequence,
+                project_commands=self.project_verification_commands,
             )
             evidence_payload = evidence.to_dict()
             await self._emit(

@@ -59,6 +59,25 @@ def test_explicit_user_custom_command_is_accepted() -> None:
     assert evidence.source == "user_requested"
 
 
+def test_workspace_configured_custom_command_is_accepted() -> None:
+    command = "python scripts/project_check.py --strict"
+    evidence = build_verification_evidence(
+        command=command,
+        purpose="verify",
+        result=_result(),
+        objective="Fix the bug",
+        changed_files={"src/app.py"},
+        started_sequence=4,
+        finished_sequence=5,
+        project_commands=(command,),
+    )
+
+    assert evidence.accepted is True
+    assert evidence.kind == "custom"
+    assert evidence.source == "project_inferred"
+    assert "workspace verification configuration" in evidence.reason
+
+
 def test_algorithm_judge_is_accepted_as_custom_verification() -> None:
     evidence = _evidence("judge_algorithm python candidate.py")
 

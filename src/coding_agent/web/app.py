@@ -566,6 +566,10 @@ def create_app(
                 "grants": runtime.runner.permission_policy.grants_snapshot(),
                 "approval_policy": runtime.runner.permission_policy.approval_mode,
             },
+            "verification_config": {
+                "commands": list(runtime.verification_config.commands),
+                "diagnostics": list(runtime.verification_config.diagnostics),
+            },
             "observability": {
                 "tool_output_deltas": output_deltas,
                 "spans": span_observability,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ class ContextManager:
         max_rule_chars: int = 20_000,
         max_repo_map_chars: int = 12_000,
         repo_map_enabled: bool = True,
+        project_verification_commands: Collection[str] | None = None,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
@@ -73,6 +75,7 @@ class ContextManager:
         self.max_rule_chars = max_rule_chars
         self.max_repo_map_chars = max_repo_map_chars
         self.repo_map_enabled = repo_map_enabled
+        self.project_verification_commands = tuple(project_verification_commands or ())
 
     def build(
         self,
@@ -86,6 +89,15 @@ class ContextManager:
         }.get(state.mode, f"Current mode: {state.mode}")
 
         system = f"{self.system_prompt}\n\n{mode_rule}"
+        if self.project_verification_commands:
+            commands = "\n".join(
+                f"- {command}" for command in self.project_verification_commands
+            )
+            system += (
+                "\n\nConfigured project verification commands "
+                "(use purpose='verify' when appropriate):\n"
+                + commands
+            )
         profile = get_profile(state.task_profile)
         system += f"\n\n{profile.prompt_addendum}"
         rules = self._project_rules(state)

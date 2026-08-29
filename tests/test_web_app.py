@@ -264,6 +264,10 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert intelligence.json()["budget"]["max_seconds"] == 600.0
     assert intelligence.json()["budget"]["max_steps"] == 20
     assert intelligence.json()["observability"]["spans"] == []
+    assert intelligence.json()["verification_config"] == {
+        "commands": [],
+        "diagnostics": [],
+    }
     assert changed.json() == {"profile": "fast", "reasoning_effort": "low"}
     assert details.json()["reasoning_profile"] == "fast"
 

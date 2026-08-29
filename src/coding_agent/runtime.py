@@ -16,6 +16,7 @@ from .model import ModelClient, OpenAICompatibleModelClient
 from .memory import MemoryStore
 from .memory_summary import SessionSummaryStore
 from .user_memory import UserMemoryService
+from .verification_config import VerificationConfig
 from .permissions import PermissionPolicy
 from .redaction import Redactor
 from .session import AgentState
@@ -51,6 +52,7 @@ class AgentRuntime:
     memory_store: MemoryStore
     summary_store: SessionSummaryStore
     user_memory: UserMemoryService
+    verification_config: VerificationConfig
     cancellation: CancellationToken
     run_budget: RunBudget
     runner: AgentRunner
@@ -123,6 +125,7 @@ def create_runtime(
         user_memory_root,
         initially_enabled=config.user_memory_enabled,
     )
+    verification_config = VerificationConfig.load(workspace.root)
     cancellation = CancellationToken()
     run_budget = RunBudget(
         max_seconds=config.run_timeout,
@@ -157,6 +160,7 @@ def create_runtime(
         skill_library=skill_library,
         memory_store=memory_store,
         user_memory=user_memory,
+        project_verification_commands=verification_config.commands,
     )
     hooks = HookManager(
         verification=[_verification_context_hook],
@@ -182,6 +186,7 @@ def create_runtime(
         ).to_dict(),
         cancellation=cancellation,
         run_budget=run_budget,
+        project_verification_commands=verification_config.commands,
     )
     return AgentRuntime(
         config=config,
@@ -197,6 +202,7 @@ def create_runtime(
         memory_store=memory_store,
         summary_store=summary_store,
         user_memory=user_memory,
+        verification_config=verification_config,
         cancellation=cancellation,
         run_budget=run_budget,
         runner=runner,
