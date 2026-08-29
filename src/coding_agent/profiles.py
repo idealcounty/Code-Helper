@@ -54,6 +54,7 @@ ALGORITHM_PROFILE = TaskProfile(
             "write_file",
             "run_command",
             "judge_algorithm",
+            "analyze_complexity",
             "update_plan",
             "get_diff",
         }

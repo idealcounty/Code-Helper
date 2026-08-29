@@ -860,6 +860,14 @@ function handleEvent(event) {
       const result = payload.result || {};
       addActivity(`${result.ok ? "完成" : "失败"} ${payload.name}`, `${result.code || ""} · ${result.message || ""}`, result.ok ? "success" : "failure");
       if (payload.name === "run_command") mirrorCommandResult(result);
+      if (payload.name === "analyze_complexity" && result.ok) {
+        const complexity = result.data?.complexity || {};
+        addActivity(
+          "复杂度估计",
+          `${complexity.estimated_time_complexity || "未知"} · 循环嵌套 ${complexity.max_loop_nesting ?? 0} 层${complexity.recursive_functions?.length ? " · 检测到递归" : ""}`,
+          "success",
+        );
+      }
       if (result.metadata?.mutated_files?.length) { state.fileCache.clear(); refreshDiff(); loadRootFiles(); if (state.activeFilePath) openFile(state.activeFilePath, true); }
       refreshIntelligenceIfVisible();
       break;

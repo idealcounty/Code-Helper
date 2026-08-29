@@ -71,3 +71,55 @@ def test_judge_algorithm_records_reproducible_minimized_failure(tmp_path: Path) 
     assert result.ok is False
     assert result.code == "ALGORITHM_JUDGE_FAILED"
     assert result.data["judge"]["minimized_input"] is not None
+
+
+def test_analyze_complexity_reports_nested_loops_and_recursion(tmp_path: Path) -> None:
+    source = (
+        "def walk(items):\n"
+        "    if not items:\n"
+        "        return 0\n"
+        "    for item in items:\n"
+        "        for child in item:\n"
+        "            walk(child)\n"
+        "    return 1\n"
+    )
+    path = tmp_path / "solution.py"
+    path.write_text(source, encoding="utf-8")
+    registry = ToolRegistry()
+    register_algorithm_tools(registry, Workspace(tmp_path))
+
+    result = asyncio.run(
+        ToolExecutor(registry).execute(
+            "analyze_complexity", {"path": "solution.py"}
+        )
+    )
+
+    assert result.ok
+    complexity = result.data["complexity"]
+    assert complexity["max_loop_nesting"] == 2
+    assert complexity["estimated_time_complexity"] == "O(n^2)"
+    assert complexity["recursive_functions"] == ["walk"]
+    assert "nested loops may be super-linear" in complexity["warnings"]
+
+
+def test_analyze_complexity_uses_conservative_generic_estimate(tmp_path: Path) -> None:
+    path = tmp_path / "main.cpp"
+    path.write_text(
+        "void f() { for (int i=0; i<n; ++i) { for (int j=0; j<n; ++j) {} } }\n",
+        encoding="utf-8",
+    )
+    registry = ToolRegistry()
+    register_algorithm_tools(registry, Workspace(tmp_path))
+
+    result = asyncio.run(
+        ToolExecutor(registry).execute(
+            "analyze_complexity", {"path": "main.cpp"}
+        )
+    )
+
+    assert result.ok
+    complexity = result.data["complexity"]
+    assert complexity["parser"] == "heuristic"
+    assert complexity["loop_count"] == 2
+    assert complexity["estimated_time_complexity"] == "O(n^2)"
+    assert complexity["warning"].startswith("Heuristic estimate")

@@ -2,6 +2,7 @@
 
 from .judge import AlgorithmJudge, JudgeCase, JudgeReport
 from .problem import ProblemSpec, parse_problem
+from .complexity import analyze_file
 
 __all__ = [
     "AlgorithmJudge",
@@ -9,4 +10,5 @@ __all__ = [
     "JudgeReport",
     "ProblemSpec",
     "parse_problem",
+    "analyze_file",
 ]

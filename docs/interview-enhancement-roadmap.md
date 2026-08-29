@@ -449,7 +449,7 @@ Eval 分两层：CI 默认运行 `ScriptedModel` 的确定性契约测试；真�
 已实现 `algorithm`、`project` 和保守的 `auto` 分类配置，不修改 Agent Loop 主结构；分类结果通过 `task_profile_selected` 事件记录，工具集合遵循 Profile 与 Ask/Plan/Act 的交集。
 
 - `project`：先作为当前行为的显式默认配置，再接入代码 RAG、影响分析、相关测试选择和项目规则链。
-- `algorithm`：已完成基础策略，禁用 Repo Map 注入并收窄工具集合；新增题目结构解析、固定种子 `judge_algorithm` 工具和失败输入最小化，复杂度检查与自动修复仍待后续。
+- `algorithm`：已完成基础策略，禁用 Repo Map 注入并收窄工具集合；新增题目结构解析、只读 `analyze_complexity` 复杂度估计、固定种子 `judge_algorithm` 工具和失败输入最小化。复杂度工具对 Python 使用 AST，对 C/C++、Java、Go、JS/TS 使用保守启发式，并明确标注估计边界；自动修复仍待真实工作流 Eval 后再扩展。
 - `auto`：只负责选择 Profile，不改变权限模式。
 
 进入条件已满足；算法 Eval 已提供样例、边界、随机和失败输入复现证据，但完整退出条件仍未满足：需要 Profile 对默认行为的收益/安全对比，以及一次端到端“发现并修复缺陷”的演示。

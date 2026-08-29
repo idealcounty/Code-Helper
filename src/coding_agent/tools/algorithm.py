@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any
 
 from ..algorithm.judge import AlgorithmJudge, JudgeCase, normalize_output, shrink_input_candidates
+from ..algorithm.complexity import analyze_file
 from ..cancellation import CancellationToken
 from .base import ToolResult, ToolRisk, ToolSpec
 from .registry import ToolRegistry
@@ -27,6 +28,46 @@ def register_algorithm_tools(
     *,
     cancellation: CancellationToken | None = None,
 ) -> None:
+    async def analyze_complexity(arguments: dict[str, Any]) -> ToolResult:
+        try:
+            path = workspace.resolve(arguments["path"], must_exist=True)
+            if path.stat().st_size > 200_000:
+                return ToolResult.failure(
+                    "FILE_TOO_LARGE",
+                    "Complexity analysis is limited to files up to 200000 bytes",
+                )
+            if not path.is_file():
+                return ToolResult.failure("NOT_A_FILE", f"Not a regular file: {arguments['path']}")
+            report = analyze_file(path)
+        except Exception as exc:
+            return ToolResult.failure("COMPLEXITY_ANALYSIS_FAILED", str(exc))
+        if report.get("status") != "ok":
+            return ToolResult.failure(
+                "COMPLEXITY_ANALYSIS_FAILED",
+                str(report.get("error") or "Unable to read source file"),
+                data={"complexity": report},
+            )
+        report["path"] = workspace.relative(path)
+        return ToolResult.success(
+            f"Estimated complexity for {workspace.relative(path)}",
+            data={"complexity": report},
+        )
+
+    registry.register(
+        ToolSpec(
+            "analyze_complexity",
+            "Estimate loop nesting and recursion for an algorithm source file without modifying it.",
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+            ToolRisk.READ,
+            analyze_complexity,
+        )
+    )
+
     async def judge_algorithm(arguments: dict[str, Any]) -> ToolResult:
         command = str(arguments["command"])
         timeout = min(max(float(arguments.get("timeout", 5)), 0.1), 30.0)

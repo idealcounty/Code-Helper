@@ -63,7 +63,7 @@ python -m evals.rag_comparison --output-dir .eval-results/rag
 python -m evals.interview_demos --output-dir .eval-results/demos
 ```
 
-其中 `algorithm` 演示固定种子 Judge 的缺陷发现与修复，`project` 演示跨文件修改和验证；两者都复用产品 Runtime、权限、事件、工具和验证管线。
+其中 `algorithm` 演示固定种子 Judge 的缺陷发现与修复，并可通过只读 `analyze_complexity` 工具展示循环嵌套/递归的复杂度估计；`project` 演示跨文件修改和验证。两者都复用产品 Runtime、权限、事件、工具和验证管线。
 
 有预算时可显式切换为 DeepSeek：
 
