@@ -54,6 +54,11 @@ async def run_comparison(
     no_rag_runs = [sample["no_rag"] for sample in samples]
     repo_summary = _aggregate(repo_runs)
     no_rag_summary = _aggregate(no_rag_runs)
+    cross_file_delta = _delta(
+        repo_summary["cross_file"]["metrics"],
+        no_rag_summary["cross_file"]["metrics"],
+        keys=("contract_pass_rate", "completion_rate", "verification_rate"),
+    )
     return {
         "schema_version": 1,
         "mode": mode,
@@ -65,6 +70,13 @@ async def run_comparison(
         },
         "samples": samples,
         "delta": _delta(repo_summary["metrics"], no_rag_summary["metrics"]),
+        "cross_file_delta": cross_file_delta,
+        "quality_evidence": {
+            "status": "real_model_required" if mode != "real" else "real_model_observed",
+            "cross_file_completion_improved": (
+                cross_file_delta["completion_rate"] > 0
+            ),
+        },
         "interpretation": (
             "This is a controlled A/B report on the same task set. Deterministic "
             "runs validate the switch and contracts; only real-model runs can "
@@ -83,7 +95,9 @@ def _compact(report: dict[str, Any]) -> dict[str, Any]:
 
 def _aggregate(reports: list[dict[str, Any]]) -> dict[str, Any]:
     if len(reports) == 1:
-        return reports[0]
+        report = reports[0]
+        report["cross_file"] = _cross_file_summary(report)
+        return report
     metric_keys = (
         "contract_pass_rate",
         "completion_rate",
@@ -102,22 +116,61 @@ def _aggregate(reports: list[dict[str, Any]]) -> dict[str, Any]:
     metrics["task_count"] = sum(int(item["metrics"].get("task_count", 0)) for item in reports)
     metrics["repetitions"] = len(reports)
     tasks = [task for item in reports for task in item.get("tasks", [])]
-    return {
+    aggregate = {
         "retrieval_enabled": reports[0]["retrieval_enabled"],
         "metrics": metrics,
         "tasks": tasks,
     }
+    aggregate["cross_file"] = _cross_file_summary(aggregate)
+    return aggregate
 
 
-def _delta(repo_metrics: dict[str, Any], no_rag_metrics: dict[str, Any]) -> dict[str, float]:
-    keys = (
+def _cross_file_summary(report: dict[str, Any]) -> dict[str, Any]:
+    """Summarize only cross-file project tasks for the roadmap gate."""
+    tasks = [
+        task
+        for task in report.get("tasks", [])
+        if str(task.get("category") or "") == "cross_file_feature"
+    ]
+    eligible = [task for task in tasks if task.get("completion_eligible")]
+    completed = [
+        task
+        for task in eligible
+        if task.get("contract_passed") and task.get("status") == "completed"
+    ]
+    return {
+        "metrics": {
+            "task_count": len(tasks),
+            "contract_pass_rate": _task_rate(tasks, "contract_passed"),
+            "completion_rate": len(completed) / len(eligible) if eligible else 0.0,
+            "verification_rate": _task_rate(
+                [task for task in tasks if task.get("verification_required")],
+                "verification_fresh",
+            ),
+        },
+        "task_ids": [str(task.get("task_id") or "") for task in tasks],
+    }
+
+
+def _task_rate(tasks: list[dict[str, Any]], field: str) -> float:
+    if not tasks:
+        return 0.0
+    return sum(bool(task.get(field)) for task in tasks) / len(tasks)
+
+
+def _delta(
+    repo_metrics: dict[str, Any],
+    no_rag_metrics: dict[str, Any],
+    *,
+    keys: tuple[str, ...] = (
         "contract_pass_rate",
         "completion_rate",
         "safety_pass_rate",
         "verification_rate",
         "recall_at_5",
         "first_relevant_file_rate",
-    )
+    ),
+):
     return {
         key: round(float(repo_metrics.get(key, 0.0)) - float(no_rag_metrics.get(key, 0.0)), 4)
         for key in keys
@@ -132,18 +185,31 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Repetitions: `{report['repetitions']}` (paired runs)",
         f"- Tasks: {', '.join(f'`{item}`' for item in report['task_ids'])}",
         "",
-        "| Run | Contract | Completion | Verification | Recall@5 | First file |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Run | Contract | Completion | Cross-file completion | Verification | Recall@5 | First file |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name in ("repo_map", "no_rag"):
         metrics = report["runs"][name]["metrics"]
         lines.append(
             f"| `{name}` | {metrics['contract_pass_rate']:.1%} | "
-            f"{metrics['completion_rate']:.1%} | {metrics['verification_rate']:.1%} | "
+            f"{metrics['completion_rate']:.1%} | "
+            f"{report['runs'][name]['cross_file']['metrics']['completion_rate']:.1%} | "
+            f"{metrics['verification_rate']:.1%} | "
             f"{metrics['recall_at_5']:.1%} | "
             f"{metrics['first_relevant_file_rate']:.1%} |"
         )
-    lines.extend(["", f"> {report['interpretation']}", ""])
+    lines.extend(
+        [
+            "",
+            "Cross-file delta (Repo Map - no RAG): "
+            + ", ".join(
+                f"{key}={value:+.1%}"
+                for key, value in report["cross_file_delta"].items()
+            ),
+            f"> {report['interpretation']}",
+            "",
+        ]
+    )
     lines.insert(-1, "Delta (Repo Map - no RAG): " + ", ".join(
         f"{key}={value:+.1%}" for key, value in report["delta"].items()
     ))
