@@ -12,6 +12,9 @@ from uuid import uuid4
 
 from .redaction import Redactor
 
+CURRENT_EVENT_SCHEMA_VERSION = 1
+MIN_SUPPORTED_EVENT_SCHEMA_VERSION = 1
+
 
 @dataclass(slots=True)
 class AgentEvent:
@@ -23,7 +26,7 @@ class AgentEvent:
     timestamp: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="milliseconds")
     )
-    schema_version: int = 1
+    schema_version: int = CURRENT_EVENT_SCHEMA_VERSION
     event_id: str = field(default_factory=lambda: uuid4().hex)
     causation_id: str | None = None
     integrity_sha256: str | None = None
@@ -95,6 +98,37 @@ class EventStore:
             if not isinstance(parsed, dict):
                 raise ValueError(
                     f"Invalid session event at line {line_number}: expected object"
+                )
+            schema_version = parsed.get("schema_version")
+            if schema_version is None:
+                self.last_load_diagnostics.append(
+                    {
+                        "code": "LEGACY_EVENT_SCHEMA_ASSUMED",
+                        "line": line_number,
+                        "schema_version": MIN_SUPPORTED_EVENT_SCHEMA_VERSION,
+                    }
+                )
+            elif (
+                isinstance(schema_version, bool)
+                or not isinstance(schema_version, int)
+                or schema_version < MIN_SUPPORTED_EVENT_SCHEMA_VERSION
+            ):
+                raise ValueError(
+                    f"Unsupported session event schema at line {line_number}: "
+                    f"{schema_version!r}"
+                )
+            elif schema_version > CURRENT_EVENT_SCHEMA_VERSION:
+                self.last_load_diagnostics.append(
+                    {
+                        "code": "UNSUPPORTED_EVENT_SCHEMA",
+                        "line": line_number,
+                        "schema_version": schema_version,
+                        "supported_max": CURRENT_EVENT_SCHEMA_VERSION,
+                    }
+                )
+                raise ValueError(
+                    f"Unsupported session event schema at line {line_number}: "
+                    f"{schema_version} > {CURRENT_EVENT_SCHEMA_VERSION}"
                 )
             stored_digest = parsed.get("integrity_sha256")
             if stored_digest:

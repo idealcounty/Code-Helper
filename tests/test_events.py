@@ -81,3 +81,27 @@ def test_event_store_rejects_corruption_in_the_middle(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="line 2"):
         store.load()
+
+
+def test_event_store_accepts_legacy_schema_with_diagnostic(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session")
+    legacy = AgentEvent(type="turn_started", session_id="session", turn_id="turn").to_dict()
+    legacy.pop("schema_version")
+    store.path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+
+    assert len(store.load()) == 1
+    assert any(
+        item["code"] == "LEGACY_EVENT_SCHEMA_ASSUMED"
+        for item in store.last_load_diagnostics
+    )
+
+
+def test_event_store_rejects_future_schema_without_silent_recovery(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session")
+    future = AgentEvent(type="turn_started", session_id="session", turn_id="turn").to_dict()
+    future["schema_version"] = 99
+    store.path.write_text(json.dumps(future) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema"):
+        store.load()
+    assert store.last_load_diagnostics[-1]["code"] == "UNSUPPORTED_EVENT_SCHEMA"
