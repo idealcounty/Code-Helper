@@ -1072,7 +1072,7 @@ function renderIntelligence(data) {
   const observability = data.observability || {};
   const cancellation = observability.cancellation || {};
   const spanLabels = { context_build: "上下文构建", model_request: "模型请求", approval_wait: "审批等待" };
-  const spanRows = (observability.spans || []).map((span) => `<div class="metric-row"><span>${escapeHtml(spanLabels[span.kind] || span.kind || "未知阶段")}</span><b>${span.count || 0} 次</b><em>均值 ${formatDuration(span.average_duration_ms || 0)} · 总计 ${formatDuration(span.total_duration_ms || 0)}</em></div>`).join("");
+  const spanRows = (observability.spans || []).map((span) => `<div class="metric-row"><span>${escapeHtml(spanLabels[span.kind] || span.kind || "未知阶段")}</span><b>${span.count || 0} 次</b><em>均值 ${formatDuration(span.average_duration_ms || 0)} · P95 ${formatDuration(span.p95_duration_ms || 0)} · 总计 ${formatDuration(span.total_duration_ms || 0)}</em></div>`).join("");
   const cache = data.cache || {};
   const memory = data.memory || { count: 0, categories: {}, recent: [], recalled: [] };
   const summaryMemory = memory.summaries || { count: 0, pending_candidates: 0, candidates: [] };
@@ -1183,7 +1183,7 @@ function renderIntelligence(data) {
     </section>
     <section class="intelligence-section compact-section">
       <div class="intelligence-heading"><div><span class="intel-icon">CAN</span><strong>取消响应</strong></div><b>${cancellation.completed || 0}/${cancellation.requests || 0}</b></div>
-      <div class="statistics-strip"><div><strong>${formatDuration(cancellation.average_ms || 0)}</strong><span>平均</span></div><div><strong>${formatDuration(cancellation.max_ms || 0)}</strong><span>最大</span></div><div><strong>${(cancellation.samples_ms || []).length}</strong><span>样本</span></div></div>
+      <div class="statistics-strip"><div><strong>${formatDuration(cancellation.average_ms || 0)}</strong><span>平均</span></div><div><strong>${formatDuration(cancellation.p95_ms || 0)}</strong><span>P95</span></div><div><strong>${(cancellation.samples_ms || []).length}</strong><span>样本</span></div></div>
       <p class="intel-note">统计从取消请求事件到 Agent 发布取消事件的墙钟延迟；未完成请求不会伪造耗时。</p>
     </section>
     <section class="intelligence-section">

@@ -306,6 +306,8 @@ def test_intelligence_aggregates_span_durations(tmp_path: Path) -> None:
             "total_duration_ms": 12.5,
             "average_duration_ms": 12.5,
             "max_duration_ms": 12.5,
+            "p50_duration_ms": 12.5,
+            "p95_duration_ms": 12.5,
         }
     ]
 
@@ -338,6 +340,8 @@ def test_intelligence_reports_cancellation_latency(tmp_path: Path) -> None:
         "requests": 1,
         "completed": 1,
         "samples_ms": [125.0],
+        "p50_ms": 125.0,
+        "p95_ms": 125.0,
         "average_ms": 125.0,
         "max_ms": 125.0,
     }

@@ -47,6 +47,18 @@ def _event_timestamp(event: dict[str, Any]) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def _percentile(samples: list[float], quantile: float) -> float:
+    """Return a deterministic linear-interpolated percentile in milliseconds."""
+    if not samples:
+        return 0.0
+    ordered = sorted(float(value) for value in samples)
+    position = (len(ordered) - 1) * min(max(quantile, 0.0), 1.0)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
 def _drive_roots() -> list[Path]:
     if os.name == "nt":
         return [
@@ -472,7 +484,7 @@ def create_app(
         repo_map_calls = 0
         last_context_built: dict[str, Any] = {}
         output_deltas = 0
-        span_totals: dict[str, dict[str, float | int]] = {}
+        span_totals: dict[str, dict[str, Any]] = {}
         active_span_ids: set[str] = set()
         cancel_requests = 0
         pending_cancel_times: dict[str, datetime] = {}
@@ -511,11 +523,18 @@ def create_app(
                 duration = payload.get("duration_ms")
                 if isinstance(duration, (int, float)) and duration >= 0:
                     stats = span_totals.setdefault(
-                        kind, {"count": 0, "total_duration_ms": 0.0, "max_duration_ms": 0.0}
+                        kind,
+                        {
+                            "count": 0,
+                            "total_duration_ms": 0.0,
+                            "max_duration_ms": 0.0,
+                            "samples_ms": [],
+                        },
                     )
                     stats["count"] = int(stats["count"]) + 1
                     stats["total_duration_ms"] = float(stats["total_duration_ms"]) + float(duration)
                     stats["max_duration_ms"] = max(float(stats["max_duration_ms"]), float(duration))
+                    stats["samples_ms"].append(float(duration))
             if event.get("type") != "tool_result":
                 continue
             result = payload.get("result") or {}
@@ -564,6 +583,8 @@ def create_app(
                     float(stats["total_duration_ms"]) / max(int(stats["count"]), 1), 3
                 ),
                 "max_duration_ms": round(float(stats["max_duration_ms"]), 3),
+                "p50_duration_ms": round(_percentile(stats["samples_ms"], 0.50), 3),
+                "p95_duration_ms": round(_percentile(stats["samples_ms"], 0.95), 3),
             }
             for kind, stats in sorted(span_totals.items())
         ]
@@ -644,6 +665,8 @@ def create_app(
                     if cancel_latencies
                     else 0.0,
                     "max_ms": max(cancel_latencies, default=0.0),
+                    "p50_ms": round(_percentile(cancel_latencies, 0.50), 3),
+                    "p95_ms": round(_percentile(cancel_latencies, 0.95), 3),
                 },
             },
             "token_usage": state.token_usage,
