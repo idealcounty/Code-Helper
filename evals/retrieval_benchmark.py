@@ -15,6 +15,26 @@ from .catalog import load_tasks
 from .types import write_fixture
 
 
+_DISCRIMINATING_CASE = {
+    "id": "dependency_centrality_hidden",
+    "query": "workflow entrypoint",
+    "gold_files": ("src/core.py",),
+    "files": {
+        "src/core.py": "def canonicalize(value):\n    return value.strip().lower()\n",
+        "src/workflow_entry.py": "from src.core import canonicalize\n\ndef workflow_entry(value):\n    return canonicalize(value)\n",
+        **{
+            f"src/worker_{index}.py": "from src.core import canonicalize\n\n"
+            f"def worker_{index}(value):\n    return canonicalize(value)\n"
+            for index in range(4)
+        },
+        **{
+            f"src/noise_{index}.py": f"VALUE_{index} = {index}\n"
+            for index in range(8)
+        },
+    },
+}
+
+
 def run_benchmark() -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     tasks = [task for task in load_tasks() if task.gold_files]
@@ -35,6 +55,21 @@ def run_benchmark() -> dict[str, Any]:
                     "dependency_graph": _metrics(graph["files"], task.gold_files),
                 }
             )
+        case = _DISCRIMINATING_CASE
+        workspace = root / case["id"]
+        workspace.mkdir()
+        write_fixture(workspace, case["files"])
+        builder = RepoMapBuilder(Workspace(workspace))
+        lexical = builder.build(query=case["query"], max_files=1, include_dependency_graph=False)
+        graph = builder.build(query=case["query"], max_files=1, include_dependency_graph=True)
+        rows.append(
+            {
+                "task_id": case["id"],
+                "gold_files": list(case["gold_files"]),
+                "lexical": _metrics(lexical["files"], case["gold_files"]),
+                "dependency_graph": _metrics(graph["files"], case["gold_files"]),
+            }
+        )
     lexical = _aggregate(rows, "lexical")
     graph = _aggregate(rows, "dependency_graph")
     return {

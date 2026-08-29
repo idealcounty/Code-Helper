@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "task_count": 8,
+  "task_count": 9,
   "metrics": {
     "lexical": {
-      "task_count": 8,
-      "recall_at_5": 1.0,
-      "first_relevant_rate": 1.0,
-      "mrr": 1.0
+      "task_count": 9,
+      "recall_at_5": 0.8889,
+      "first_relevant_rate": 0.8889,
+      "mrr": 0.8889
     },
     "dependency_graph": {
-      "task_count": 8,
+      "task_count": 9,
       "recall_at_5": 1.0,
       "first_relevant_rate": 1.0,
       "mrr": 1.0
@@ -202,6 +202,28 @@
       "dependency_graph": {
         "top_files": [
           "counter.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "dependency_centrality_hidden",
+      "gold_files": [
+        "src/core.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "src/workflow_entry.py"
+        ],
+        "recall_at_5": 0.0,
+        "first_relevant": false,
+        "mrr": 0.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "src/core.py"
         ],
         "recall_at_5": 1.0,
         "first_relevant": true,
