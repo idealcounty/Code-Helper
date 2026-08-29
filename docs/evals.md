@@ -53,7 +53,7 @@ python -m evals.runner `
 python -m evals.rag_comparison --output-dir .eval-results/rag
 ```
 
-这条命令默认使用确定性模型，只验证开关、契约和报告链路。需要真实 DeepSeek 质量证据时，必须明确执行 `--mode real --allow-paid`；脚本会在同一任务集上先后运行启用与禁用 Repo Map 的两个隔离实验，并不会把确定性结果表述为模型智能提升。
+这条命令默认使用确定性模型，只验证开关、契约和报告链路。可用 `--repetitions 3` 做三次成对重复，报告会给出两组均值和指标差值。需要真实 DeepSeek 质量证据时，必须明确执行 `--mode real --allow-paid`；脚本会在同一任务集上先后运行启用与禁用 Repo Map 的隔离实验，并不会把确定性结果表述为模型智能提升。
 
 ## 面试演示
 

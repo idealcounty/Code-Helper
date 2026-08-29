@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from statistics import mean
 from pathlib import Path
 from typing import Any
 
@@ -21,30 +22,49 @@ async def run_comparison(
     mode: str = "deterministic",
     real_config: AppConfig | None = None,
     task_ids: set[str] | None = None,
+    repetitions: int = 1,
 ) -> dict[str, Any]:
+    if not 1 <= repetitions <= 20:
+        raise ValueError("repetitions must be between 1 and 20")
     selected = task_ids or TASK_IDS
-    with_retrieval = await run_suite(
-        mode=mode,
-        real_config=real_config,
-        task_ids=selected,
-        profile_override="project",
-        retrieval_enabled=True,
-    )
-    without_retrieval = await run_suite(
-        mode=mode,
-        real_config=real_config,
-        task_ids=selected,
-        profile_override="project",
-        retrieval_enabled=False,
-    )
+    samples: list[dict[str, Any]] = []
+    for index in range(repetitions):
+        with_retrieval = await run_suite(
+            mode=mode,
+            real_config=real_config,
+            task_ids=selected,
+            profile_override="project",
+            retrieval_enabled=True,
+        )
+        without_retrieval = await run_suite(
+            mode=mode,
+            real_config=real_config,
+            task_ids=selected,
+            profile_override="project",
+            retrieval_enabled=False,
+        )
+        samples.append(
+            {
+                "index": index + 1,
+                "repo_map": _compact(with_retrieval),
+                "no_rag": _compact(without_retrieval),
+            }
+        )
+    repo_runs = [sample["repo_map"] for sample in samples]
+    no_rag_runs = [sample["no_rag"] for sample in samples]
+    repo_summary = _aggregate(repo_runs)
+    no_rag_summary = _aggregate(no_rag_runs)
     return {
         "schema_version": 1,
         "mode": mode,
         "task_ids": sorted(selected),
+        "repetitions": repetitions,
         "runs": {
-            "repo_map": _compact(with_retrieval),
-            "no_rag": _compact(without_retrieval),
+            "repo_map": repo_summary,
+            "no_rag": no_rag_summary,
         },
+        "samples": samples,
+        "delta": _delta(repo_summary["metrics"], no_rag_summary["metrics"]),
         "interpretation": (
             "This is a controlled A/B report on the same task set. Deterministic "
             "runs validate the switch and contracts; only real-model runs can "
@@ -61,11 +81,55 @@ def _compact(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _aggregate(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(reports) == 1:
+        return reports[0]
+    metric_keys = (
+        "contract_pass_rate",
+        "completion_rate",
+        "safety_pass_rate",
+        "verification_rate",
+        "recall_at_5",
+        "first_relevant_file_rate",
+        "average_steps",
+        "average_duration_ms",
+        "average_tool_calls",
+    )
+    metrics = {
+        key: round(mean(float(item["metrics"].get(key, 0.0)) for item in reports), 4)
+        for key in metric_keys
+    }
+    metrics["task_count"] = sum(int(item["metrics"].get("task_count", 0)) for item in reports)
+    metrics["repetitions"] = len(reports)
+    tasks = [task for item in reports for task in item.get("tasks", [])]
+    return {
+        "retrieval_enabled": reports[0]["retrieval_enabled"],
+        "metrics": metrics,
+        "tasks": tasks,
+    }
+
+
+def _delta(repo_metrics: dict[str, Any], no_rag_metrics: dict[str, Any]) -> dict[str, float]:
+    keys = (
+        "contract_pass_rate",
+        "completion_rate",
+        "safety_pass_rate",
+        "verification_rate",
+        "recall_at_5",
+        "first_relevant_file_rate",
+    )
+    return {
+        key: round(float(repo_metrics.get(key, 0.0)) - float(no_rag_metrics.get(key, 0.0)), 4)
+        for key in keys
+    }
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Repo Map A/B 对照报告",
         "",
         f"- Mode: `{report['mode']}`",
+        f"- Repetitions: `{report['repetitions']}` (paired runs)",
         f"- Tasks: {', '.join(f'`{item}`' for item in report['task_ids'])}",
         "",
         "| Run | Contract | Completion | Verification | Recall@5 | First file |",
@@ -80,6 +144,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"{metrics['first_relevant_file_rate']:.1%} |"
         )
     lines.extend(["", f"> {report['interpretation']}", ""])
+    lines.insert(-1, "Delta (Repo Map - no RAG): " + ", ".join(
+        f"{key}={value:+.1%}" for key, value in report["delta"].items()
+    ))
     return "\n".join(lines)
 
 
@@ -87,6 +154,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("deterministic", "real"), default="deterministic")
     parser.add_argument("--allow-paid", action="store_true")
+    parser.add_argument("--repetitions", type=int, default=1, help="Paired A/B repetitions (1-20).")
     parser.add_argument("--output-dir", type=Path, default=Path(".eval-results/rag"))
     args = parser.parse_args()
     if args.mode == "real" and not args.allow_paid:
@@ -94,7 +162,9 @@ def main() -> int:
     config = AppConfig.from_env() if args.mode == "real" else None
     if config is not None and not config.api_key:
         raise SystemExit("Real RAG comparison requires a configured model API key")
-    report = asyncio.run(run_comparison(mode=args.mode, real_config=config))
+    report = asyncio.run(
+        run_comparison(mode=args.mode, real_config=config, repetitions=args.repetitions)
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "rag-comparison.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
