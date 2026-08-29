@@ -268,7 +268,10 @@ class AgentRunner:
     async def _start_run_controls(self, state: AgentState) -> None:
         self.cancellation.reset()
         state.cancel_requested = False
-        self.run_budget.start(max_steps=state.max_steps)
+        if state.run_budget and not self.run_budget.active:
+            self.run_budget.resume(state.run_budget)
+        else:
+            self.run_budget.start(max_steps=state.max_steps)
         await self._emit(
             state,
             "run_budget_started",

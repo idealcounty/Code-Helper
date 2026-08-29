@@ -24,13 +24,45 @@ class RunBudget:
     started_at: str = ""
     started_tick: float | None = None
     consumed_tokens: int = 0
+    # Time already spent before a process restart or approval recovery.  It is
+    # deliberately kept out of the public snapshot; ``elapsed_seconds`` is
+    # still the stable persisted fact used to restore it.
+    elapsed_offset_seconds: float = 0.0
 
     def start(self, *, max_steps: int | None = None) -> None:
         self.started_at = datetime.now(UTC).isoformat()
         self.started_tick = self.clock()
         self.consumed_tokens = 0
+        self.elapsed_offset_seconds = 0.0
         if self.max_steps is None:
             self.max_steps = max_steps
+
+    def resume(self, snapshot: dict[str, Any]) -> None:
+        """Resume a persisted budget without expanding its configured limits.
+
+        This is used when an approval or interrupted tool is continued after a
+        process restart. The configured ``max_*`` values remain authoritative;
+        only already-consumed usage and elapsed time are restored from the
+        durable snapshot.
+        """
+        if not isinstance(snapshot, dict):
+            self.start()
+            return
+        started_at = snapshot.get("started_at")
+        self.started_at = str(started_at) if started_at else datetime.now(UTC).isoformat()
+        self.started_tick = self.clock()
+        elapsed = snapshot.get("elapsed_seconds", 0.0)
+        try:
+            elapsed_value = float(elapsed)
+        except (TypeError, ValueError):
+            elapsed_value = 0.0
+        self.elapsed_offset_seconds = max(0.0, elapsed_value)
+        consumed = snapshot.get("consumed_tokens", 0)
+        try:
+            consumed_value = int(consumed)
+        except (TypeError, ValueError):
+            consumed_value = 0
+        self.consumed_tokens = max(0, consumed_value)
 
     @property
     def active(self) -> bool:
@@ -40,7 +72,10 @@ class RunBudget:
     def elapsed_seconds(self) -> float:
         if self.started_tick is None:
             return 0.0
-        return max(0.0, self.clock() - self.started_tick)
+        return max(
+            0.0,
+            self.elapsed_offset_seconds + self.clock() - self.started_tick,
+        )
 
     @property
     def remaining_seconds(self) -> float | None:

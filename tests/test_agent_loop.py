@@ -791,6 +791,27 @@ def test_token_budget_stops_before_requested_tools_execute(tmp_path: Path) -> No
     assert "run_budget_exhausted" in event_types
 
 
+def test_recovery_start_preserves_persisted_run_budget(tmp_path: Path) -> None:
+    model = ScriptedModel([])
+    runner, _ = _make_runner(tmp_path, model)
+    runner.run_budget = RunBudget(max_seconds=20.0, token_limit=200, max_steps=5)
+    state = AgentState.create(session_id="session", max_steps=5)
+    state.run_budget = {
+        "started_at": "2026-08-30T10:00:00+00:00",
+        "elapsed_seconds": 7.5,
+        "consumed_tokens": 120,
+        "max_seconds": 20.0,
+        "token_limit": 200,
+        "max_steps": 5,
+    }
+
+    asyncio.run(runner._start_run_controls(state))
+
+    assert runner.run_budget.active is True
+    assert runner.run_budget.consumed_tokens == 120
+    assert runner.run_budget.elapsed_seconds >= 7.5
+
+
 def test_independent_read_calls_run_in_parallel_and_results_keep_call_order(tmp_path: Path) -> None:
     async def scenario() -> tuple[float, list[dict[str, Any]]]:
         registry = ToolRegistry()
