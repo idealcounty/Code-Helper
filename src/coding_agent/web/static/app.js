@@ -44,7 +44,7 @@ const elements = Object.fromEntries([
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
   "stepCounter", "activityList", "planProgress", "planList", "diffView",
   "refreshDiffButton", "restoreButton", "terminalOutput", "copyTerminalButton",
-  "refreshIntelligenceButton", "intelligenceContent",
+  "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
   "approvalBackdrop", "approvalTitle", "approvalReason", "approvalArguments",
@@ -1006,9 +1006,32 @@ function setRunning(running) {
   elements.cancelButton.disabled = !running || state.stopping;
   elements.messageInput.disabled = running || !state.sessionId;
   elements.newSessionButton.disabled = !state.workspace;
+  elements.exportTraceButton.disabled = !state.sessionId;
   elements.reasoningSelect.disabled = running;
   elements.runStatus.classList.toggle("running", running);
   updateRunStatus();
+}
+
+async function exportTrace() {
+  if (!state.sessionId) return;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}/trace`, {
+      headers: { "Accept": "application/json" },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `code-helper-trace-${state.sessionId}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast("Trace 已导出，可用 Perfetto 打开");
+  } catch (error) {
+    showToast(`Trace 导出失败：${error.message}`);
+  }
 }
 
 function updateRunStatus() {
@@ -1412,6 +1435,7 @@ elements.reasoningSelect.addEventListener("change", async () => {
 elements.approvalPolicySelect.addEventListener("change", changeApprovalPolicy);
 document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
 elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
+elements.exportTraceButton.addEventListener("click", exportTrace);
 elements.intelligenceContent.addEventListener("click", handleIntelligenceAction);
 elements.confirmRestoreButton.addEventListener("click", confirmRestoreSelection);
 elements.closeRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
