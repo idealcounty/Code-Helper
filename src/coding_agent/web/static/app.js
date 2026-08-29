@@ -1,3 +1,13 @@
+const PANEL_LAYOUT_KEY = "code-helper.panel-layout.v1";
+const PANEL_DEFAULTS = Object.freeze({ explorer: 252, assistant: 420, threads: 112 });
+const PANEL_LIMITS = Object.freeze({
+  explorer: { min: 180, max: 480 },
+  assistant: { min: 300, max: 640 },
+  threads: { min: 72, max: 360 },
+  editorMin: 360,
+  assistantContentMin: 220,
+});
+
 const state = {
   sessionId: null,
   workspace: null,
@@ -19,15 +29,17 @@ const state = {
   browserParent: null,
   browserSelection: null,
   activeView: "chat",
+  panelLayout: loadPanelLayout(),
 };
 
 const elements = Object.fromEntries([
-  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect",
+  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect", "workbench",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
   "editorTabs", "editorBreadcrumbs", "editorLanguage", "copyFileButton",
   "reloadFileButton", "editorEmpty", "codeScroll", "codeLines", "fileStatus",
   "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
+  "explorerResizer", "assistantResizer", "threadResizer",
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
   "stepCounter", "activityList", "planProgress", "planList", "diffView",
   "refreshDiffButton", "restoreButton", "terminalOutput", "copyTerminalButton",
@@ -75,6 +87,158 @@ function workspaceName(path) {
 
 function effortToProfile(value) {
   return ({ low: "fast", medium: "balanced", high: "deep" })[value] || "auto";
+}
+
+function loadPanelLayout() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PANEL_LAYOUT_KEY) || "{}");
+    return Object.fromEntries(Object.entries(PANEL_DEFAULTS).map(([key, fallback]) => {
+      const value = Number(saved[key]);
+      return [key, Number.isFinite(value) ? value : fallback];
+    }));
+  } catch {
+    return { ...PANEL_DEFAULTS };
+  }
+}
+
+function savePanelLayout() {
+  try { localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(state.panelLayout)); } catch { /* localStorage may be disabled */ }
+}
+
+function clampPanelValue(value, limits) {
+  return Math.round(Math.min(limits.max, Math.max(limits.min, Number(value) || limits.min)));
+}
+
+function assistantPane() {
+  return elements.threadResizer.closest(".assistant-pane");
+}
+
+function availableThreadHeight() {
+  const pane = assistantPane();
+  if (!pane?.clientHeight) return PANEL_LIMITS.threads.max;
+  const header = pane.querySelector(".assistant-header")?.offsetHeight || 59;
+  const tabs = pane.querySelector(".assistant-tabs")?.offsetHeight || 37;
+  const status = pane.querySelector(".assistant-status")?.offsetHeight || 25;
+  return Math.max(
+    PANEL_LIMITS.threads.min,
+    Math.min(PANEL_LIMITS.threads.max, pane.clientHeight - header - tabs - status - 8 - PANEL_LIMITS.assistantContentMin),
+  );
+}
+
+function applyPanelLayout({ persist = false } = {}) {
+  const layout = state.panelLayout;
+  const viewportWidth = window.innerWidth;
+  const workbenchWidth = Math.max(0, elements.workbench.clientWidth - 16);
+
+  layout.explorer = clampPanelValue(layout.explorer, PANEL_LIMITS.explorer);
+  layout.assistant = clampPanelValue(layout.assistant, PANEL_LIMITS.assistant);
+  if (viewportWidth > 930 && workbenchWidth) {
+    const maximumSides = Math.max(
+      PANEL_LIMITS.explorer.min + PANEL_LIMITS.assistant.min,
+      workbenchWidth - 16 - PANEL_LIMITS.editorMin,
+    );
+    let overflow = layout.explorer + layout.assistant - maximumSides;
+    if (overflow > 0) {
+      const explorerReduction = Math.min(overflow, layout.explorer - PANEL_LIMITS.explorer.min);
+      layout.explorer -= explorerReduction;
+      overflow -= explorerReduction;
+      layout.assistant = Math.max(PANEL_LIMITS.assistant.min, layout.assistant - overflow);
+    }
+  } else if (viewportWidth > 650 && workbenchWidth) {
+    layout.explorer = Math.min(
+      layout.explorer,
+      Math.max(PANEL_LIMITS.explorer.min, workbenchWidth - 8 - PANEL_LIMITS.editorMin),
+    );
+  }
+
+  const threadLimits = { ...PANEL_LIMITS.threads, max: availableThreadHeight() };
+  layout.threads = clampPanelValue(layout.threads, threadLimits);
+  elements.workbench.style.setProperty("--explorer-width", `${layout.explorer}px`);
+  elements.workbench.style.setProperty("--assistant-width", `${layout.assistant}px`);
+  assistantPane().style.setProperty("--thread-strip-height", `${layout.threads}px`);
+  elements.explorerResizer.setAttribute("aria-valuenow", String(layout.explorer));
+  elements.assistantResizer.setAttribute("aria-valuenow", String(layout.assistant));
+  elements.threadResizer.setAttribute("aria-valuenow", String(layout.threads));
+  elements.threadResizer.setAttribute("aria-valuemax", String(threadLimits.max));
+  if (persist) savePanelLayout();
+}
+
+function resizePanelFromPointer(kind, event) {
+  const workbenchRect = elements.workbench.getBoundingClientRect();
+  if (kind === "explorer") {
+    state.panelLayout.explorer = event.clientX - workbenchRect.left - 8;
+  } else if (kind === "assistant") {
+    state.panelLayout.assistant = workbenchRect.right - 8 - event.clientX;
+  } else if (kind === "threads") {
+    const pane = assistantPane();
+    const headerHeight = pane.querySelector(".assistant-header")?.offsetHeight || 59;
+    state.panelLayout.threads = event.clientY - pane.getBoundingClientRect().top - headerHeight;
+  }
+  applyPanelLayout();
+}
+
+function beginPanelResize(event) {
+  if (event.button !== 0) return;
+  const resizer = event.currentTarget;
+  const kind = resizer.dataset.resize;
+  if (resizer.classList.contains("panel-resizer-column") && window.innerWidth <= 650) return;
+  event.preventDefault();
+  resizer.classList.add("active");
+  document.body.classList.add("is-resizing", resizer.classList.contains("panel-resizer-row") ? "is-resizing-row" : "is-resizing-column");
+  const move = (moveEvent) => resizePanelFromPointer(kind, moveEvent);
+  const finish = () => {
+    resizer.classList.remove("active");
+    document.body.classList.remove("is-resizing", "is-resizing-row", "is-resizing-column");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", finish);
+    window.removeEventListener("pointercancel", finish);
+    applyPanelLayout({ persist: true });
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", finish, { once: true });
+  window.addEventListener("pointercancel", finish, { once: true });
+}
+
+function adjustPanelWithKeyboard(event) {
+  const kind = event.currentTarget.dataset.resize;
+  const step = event.shiftKey ? 40 : 16;
+  let delta = 0;
+  if (kind === "threads") {
+    if (event.key === "ArrowUp") delta = -step;
+    if (event.key === "ArrowDown") delta = step;
+  } else {
+    if (event.key === "ArrowLeft") delta = -step;
+    if (event.key === "ArrowRight") delta = step;
+    if (kind === "assistant") delta *= -1;
+  }
+  if (!delta) return;
+  event.preventDefault();
+  state.panelLayout[kind] += delta;
+  applyPanelLayout({ persist: true });
+}
+
+function resetPanelSize(event) {
+  const kind = event.currentTarget.dataset.resize;
+  state.panelLayout[kind] = PANEL_DEFAULTS[kind];
+  applyPanelLayout({ persist: true });
+  showToast(`${kind === "explorer" ? "文件栏" : kind === "assistant" ? "对话与执行栏" : "会话列表"}已恢复默认大小`);
+}
+
+function initializePanelResizers() {
+  [elements.explorerResizer, elements.assistantResizer, elements.threadResizer].forEach((resizer) => {
+    resizer.addEventListener("pointerdown", beginPanelResize);
+    resizer.addEventListener("keydown", adjustPanelWithKeyboard);
+    resizer.addEventListener("dblclick", resetPanelSize);
+  });
+  let resizeFrame = null;
+  window.addEventListener("resize", () => {
+    if (resizeFrame) cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = null;
+      applyPanelLayout();
+    });
+  });
+  applyPanelLayout();
 }
 
 async function openWorkspace(workspace, sessionId = null, preserveEditor = false) {
@@ -222,6 +386,7 @@ function listFiles(path) {
 
 function renderFileEntries(entries, container, depth) {
   entries.forEach((entry) => {
+    let children = null;
     const group = document.createElement("div");
     group.className = "tree-group";
     const row = document.createElement("button");
@@ -232,6 +397,7 @@ function renderFileEntries(entries, container, depth) {
     row.innerHTML = entry.kind === "directory"
       ? `${iconSvg("chevron")} ${iconSvg("folder")}<span>${escapeHtml(entry.name)}</span>`
       : `${iconSvg("blank")} ${iconSvg("file")}<span>${escapeHtml(entry.name)}</span>`;
+    if (entry.kind === "directory") row.setAttribute("aria-expanded", "false");
     group.append(row);
     container.append(group);
     row.addEventListener("click", async () => {
@@ -240,14 +406,16 @@ function renderFileEntries(entries, container, depth) {
         await openFile(entry.path);
         return;
       }
-      const existing = group.querySelector(":scope > .tree-children");
-      if (existing) {
-        existing.classList.toggle("hidden");
-        row.classList.toggle("expanded", !existing.classList.contains("hidden"));
+      if (children) {
+        children.classList.toggle("hidden");
+        const expanded = !children.classList.contains("hidden");
+        row.classList.toggle("expanded", expanded);
+        row.setAttribute("aria-expanded", String(expanded));
         return;
       }
       row.classList.add("expanded");
-      const children = document.createElement("div");
+      row.setAttribute("aria-expanded", "true");
+      children = document.createElement("div");
       children.className = "tree-children";
       children.innerHTML = '<div class="tree-loading nested">读取中…</div>';
       group.append(children);
@@ -1072,6 +1240,37 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
 
+async function copyTextToClipboard(value, successMessage = "文字已复制") {
+  const text = String(value ?? "");
+  const nativeCopy = window.pywebview?.api?.copy_text;
+  if (typeof nativeCopy === "function") {
+    try {
+      if (await nativeCopy(text)) {
+        showToast(successMessage);
+        return true;
+      }
+    } catch { /* fall through to browser clipboard paths */ }
+  }
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(successMessage);
+      return true;
+    } catch { /* older WebViews require the selection-based fallback */ }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.readOnly = true;
+  textarea.style.cssText = "position:fixed;inset:-9999px auto auto -9999px;opacity:0";
+  document.body.append(textarea);
+  textarea.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch { copied = false; }
+  textarea.remove();
+  showToast(copied ? successMessage : "当前环境无法访问剪贴板");
+  return copied;
+}
+
 let toastTimer;
 function showToast(message) {
   elements.toast.textContent = message;
@@ -1087,7 +1286,7 @@ document.querySelector("#emptyBrowseButton").addEventListener("click", browseWor
 elements.refreshFilesButton.addEventListener("click", loadRootFiles);
 elements.insertFileButton.addEventListener("click", insertSelectedFile);
 elements.reloadFileButton.addEventListener("click", () => state.activeFilePath && openFile(state.activeFilePath, true));
-elements.copyFileButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(state.fileCache.get(state.activeFilePath)?.content || ""); showToast("文件内容已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });
+elements.copyFileButton.addEventListener("click", () => copyTextToClipboard(state.fileCache.get(state.activeFilePath)?.content || "", "文件内容已复制"));
 elements.newSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
@@ -1115,7 +1314,7 @@ elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
 elements.intelligenceContent.addEventListener("click", handleIntelligenceAction);
 elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
-elements.copyTerminalButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(elements.terminalOutput.innerText); showToast("终端输出已复制"); } catch { showToast("浏览器未授予剪贴板权限"); } });
+elements.copyTerminalButton.addEventListener("click", () => copyTextToClipboard(elements.terminalOutput.innerText, "终端输出已复制"));
 elements.approveButton.addEventListener("click", () => resolveApproval(true));
 elements.grantButton.addEventListener("click", () => resolveApproval(true, "session"));
 elements.denyButton.addEventListener("click", () => resolveApproval(false));
@@ -1126,6 +1325,7 @@ elements.browserUpButton.addEventListener("click", () => browseTo(state.browserP
 elements.chooseWorkspaceButton.addEventListener("click", async () => { const selected = state.browserSelection; if (!selected) return; closeBrowser(); elements.workspaceInput.value = selected; await openWorkspace(selected); });
 document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !elements.browserBackdrop.classList.contains("hidden")) closeBrowser(); });
 
+initializePanelResizers();
 resetEditor();
 setAssistantView("chat");
 checkHealth();

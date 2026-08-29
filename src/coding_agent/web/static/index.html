@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/modern.css?v=20260829.2" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260829.4" />
   </head>
   <body>
     <div class="app-shell">
@@ -28,7 +28,7 @@
         </div>
       </header>
 
-      <main class="workbench">
+      <main class="workbench" id="workbench">
         <aside class="pane explorer-pane" aria-label="资源管理器">
           <div class="pane-titlebar">
             <div><span class="eyebrow">WORKSPACE</span><h1 id="workspaceTitle">资源管理器</h1></div>
@@ -40,6 +40,8 @@
           </div>
           <div class="pane-footer"><span>受保护文件自动隐藏</span><span>LOCAL</span></div>
         </aside>
+
+        <div class="panel-resizer panel-resizer-column" id="explorerResizer" data-resize="explorer" role="separator" aria-label="调整文件栏宽度" aria-orientation="vertical" aria-valuemin="180" aria-valuemax="480" aria-valuenow="252" tabindex="0" title="拖动调整文件栏宽度，双击恢复默认"><span></span></div>
 
         <section class="pane editor-pane" aria-label="代码编辑区">
           <div class="editor-tabbar" id="editorTabs"><div class="editor-tab-placeholder">没有打开的文件</div></div>
@@ -54,9 +56,12 @@
           <div class="editor-statusbar"><span id="fileStatus">READY</span><div><span id="fileEncoding">UTF-8</span><span id="filePosition">Ln 1, Col 1</span><span id="fileSize">0 bytes</span></div></div>
         </section>
 
+        <div class="panel-resizer panel-resizer-column" id="assistantResizer" data-resize="assistant" role="separator" aria-label="调整对话与执行栏宽度" aria-orientation="vertical" aria-valuemin="300" aria-valuemax="640" aria-valuenow="420" tabindex="0" title="拖动调整对话、轨迹与执行栏宽度，双击恢复默认"><span></span></div>
+
         <aside class="pane assistant-pane" aria-label="Agent 对话">
           <div class="assistant-header"><div><span class="eyebrow">AGENT THREADS</span><h2>会话与执行</h2></div><button class="new-thread-button" id="newSessionButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>新对话</button></div>
           <div class="thread-strip" id="sessionList"><div class="thread-empty">打开工作区后显示历史对话</div></div>
+          <div class="panel-resizer panel-resizer-row" id="threadResizer" data-resize="threads" role="separator" aria-label="调整会话列表高度" aria-orientation="horizontal" aria-valuemin="72" aria-valuemax="360" aria-valuenow="112" tabindex="0" title="拖动调整会话列表与对话区域高度，双击恢复默认"><span></span></div>
           <nav class="assistant-tabs" aria-label="Agent 面板"><button class="active" data-view="chat" type="button">对话</button><button data-view="trace" type="button">轨迹</button><button data-view="plan" type="button">计划</button><button data-view="intelligence" type="button">智能</button><button data-view="diff" type="button">差异</button><button data-view="terminal" type="button">终端</button></nav>
           <div class="assistant-content">
             <section class="assistant-view chat-view active" id="chatView"><div class="message-list" id="messageList"><div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>和你的代码一起思考</h3><p>选择工作区后，描述你希望理解、修改或验证的任务。</p></div></div><div class="composer"><textarea id="messageInput" rows="3" placeholder="向 Agent 提问，使用 @path 引用文件…" disabled></textarea><div class="composer-footer"><span><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span><div><button class="stop-button" id="cancelButton" type="button" disabled>停止</button><button class="send-button" id="sendButton" type="button" disabled aria-label="发送任务"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5" /></svg></button></div></div></div></section>
@@ -89,6 +94,6 @@
       <div class="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approvalTitle"><div class="approval-icon"><svg viewBox="0 0 24 24"><path d="M12 3 3.5 19h17zM12 9v4M12 16.5v.1" /></svg></div><span class="eyebrow warning">APPROVAL REQUIRED</span><h2 id="approvalTitle">Agent 请求执行操作</h2><p id="approvalReason"></p><pre id="approvalArguments"></pre><p class="approval-scope-note">“本会话允许”仅授予当前操作所需能力，并限制在当前路径或命令范围内，最多 1 小时。</p><div class="approval-actions"><button class="dialog-secondary" id="denyButton" type="button">拒绝操作</button><button class="dialog-secondary" id="approveButton" type="button">仅允许本次</button><button class="dialog-primary" id="grantButton" type="button">本会话允许</button></div></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260829.2" defer></script>
+    <script src="/assets/app.bundle.js?v=20260829.4" defer></script>
   </body>
 </html>

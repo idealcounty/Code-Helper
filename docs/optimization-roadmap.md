@@ -25,7 +25,7 @@
 
 ## 3. 当前完成基线
 
-截至 2026-08-29，仓库全量测试为 `157 passed`。以下主闭环已完成，不建议重复建设：
+截至 2026-08-29，仓库提交版本全量测试为 `160 passed`。以下主闭环已完成，不建议重复建设：
 
 | 能力 | 当前状态 | 主要实现 |
 | --- | --- | --- |
@@ -39,7 +39,7 @@
 | 检查点、Diff 和回滚 | 已完成基础版 | `checkpoints.py`、Web API |
 | Repo Map Lite、Skills、动态计划 | 已完成基础版 | `repo_map.py`、`skills.py`、`tools/plan.py` |
 | 上下文裁剪、摘要和完整工具输出引用 | 已完成基础版 | `context.py`、`tool_executor.py` |
-| Web UI、WebSocket、可选桌面入口 | 已完成 | `web/`、`desktop.py` |
+| Web UI、WebSocket、可选桌面入口 | 已完成 | `web/`、`desktop.py`；三栏工作台和会话列表支持持久化拖拽调节，桌面端提供原生文字选择和剪贴板桥接 |
 | 项目级和用户级长期记忆 | 已完成并持续加固 | `memory.py`、`memory_summary.py`、`user_memory.py` |
 
 目前最值得投入的方向不是再增加一个大模块，而是修复“文档承诺强于实现保证”的部分。

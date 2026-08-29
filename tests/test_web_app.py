@@ -57,6 +57,16 @@ def test_health_and_static_index() -> None:
     assert "帮我批准" in index.text
     assert "完全放开" in index.text
     assert "本会话允许" in index.text
+    assert 'data-resize="explorer"' in index.text
+    assert 'data-resize="assistant"' in index.text
+    assert 'data-resize="threads"' in index.text
+    assert "panel-resizer" in modern_styles.text
+    assert "code-helper.panel-layout.v1" in frontend_bundle.text
+    assert "initializePanelResizers" in frontend_bundle.text
+    assert "localStorage.setItem(PANEL_LAYOUT_KEY" in frontend_bundle.text
+    assert "copyTextToClipboard" in frontend_bundle.text
+    assert "window.pywebview?.api?.copy_text" in frontend_bundle.text
+    assert ':scope > .tree-children' not in frontend_bundle.text
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:
