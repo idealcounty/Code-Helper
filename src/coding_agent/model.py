@@ -318,9 +318,13 @@ def _parse_chat_completion(payload: dict[str, Any]) -> ModelResponse:
     for raw_call in message.get("tool_calls") or []:
         try:
             function = raw_call["function"]
-            arguments = json.loads(function.get("arguments") or "{}")
-            if not isinstance(arguments, dict):
-                raise TypeError("tool arguments must be a JSON object")
+            raw_arguments = function.get("arguments")
+            if isinstance(raw_arguments, dict):
+                # Some OpenAI-compatible gateways decode the function
+                # arguments before returning the non-streaming JSON payload.
+                arguments = raw_arguments
+            else:
+                arguments = _decode_tool_arguments(str(raw_arguments or "{}"))
             calls.append(
                 ToolCall(
                     id=str(raw_call["id"]),

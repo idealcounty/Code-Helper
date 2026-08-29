@@ -285,3 +285,39 @@ def test_streaming_client_accepts_object_tool_arguments() -> None:
     )
 
     assert response.tool_calls[0].arguments == {"path": "app.py"}
+
+
+def test_non_streaming_client_accepts_object_tool_arguments() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_object",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": {"path": "app.py"},
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = OpenAICompatibleModelClient(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = asyncio.run(client.complete(messages=[], tools=[]))
+
+    assert response.tool_calls[0].arguments == {"path": "app.py"}
