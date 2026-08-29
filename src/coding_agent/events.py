@@ -130,7 +130,7 @@ class EventBus:
     def __init__(self, store: EventStore) -> None:
         self.store = store
         self._listeners: list[EventListener] = []
-        self._sequence = self._load_last_sequence()
+        self._sequence, self._last_event_id = self._load_tail_metadata()
         self._lock = asyncio.Lock()
 
     def subscribe(self, listener: EventListener) -> Callable[[], None]:
@@ -156,7 +156,12 @@ class EventBus:
             event.sequence = self._sequence
             if not event.event_id:
                 event.event_id = uuid4().hex
+            # Link events by default so recovery diagnostics can follow one
+            # durable causal chain. Explicit IDs remain available for fan-in.
+            if event.causation_id is None and self._last_event_id:
+                event.causation_id = self._last_event_id
             self.store.append(event)
+            self._last_event_id = event.event_id
 
         safe_event = self.store.redacted_event(event)
         for listener in tuple(self._listeners):
@@ -165,9 +170,12 @@ class EventBus:
                 await result
         return event
 
-    def _load_last_sequence(self) -> int:
+    def _load_tail_metadata(self) -> tuple[int, str | None]:
         events = self.store.load()
-        return int(events[-1].get("sequence", 0)) if events else 0
+        if not events:
+            return 0, None
+        tail = events[-1]
+        return int(tail.get("sequence", 0)), str(tail.get("event_id") or "") or None
 
 
 def _integrity_digest(data: dict[str, Any]) -> str:
