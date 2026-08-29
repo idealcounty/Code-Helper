@@ -1036,6 +1036,9 @@ function renderIntelligence(data) {
   const loaded = new Set(skills.loaded || []);
   const toolTotals = data.tool_totals || {};
   const usage = data.token_usage || {};
+  const storage = data.storage || { events: {}, tool_results: {} };
+  const eventStorage = storage.events || {};
+  const resultStorage = storage.tool_results || {};
   const percent = Math.min(100, Math.round(((context.estimated_chars || 0) / Math.max(context.max_chars || 1, 1)) * 100));
   const successRate = toolTotals.calls ? Math.round(((toolTotals.successes || 0) / toolTotals.calls) * 100) : 0;
   const tokenTotal = usage.total_tokens ?? ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
@@ -1149,6 +1152,8 @@ function renderIntelligence(data) {
     <section class="intelligence-section compact-section">
       <div class="intelligence-heading"><div><span class="intel-icon">SYS</span><strong>管线状态</strong></div><b>${escapeHtml(data.reasoning_profile || "auto").toUpperCase()}</b></div>
       <div class="pipeline-grid">
+        <div><strong>${eventStorage.files || 0}</strong><span>事件文件</span></div>
+        <div><strong>${resultStorage.files || 0}</strong><span>输出引用</span></div>
         <div><strong>${cache.file_summaries || 0}</strong><span>摘要缓存</span></div>
         <div><strong>${cache.observed_files || 0}</strong><span>文件观察</span></div>
         <div><strong>${outputs.stored_count || 0}</strong><span>完整输出引用</span></div>

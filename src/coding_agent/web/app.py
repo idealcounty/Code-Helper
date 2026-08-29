@@ -81,6 +81,18 @@ def _load_event_file(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _storage_usage(root: Path, pattern: str) -> dict[str, int]:
+    """Return bounded, read-only storage usage for the intelligence panel."""
+    files = [path for path in root.glob(pattern) if path.is_file()] if root.exists() else []
+    total = 0
+    for path in files:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+    return {"files": len(files), "bytes": total}
+
+
 def _session_summary(
     session_id: str, events: list[dict[str, Any]], updated_at: str
 ) -> dict[str, Any]:
@@ -524,6 +536,13 @@ def create_app(
         )
         repo_map = RepoMapBuilder(runtime.workspace).build(max_files=8)
         skills = [item.to_dict() for item in runtime.skill_library.list_summaries()]
+        event_usage = _storage_usage(runtime.event_store.root, "*.jsonl")
+        result_store = runtime.tool_executor.result_store
+        result_usage = (
+            _storage_usage(result_store, "tool-result-*.json")
+            if result_store
+            else {"files": 0, "bytes": 0}
+        )
         tool_totals = {
             "calls": sum(item.get("calls", 0) for item in state.tool_stats.values()),
             "successes": sum(
@@ -582,6 +601,19 @@ def create_app(
             "outputs": {
                 "references": output_references[-8:],
                 "stored_count": len(output_references),
+            },
+            "storage": {
+                "events": {
+                    **event_usage,
+                    "max_bytes": runtime.event_store.max_storage_bytes,
+                    "max_files": runtime.event_store.max_session_files,
+                    "last_prune": list(runtime.event_store.last_prune_diagnostics),
+                },
+                "tool_results": {
+                    **result_usage,
+                    "max_bytes": runtime.tool_executor.result_store_max_bytes,
+                    "max_files": runtime.tool_executor.result_store_max_files,
+                },
             },
             "hooks": {
                 "pipeline_enabled": True,

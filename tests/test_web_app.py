@@ -268,6 +268,8 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
         "commands": [],
         "diagnostics": [],
     }
+    assert intelligence.json()["storage"]["events"]["max_files"] == 256
+    assert intelligence.json()["storage"]["tool_results"]["max_files"] == 512
     assert changed.json() == {"profile": "fast", "reasoning_effort": "low"}
     assert details.json()["reasoning_profile"] == "fast"
 
