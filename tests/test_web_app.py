@@ -274,7 +274,9 @@ def test_session_scoped_approval_grant_is_limited_and_revocable(tmp_path: Path) 
     assert resolved.status_code == 200
     assert resolved.json()["scope"] == "session"
     assert resolved.json()["grant"]["capabilities"] == ["workspace.write"]
-    assert resolved.json()["grant"]["path_prefix"].endswith("src\\output.py")
+    granted_path = Path(resolved.json()["grant"]["path_prefix"])
+    assert granted_path.name == "output.py"
+    assert granted_path.parent.name == "src"
     assert grants.status_code == 200
     assert len(grants.json()["grants"]) == 1
     assert revoked.json() == {"revoked": True, "grant_id": grant_id}
