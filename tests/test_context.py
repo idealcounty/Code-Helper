@@ -177,3 +177,28 @@ def test_project_rules_follow_multiple_paths_named_in_user_request(tmp_path: Pat
     assert "src-only rule" in system
     assert "docs-only rule" in system
     assert context.rule_candidates == 2
+
+
+def test_project_rules_report_conflicting_same_heading_sections(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (tmp_path / "AGENTS.md").write_text(
+        "# Project rules\n\n## Verification\nRun pytest before finishing.\n",
+        encoding="utf-8",
+    )
+    (src / "AGENTS.md").write_text(
+        "# Source rules\n\n## Verification\nRun npm test before finishing.\n",
+        encoding="utf-8",
+    )
+
+    state = AgentState.create(session_id="session")
+    state.messages = [{"role": "user", "content": "Update src/app.py."}]
+    context = ContextManager(workspace=Workspace(tmp_path)).build(state, [])
+
+    assert len(context.rule_conflicts) == 1
+    conflict = context.rule_conflicts[0]
+    assert conflict["heading"] == "Verification"
+    assert conflict["source"] == "AGENTS.md"
+    assert conflict["other_source"] == "src/AGENTS.md"
+    assert conflict["target"] == "src"
+    assert context.rule_sources[0]["conflicts"]

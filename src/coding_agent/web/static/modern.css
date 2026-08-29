@@ -338,6 +338,9 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .pipeline-grid span, .statistics-strip span { overflow: hidden; width: 100%; color: var(--muted); font-size: 7px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .statistics-strip { grid-template-columns: repeat(3, 1fr); }
 .metric-list { margin-top: 7px; }
+.context-conflict-count { color: var(--warning) !important; }
+.context-source-list .context-conflict { border-color: #ead6b8; background: #fffaf1; }
+.context-conflict b { margin-right: 5px; color: var(--warning); }
 .metric-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px 40px; align-items: center; min-height: 23px; border-top: 1px solid #eceeee; font-family: var(--mono); font-size: 7.5px; }
 .metric-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .metric-row b { color: var(--success); font-weight: 650; text-align: right; }

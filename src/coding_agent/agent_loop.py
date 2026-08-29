@@ -364,6 +364,7 @@ class AgentRunner:
                     "rule_chars": context.rule_chars,
                     "rule_truncated": context.rule_truncated,
                     "rule_sources": context.rule_sources,
+                    "rule_conflicts": context.rule_conflicts,
                     "repo_map": context.repo_map,
                     "summary_meta": context.context_summary_meta,
                 },

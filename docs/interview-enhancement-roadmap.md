@@ -143,7 +143,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 
 - Repo Map 按文件名、类型、代码顶层符号和轻量导入图中心性评分；Python 使用 AST，JavaScript/TypeScript、Java、C/C++ 与 Go 使用保守正则提取。
 - 当前导入图已连接 Python 模块、JavaScript/TypeScript 本地相对路径和仓库内 Java 类；调用关系、测试关联和更复杂的别名/源码根解析仍待补齐。
-- `AGENTS.md` 已按目标路径构造作用域规则链，支持 `AGENTS.override.md`、字符预算、自然语言多目标路径解析和 `context_built` 事件；多目标规则冲突标注 UI 仍待补齐。
+- `AGENTS.md` 已按目标路径构造作用域规则链，支持 `AGENTS.override.md`、字符预算、自然语言多目标路径解析和 `context_built` 事件；同一目标链中同名标题的不同内容会生成潜在冲突证据，并在轨迹和智能面板展示来源与作用域。
 - Step 级历史摘要已改为基于 reducer 事实的结构化模板，记录版本、覆盖消息和事件序列；供应商 tokenizer 和更高保真的语义压缩仍待通过 Eval 后再引入。
 
 ### 4.5 缺少 Agent Eval

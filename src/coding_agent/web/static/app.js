@@ -826,7 +826,8 @@ function handleEvent(event) {
     case "context_built": {
       const repoSelection = payload.repo_map?.selected || [];
       const ruleCount = payload.rule_sources?.length || 0;
-      addActivity("上下文已构建", `规则 ${ruleCount} 条 · Repo Map ${repoSelection.length} 个文件 · ${formatNumber(payload.estimated_chars || 0)} 字符`, "success");
+      const conflictCount = payload.rule_conflicts?.length || 0;
+      addActivity("上下文已构建", `规则 ${ruleCount} 条${conflictCount ? ` · 潜在冲突 ${conflictCount} 条` : ""} · Repo Map ${repoSelection.length} 个文件 · ${formatNumber(payload.estimated_chars || 0)} 字符`, conflictCount ? "warning" : "success");
       refreshIntelligenceIfVisible();
       break;
     }
@@ -1026,6 +1027,7 @@ function renderIntelligence(data) {
   const contextBuild = context.last_build || {};
   const contextRepo = contextBuild.repo_map || {};
   const contextRules = contextBuild.rule_sources || [];
+  const contextConflicts = contextBuild.rule_conflicts || [];
   const contextSummaryMeta = context.summary_meta || {};
   const budget = data.budget || {};
   const verification = data.verification || { evidence: [] };
@@ -1085,6 +1087,7 @@ function renderIntelligence(data) {
     const detail = item.arguments?.path || item.arguments?.command || "副作用未确认";
     return `<li class="permission-row recovery-row"><div><b>${name}</b><span title="${escapeHtml(String(detail))}">${escapeHtml(String(detail))}</span><small>工具已启动但结果未持久化</small></div><div class="memory-actions"><button data-recovery-action="abandon" data-tool-call-id="${id}" type="button">放弃</button><button data-recovery-action="retry" data-tool-call-id="${id}" type="button">人工重试</button></div></li>`;
   }).join("");
+  const ruleConflictRows = contextConflicts.slice(0, 12).map((item) => `<li class="context-conflict"><span><b>${escapeHtml(item.heading || "同名规则")}</b>${escapeHtml(item.source || "")} ↔ ${escapeHtml(item.other_source || "")}</span><em>目标 ${escapeHtml(item.target || ".")}</em></li>`).join("");
   elements.intelligenceContent.innerHTML = `
     <section class="intelligence-section run-budget-section ${runBudgetState}">
       <div class="intelligence-heading"><div><span class="intel-icon">RUN</span><strong>运行预算</strong></div><b>${runBudgetState === "warning" ? "LIMIT" : "ACTIVE"}</b></div>
@@ -1107,8 +1110,9 @@ function renderIntelligence(data) {
       <div class="intelligence-heading"><div><span class="intel-icon">CTX</span><strong>上下文预算</strong></div><b>${percent}%</b></div>
       <div class="budget-track"><i style="width:${percent}%"></i></div>
       <div class="intel-facts"><span>${formatNumber(context.estimated_chars || 0)} / ${formatNumber(context.max_chars || 0)} chars</span><span>${context.messages || 0} 条消息</span><span>${context.compactions || 0} 次压缩</span></div>
-      <div class="intel-facts"><span>规则 ${contextRules.length} 条 / ${formatNumber(contextBuild.rule_chars || 0)} chars</span><span>Repo Map ${((contextRepo.selected || []).length)} 文件 / ${formatNumber(contextRepo.selected_chars || 0)} chars</span></div>
-      ${(contextRules.length || (contextRepo.selected || []).length) ? `<details><summary>查看本 Step 上下文来源</summary><ul class="context-source-list">${contextRules.slice(0, 8).map((item) => `<li><span>规则 · ${escapeHtml(item.path || "")}</span><em>${escapeHtml(item.kind || "default")}${item.truncated ? " · 已截断" : ""}</em></li>`).join("")}${(contextRepo.selected || []).slice(0, 8).map((item) => `<li><span>Repo Map · ${escapeHtml(item.path || "")}</span><em>${item.score || 0} · ${(item.reason || []).map(escapeHtml).join(", ")}</em></li>`).join("")}</ul></details>` : ""}
+      <div class="intel-facts"><span>规则 ${contextRules.length} 条 / ${formatNumber(contextBuild.rule_chars || 0)} chars</span><span>Repo Map ${((contextRepo.selected || []).length)} 文件 / ${formatNumber(contextRepo.selected_chars || 0)} chars</span><span class="${contextConflicts.length ? "context-conflict-count" : ""}">${contextConflicts.length ? `潜在冲突 ${contextConflicts.length} 条` : "规则冲突 0 条"}</span></div>
+      ${(contextRules.length || (contextRepo.selected || []).length) ? `<details><summary>查看本 Step 上下文来源</summary><ul class="context-source-list">${contextRules.slice(0, 8).map((item) => `<li><span>规则 · ${escapeHtml(item.path || "")}${item.conflicts?.length ? ` · ⚠ ${item.conflicts.length}` : ""}</span><em>${escapeHtml(item.kind || "default")}${item.truncated ? " · 已截断" : ""}</em></li>`).join("")}${(contextRepo.selected || []).slice(0, 8).map((item) => `<li><span>Repo Map · ${escapeHtml(item.path || "")}</span><em>${item.score || 0} · ${(item.reason || []).map(escapeHtml).join(", ")}</em></li>`).join("")}</ul></details>` : ""}
+      ${contextConflicts.length ? `<details open><summary>查看规则冲突</summary><ul class="context-source-list">${ruleConflictRows}</ul><p class="intel-note">冲突表示同一目标规则链中出现同名标题但内容不同；系统仍按目录深度顺序应用，需人工确认优先级。</p></details>` : ""}
       ${contextSummaryMeta.version ? `<p class="intel-note">摘要 v${contextSummaryMeta.version}，覆盖 ${contextSummaryMeta.covered_message_count || 0} 条历史消息，事件序列 ≤ ${contextSummaryMeta.covered_event_sequence || 0}</p>` : ""}
       ${context.summary ? `<details><summary>查看历史摘要</summary><p>${escapeHtml(context.summary)}</p></details>` : '<p class="intel-note">尚未触发历史压缩，最近原始上下文会完整保留。</p>'}
     </section>

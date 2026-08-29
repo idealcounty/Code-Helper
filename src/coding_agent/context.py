@@ -36,6 +36,7 @@ class ModelContext:
     rule_chars: int = 0
     rule_truncated: bool = False
     rule_sources: list[dict[str, Any]] = field(default_factory=list)
+    rule_conflicts: list[dict[str, Any]] = field(default_factory=list)
     repo_map: dict[str, Any] = field(default_factory=dict)
     context_summary_meta: dict[str, Any] = field(default_factory=dict)
 
@@ -45,7 +46,61 @@ class _RuleBundle:
     text: str
     candidates: int
     sources: list[dict[str, Any]]
+    conflicts: list[dict[str, Any]]
     truncated: bool
+
+
+_RULE_HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", flags=re.MULTILINE)
+
+
+def _markdown_rule_sections(text: str) -> dict[str, tuple[str, str]]:
+    """Extract comparable markdown sections from one project rule file."""
+    matches = list(_RULE_HEADING_RE.finditer(text))
+    sections: dict[str, tuple[str, str]] = {}
+    for index, match in enumerate(matches):
+        heading = " ".join(match.group(1).split())
+        key = heading.casefold()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = " ".join(text[match.end() : end].split())
+        if key:
+            sections[key] = (heading, body)
+    return sections
+
+
+def _rule_conflicts(
+    workspace: Workspace,
+    target_chains: list[tuple[Path, list[Path]]],
+    rule_texts: dict[Path, str],
+) -> list[dict[str, Any]]:
+    """Find same-heading rule sections with different content in one target chain."""
+    conflicts: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for target, chain in target_chains:
+        for index, source in enumerate(chain):
+            left_sections = _markdown_rule_sections(rule_texts.get(source, ""))
+            for other in chain[index + 1 :]:
+                right_sections = _markdown_rule_sections(rule_texts.get(other, ""))
+                for key in sorted(left_sections.keys() & right_sections.keys()):
+                    left_heading, left_body = left_sections[key]
+                    _right_heading, right_body = right_sections[key]
+                    if left_body == right_body:
+                        continue
+                    source_name = workspace.relative(source)
+                    other_name = workspace.relative(other)
+                    target_name = workspace.relative(target) or "."
+                    marker = (source_name, other_name, key, target_name)
+                    if marker in seen:
+                        continue
+                    seen.add(marker)
+                    conflicts.append(
+                        {
+                            "heading": left_heading,
+                            "source": source_name,
+                            "other_source": other_name,
+                            "target": target_name,
+                        }
+                    )
+    return conflicts
 
 
 _NATURAL_PATH_RE = re.compile(
@@ -181,6 +236,7 @@ class ContextManager:
             rule_chars=len(rules.text),
             rule_truncated=rules.truncated,
             rule_sources=rules.sources,
+            rule_conflicts=rules.conflicts,
             repo_map=repo_map["metadata"],
             context_summary_meta=summary_meta,
         )
@@ -234,7 +290,7 @@ class ContextManager:
 
     def _project_rules(self, state: AgentState) -> _RuleBundle:
         if self.workspace is None:
-            return _RuleBundle("", 0, [], False)
+            return _RuleBundle("", 0, [], [], False)
         target_dirs = _target_directories(self.workspace, state)
         selected: dict[Path, tuple[Path, str]] = {}
         candidates = 0
@@ -258,14 +314,31 @@ class ContextManager:
         sources: list[dict[str, Any]] = []
         used_chars = 0
         truncated = False
+        rule_texts: dict[Path, str] = {}
+        for path, _kind in selected.values():
+            try:
+                rule_texts[path] = path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                continue
+        target_chains: list[tuple[Path, list[Path]]] = []
+        for target in target_dirs:
+            chain = [
+                selected[directory][0]
+                for directory in _ancestor_directories(self.workspace.root, target)
+                if directory in selected and selected[directory][0] in rule_texts
+            ]
+            target_chains.append((target, chain))
+        conflicts = _rule_conflicts(self.workspace, target_chains, rule_texts)
+        conflicts_by_source: dict[str, list[dict[str, Any]]] = {}
+        for conflict in conflicts:
+            for source in (conflict["source"], conflict["other_source"]):
+                conflicts_by_source.setdefault(source, []).append(conflict)
         for directory, (path, kind) in sorted(
             selected.items(), key=lambda item: len(item[0].relative_to(self.workspace.root).parts)
         ):
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            text = rule_texts.get(path)
+            if text is None:
                 continue
-            text = text.strip()
             if not text:
                 continue
             relative = self.workspace.relative(path)
@@ -289,12 +362,13 @@ class ContextManager:
                     "kind": kind,
                     "chars": len(content),
                     "truncated": len(content) < len(text),
+                    "conflicts": conflicts_by_source.get(relative, []),
                 }
             )
             if len(sources) >= 12:
                 truncated = True
                 break
-        return _RuleBundle("\n\n".join(blocks), candidates, sources, truncated)
+        return _RuleBundle("\n\n".join(blocks), candidates, sources, conflicts, truncated)
 
     def _skills_summary(self) -> str:
         if self.skill_library is None:
