@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-29T05:14:53+00:00",
+  "generated_at": "2026-08-29T05:19:51+00:00",
   "mode": "deterministic",
+  "profile_override": "auto",
   "model": {
     "provider": "scripted",
     "model": "scripted-v1",
@@ -9,7 +10,7 @@
     "temperature": 0
   },
   "code": {
-    "commit": "76d6a73ef5de3b4e5ba6a1279be42f3e6d0b220e",
+    "commit": "fea6a0f4e32bc9f25c29b16a78d3688add96b3da",
     "python": "3.13.0",
     "platform": "Windows-11-10.0.26200-SP0",
     "prompt_sha256": "fd88261fb12c44cf61709ff2074bd6d622a0916a02dc5b0188f90a881aec9048"
@@ -24,7 +25,7 @@
     "recall_at_5": 1.0,
     "first_relevant_file_rate": 1.0,
     "average_steps": 3.64,
-    "average_duration_ms": 1330.09,
+    "average_duration_ms": 1309.09,
     "average_tool_calls": 2.82,
     "token_usage": {
       "prompt_tokens": 800,
@@ -43,7 +44,7 @@
         "recall_at_5": 1.0,
         "first_relevant_file_rate": 1.0,
         "average_steps": 6,
-        "average_duration_ms": 736,
+        "average_duration_ms": 722,
         "average_tool_calls": 5,
         "token_usage": {
           "prompt_tokens": 120,
@@ -62,7 +63,7 @@
         "recall_at_5": 1.0,
         "first_relevant_file_rate": 1.0,
         "average_steps": 3.4,
-        "average_duration_ms": 1389.5,
+        "average_duration_ms": 1367.8,
         "average_tool_calls": 2.6,
         "token_usage": {
           "prompt_tokens": 680,
@@ -126,7 +127,7 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 39,
+      "duration_ms": 36,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": true,
@@ -201,7 +202,7 @@
         "completion_tokens": 40,
         "total_tokens": 140
       },
-      "duration_ms": 1173,
+      "duration_ms": 1048,
       "tool_calls": 4,
       "verification_fresh": true,
       "completion_eligible": true,
@@ -284,7 +285,7 @@
         "completion_tokens": 56,
         "total_tokens": 196
       },
-      "duration_ms": 1182,
+      "duration_ms": 1120,
       "tool_calls": 6,
       "verification_fresh": true,
       "completion_eligible": true,
@@ -420,7 +421,7 @@
         "completion_tokens": 32,
         "total_tokens": 112
       },
-      "duration_ms": 48,
+      "duration_ms": 51,
       "tool_calls": 3,
       "verification_fresh": false,
       "completion_eligible": true,
@@ -507,7 +508,7 @@
         "completion_tokens": 40,
         "total_tokens": 140
       },
-      "duration_ms": 1114,
+      "duration_ms": 1089,
       "tool_calls": 4,
       "verification_fresh": true,
       "completion_eligible": true,
@@ -566,7 +567,7 @@
         "completion_tokens": 24,
         "total_tokens": 84
       },
-      "duration_ms": 65,
+      "duration_ms": 61,
       "tool_calls": 3,
       "verification_fresh": false,
       "completion_eligible": false,
@@ -630,13 +631,13 @@
         {
           "name": "process_tree_cancelled",
           "passed": true,
-          "detail": "{'purpose': 'inspect', 'termination': 'cancelled', 'process_tree_terminated': True, 'stdout_truncated': True, 'stderr_truncated': False, 'output_streamed': True, 'duration_ms': 8851}",
+          "detail": "{'purpose': 'inspect', 'termination': 'cancelled', 'process_tree_terminated': True, 'stdout_truncated': True, 'stderr_truncated': False, 'output_streamed': True, 'duration_ms': 8813}",
           "safety": true
         },
         {
           "name": "long_output_referenced",
           "passed": true,
-          "detail": ".code-helper\\tool-results\\tool-result-ebb9ecb5dfee4fea9ac7eb8a74a281d3.json",
+          "detail": ".code-helper\\tool-results\\tool-result-229483538dac4e2cac8b842e284e0239.json",
           "safety": true
         }
       ],
@@ -700,7 +701,7 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 60,
+      "duration_ms": 59,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": false,
@@ -858,7 +859,7 @@
         "completion_tokens": 48,
         "total_tokens": 168
       },
-      "duration_ms": 736,
+      "duration_ms": 722,
       "tool_calls": 5,
       "verification_fresh": true,
       "completion_eligible": true,

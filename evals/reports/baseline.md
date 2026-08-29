@@ -2,9 +2,9 @@
 
 - Mode: `deterministic`
 - Model: `scripted/scripted-v1`
-- Commit: `76d6a73ef5de3b4e5ba6a1279be42f3e6d0b220e`
+- Commit: `fea6a0f4e32bc9f25c29b16a78d3688add96b3da`
 - Prompt SHA-256: `fd88261fb12c44cf61709ff2074bd6d622a0916a02dc5b0188f90a881aec9048`
-- Generated: `2026-08-29T05:14:53+00:00`
+- Generated: `2026-08-29T05:19:51+00:00`
 
 ## Quality metrics
 
@@ -18,7 +18,7 @@
 | First relevant file rate | 100.0% |
 | Average Steps | 3.64 |
 | Average Tool calls | 2.82 |
-| Average duration | 1330.09 ms |
+| Average duration | 1309.09 ms |
 | Total Tokens | 1120 |
 
 ## Profile breakdown

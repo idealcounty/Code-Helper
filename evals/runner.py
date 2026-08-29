@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mode", choices=("deterministic", "real"), default="deterministic"
     )
+    parser.add_argument(
+        "--profile", choices=("auto", "project", "algorithm"), default="auto",
+        help="Override the task profile for this Eval run.",
+    )
     parser.add_argument("--task", action="append", dest="task_ids")
     parser.add_argument("--output-dir", type=Path, default=Path(".eval-results"))
     parser.add_argument(
@@ -66,6 +70,7 @@ async def run_suite(
     real_config: AppConfig | None = None,
     input_price_per_million: float | None = None,
     output_price_per_million: float | None = None,
+    profile_override: str = "auto",
 ) -> dict[str, Any]:
     tasks = load_tasks(task_ids)
     results: list[EvalTaskResult] = []
@@ -83,6 +88,7 @@ async def run_suite(
                     workspace,
                     mode=mode,
                     real_config=real_config,
+                    task_profile=profile_override,
                 )
             except Exception as exc:
                 result = _crashed_result(task.id, task.title, task.category, exc)
@@ -98,6 +104,7 @@ async def run_suite(
         "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "mode": mode,
+        "profile_override": profile_override,
         "model": _model_metadata(mode, real_config),
         "code": {
             "commit": _git_commit(),
@@ -272,6 +279,7 @@ def main() -> int:
     report = asyncio.run(
         run_suite(
             mode=args.mode,
+            profile_override=args.profile,
             task_ids=set(args.task_ids) if args.task_ids else None,
             real_config=real_config,
             input_price_per_million=args.input_price_per_million,

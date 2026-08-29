@@ -74,6 +74,7 @@ async def execute_task(
     *,
     mode: str,
     real_config: AppConfig | None = None,
+    task_profile: str = "auto",
 ) -> EvalTaskResult:
     write_fixture(workspace, task.fixture_files)
     initial_files = dict(task.fixture_files)
@@ -146,6 +147,7 @@ async def execute_task(
             config=config,
             workspace_path=workspace,
             mode=task.mode,
+            task_profile=task_profile,
             model_client=model,
             approval_handler=approval_handler,
             event_listener=on_event,
