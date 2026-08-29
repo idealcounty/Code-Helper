@@ -53,6 +53,7 @@ class EventStore:
     ) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        self.session_id = session_id
         self.path = self.root / f"{session_id}.jsonl"
         self.max_storage_bytes = max_storage_bytes
         self.max_session_files = max_session_files
@@ -115,6 +116,7 @@ class EventStore:
         if not self.path.exists():
             return []
         events: list[dict[str, Any]] = []
+        max_sequence = 0
         with self.path.open("r", encoding="utf-8") as handle:
             lines = handle.readlines()
         non_empty_lines = [
@@ -194,6 +196,42 @@ class EventStore:
                 self.last_load_diagnostics.append(
                     {"code": "LEGACY_EVENT_UNSIGNED", "line": line_number}
                 )
+            # Older JSONL writers did not always persist identity metadata.
+            # Normalize those records in memory so a new process can continue
+            # the same sequence and causation chain without rewriting history.
+            raw_sequence = parsed.get("sequence")
+            if raw_sequence is None or (
+                isinstance(raw_sequence, int)
+                and not isinstance(raw_sequence, bool)
+                and raw_sequence <= 0
+            ):
+                max_sequence += 1
+                parsed["sequence"] = max_sequence
+                self.last_load_diagnostics.append(
+                    {
+                        "code": "LEGACY_EVENT_SEQUENCE_ASSUMED",
+                        "line": line_number,
+                        "sequence": max_sequence,
+                    }
+                )
+            elif isinstance(raw_sequence, bool) or not isinstance(raw_sequence, int):
+                raise ValueError(
+                    f"Invalid session event sequence at line {line_number}: "
+                    f"{raw_sequence!r}"
+                )
+            else:
+                max_sequence = max(max_sequence, raw_sequence)
+
+            raw_event_id = parsed.get("event_id")
+            if not isinstance(raw_event_id, str) or not raw_event_id.strip():
+                parsed["event_id"] = "legacy-" + _integrity_digest(
+                    {"session_id": self.session_id, "line": line_number, "event": parsed}
+                )
+                self.last_load_diagnostics.append(
+                    {"code": "LEGACY_EVENT_ID_DERIVED", "line": line_number}
+                )
+            if schema_version is None:
+                parsed["schema_version"] = MIN_SUPPORTED_EVENT_SCHEMA_VERSION
             events.append(self.redactor.redact(parsed))
         return events
 

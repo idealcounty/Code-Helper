@@ -123,6 +123,47 @@ def test_event_store_accepts_legacy_schema_with_diagnostic(tmp_path: Path) -> No
     )
 
 
+def test_event_store_migrates_legacy_identity_for_restart(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session")
+    first = {
+        "type": "turn_started",
+        "session_id": "session",
+        "turn_id": "turn",
+        "payload": {"message": "hello"},
+    }
+    second = {
+        "type": "context_built",
+        "session_id": "session",
+        "turn_id": "turn",
+        "payload": {},
+    }
+    store.path.write_text(
+        json.dumps(first) + "\n" + json.dumps(second) + "\n", encoding="utf-8"
+    )
+
+    loaded = store.load()
+    assert [item["sequence"] for item in loaded] == [1, 2]
+    assert all(str(item["event_id"]).startswith("legacy-") for item in loaded)
+    assert len({item["event_id"] for item in loaded}) == 2
+    assert any(
+        item["code"] == "LEGACY_EVENT_SEQUENCE_ASSUMED"
+        for item in store.last_load_diagnostics
+    )
+    assert any(
+        item["code"] == "LEGACY_EVENT_ID_DERIVED"
+        for item in store.last_load_diagnostics
+    )
+
+    restarted = EventBus(store)
+    resumed = asyncio.run(
+        restarted.publish(
+            AgentEvent(type="turn_finished", session_id="session", turn_id="turn")
+        )
+    )
+    assert resumed.sequence == 3
+    assert resumed.causation_id == loaded[-1]["event_id"]
+
+
 def test_event_store_rejects_future_schema_without_silent_recovery(tmp_path: Path) -> None:
     store = EventStore(tmp_path, "session")
     future = AgentEvent(type="turn_started", session_id="session", turn_id="turn").to_dict()
