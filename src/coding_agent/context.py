@@ -10,6 +10,7 @@ from typing import Any
 from .session import AgentState
 from .skills import SkillLibrary
 from .memory import MemoryStore
+from .tokenizer import TokenEstimator
 from .user_memory import UserMemoryService
 from .profiles import get_profile
 from .tools.workspace import Workspace
@@ -39,6 +40,8 @@ class ModelContext:
     rule_conflicts: list[dict[str, Any]] = field(default_factory=list)
     repo_map: dict[str, Any] = field(default_factory=dict)
     context_summary_meta: dict[str, Any] = field(default_factory=dict)
+    estimated_tokens: int = 0
+    token_estimator: str = "char_proxy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +136,7 @@ class ContextManager:
         max_repo_map_chars: int = 12_000,
         repo_map_enabled: bool = True,
         project_verification_commands: Collection[str] | None = None,
+        model_name: str | None = None,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
@@ -146,6 +150,7 @@ class ContextManager:
         self.max_repo_map_chars = max_repo_map_chars
         self.repo_map_enabled = repo_map_enabled
         self.project_verification_commands = tuple(project_verification_commands or ())
+        self.token_estimator = TokenEstimator(model_name)
 
     def build(
         self,
@@ -227,6 +232,9 @@ class ContextManager:
         state.context_summary = summary
         state.context_summary_meta = summary_meta
         estimated_chars = _messages_chars(messages)
+        token_estimate = self.token_estimator.estimate(
+            [{"role": "system", "content": system}, *messages], tool_schemas
+        )
         return ModelContext(
             messages=[{"role": "system", "content": system}, *messages],
             allowed_tools=tool_schemas,
@@ -239,6 +247,8 @@ class ContextManager:
             rule_conflicts=rules.conflicts,
             repo_map=repo_map["metadata"],
             context_summary_meta=summary_meta,
+            estimated_tokens=token_estimate.tokens,
+            token_estimator=token_estimate.backend,
         )
 
     def _repo_map(self, state: AgentState) -> dict[str, Any]:

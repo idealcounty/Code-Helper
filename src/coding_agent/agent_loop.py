@@ -363,6 +363,8 @@ class AgentRunner:
                 "context_built",
                 {
                     "estimated_chars": context.estimated_chars,
+                    "estimated_tokens": context.estimated_tokens,
+                    "token_estimator": context.token_estimator,
                     "task_profile": state.task_profile,
                     "rule_candidates": context.rule_candidates,
                     "rule_chars": context.rule_chars,
