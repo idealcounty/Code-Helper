@@ -53,6 +53,7 @@ ALGORITHM_PROFILE = TaskProfile(
             "apply_patch",
             "write_file",
             "run_command",
+            "judge_algorithm",
             "update_plan",
             "get_diff",
         }

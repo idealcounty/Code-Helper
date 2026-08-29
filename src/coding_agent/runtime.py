@@ -25,6 +25,7 @@ from .tools import (
     ToolRegistry,
     Workspace,
     register_filesystem_tools,
+    register_algorithm_tools,
     register_git_tools,
     register_repo_map_tool,
     register_shell_tools,
@@ -129,6 +130,7 @@ def create_runtime(
         max_steps=config.max_steps,
     )
     register_filesystem_tools(registry, workspace)
+    register_algorithm_tools(registry, workspace, cancellation=cancellation)
     register_repo_map_tool(registry, workspace)
     register_git_tools(registry, workspace)
     register_shell_tools(
