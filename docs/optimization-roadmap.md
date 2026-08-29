@@ -265,14 +265,14 @@ Cline 提供按时间点比较和恢复文件/任务的体验。本项目应只�
 
 **实施状态：V1 已完成（2026-08-29）**
 
-- `Redactor` 统一处理事件持久化、WebSocket 事件和完整工具输出引用，支持 API Key、Bearer、常见供应商 Key、URL 凭据、敏感字段和值注入脱敏。
+- `Redactor` 统一处理事件持久化、WebSocket 事件和完整工具输出引用，支持 API Key、Bearer、Google/Anthropic/GitLab/npm/Hugging Face/Stripe 等常见供应商 Key、URL 凭据、敏感字段和值注入脱敏。
 - 新事件写入 `integrity_sha256`；加载时校验完整性，尾部半写/篡改隔离并产生诊断，中间损坏拒绝静默恢复。
 - 运行时保留原始值用于必要的 Agent 协议和状态推进，但不会把原始事件或完整命令输出发给 UI 或落盘。
 - `sensitive_environment` Eval 与脱敏专项测试覆盖事件监听、事件文件和完整工具输出引用。
 
 **剩余差距**
 
-- 当前是 best-effort 模式，尚未覆盖所有第三方凭据格式、二进制输出和跨进程密钥注入；用户仍不应把凭据放进提示词或命令行。
+- 当前仍是 best-effort 模式，尚未覆盖所有第三方凭据格式、二进制输出和跨进程密钥注入；用户仍不应把凭据放进提示词或命令行。
 - 事件内容校验目前只保护新写入事件，旧无签名事件会兼容加载并标记 `LEGACY_EVENT_UNSIGNED`，不会自动改写历史文件。
 - 工具完整输出目录支持 `CODE_HELPER_RESULT_STORE_MAX_BYTES` 与 `CODE_HELPER_RESULT_STORE_MAX_FILES`；达到限制时按最旧引用清理，单个超限结果保留摘要并返回 `RESULT_STORE_QUOTA`。Session 事件目录同样支持跨 Session 的字节/文件数保留上限，活动 Session 永不被清理。
 

@@ -39,13 +39,20 @@ def test_event_store_and_listeners_receive_redacted_data(tmp_path: Path) -> None
 
 def test_redactor_catches_common_key_shapes() -> None:
     redactor = Redactor()
-    text = "sk-abcdefghijklmnopqrstuvwxyz and AKIA1234567890ABCDEF"
+    text = (
+        "sk-abcdefghijklmnopqrstuvwxyz and AKIA1234567890ABCDEF "
+        "AIzaSyAbcdefghijklmnopqrstu "
+        "sk-ant_api-token-12345678901234567890 "
+        "glpat_12345678901234567890 npm_12345678901234567890 "
+        "hf_12345678901234567890 sbp_12345678901234567890 "
+        "sk_live_1234567890123456 rk_test_1234567890123456"
+    )
 
     safe = redactor.redact_text(text)
 
     assert "sk-abcdefghijklmnopqrstuvwxyz" not in safe
     assert "AKIA1234567890ABCDEF" not in safe
-    assert safe.count(REDACTED) == 2
+    assert safe.count(REDACTED) == 10
 
 
 def test_full_tool_output_reference_is_redacted(tmp_path: Path) -> None:

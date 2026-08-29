@@ -42,6 +42,18 @@ class Redactor:
             REDACTED,
         ),
         (
+            re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
+            REDACTED,
+        ),
+        (
+            re.compile(r"\b(?:sk-ant|glpat|npm|hf|sbp)_[A-Za-z0-9_-]{20,}\b"),
+            REDACTED,
+        ),
+        (
+            re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b"),
+            REDACTED,
+        ),
+        (
             re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s]+@"),
             rf"\1{REDACTED}@",
         ),
