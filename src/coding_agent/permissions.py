@@ -123,7 +123,7 @@ class PermissionPolicy:
             )
 
         if spec.risk is ToolRisk.COMMAND:
-            command = str(arguments.get("command", ""))
+            command = _command_text(arguments)
             if any(pattern.search(command) for pattern in self._dangerous_command_patterns):
                 return PermissionResult(
                     PermissionDecision.DENY,
@@ -185,7 +185,7 @@ class PermissionPolicy:
             capabilities = {ToolCapability.WORKSPACE_WRITE}
         elif spec.risk is ToolRisk.COMMAND:
             capabilities = {ToolCapability.PROCESS_EXEC}
-            command = str(arguments.get("command") or "")
+            command = _command_text(arguments)
             if self._network_pattern.search(command):
                 capabilities.add(ToolCapability.NETWORK_EGRESS)
             if self._install_pattern.search(command):
@@ -277,7 +277,7 @@ class PermissionPolicy:
                 except ValueError:
                     continue
             if grant.command_prefix is not None:
-                command = str(arguments.get("command") or "").strip()
+                command = _command_text(arguments).strip()
                 if not command.casefold().startswith(grant.command_prefix.casefold()):
                     continue
             return True
@@ -293,3 +293,11 @@ class PermissionPolicy:
             return str(path.resolve())
         except OSError:
             return str(path.absolute())
+
+
+def _command_text(arguments: dict[str, Any]) -> str:
+    """Normalize shell and structured invocations for policy classification."""
+    argv = arguments.get("argv")
+    if isinstance(argv, list):
+        return " ".join(str(item) for item in argv)
+    return str(arguments.get("command") or "")

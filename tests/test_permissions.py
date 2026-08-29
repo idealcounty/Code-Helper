@@ -59,6 +59,20 @@ def test_permission_result_exposes_capabilities_and_special_command_risks() -> N
     }
 
 
+def test_structured_argv_uses_same_command_risk_classification() -> None:
+    policy = PermissionPolicy()
+    spec = ToolSpec(
+        "run_command", "run", {"type": "object", "properties": {}}, ToolRisk.COMMAND, _noop
+    )
+    result = policy.evaluate(
+        mode="act",
+        spec=spec,
+        arguments={"argv": ["pip", "install", "requests"], "purpose": "other"},
+    )
+    assert result.decision is PermissionDecision.ASK
+    assert ToolCapability.DEPENDENCY_INSTALL in result.capabilities
+
+
 def test_workspace_boundary_is_checked_before_approval() -> None:
     policy = PermissionPolicy(workspace_root=Path("D:/workspace"))
     spec = _spec(ToolRisk.WRITE)

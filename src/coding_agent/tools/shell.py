@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 import os
 import signal
+import shlex
 import subprocess
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..cancellation import CancellationToken
-from .base import ToolResult, ToolRisk, ToolSpec
+from .base import ToolError, ToolResult, ToolRisk, ToolSpec
 from .registry import ToolRegistry
 from .workspace import Workspace
 
@@ -22,7 +23,10 @@ def register_shell_tools(
     cancellation: CancellationToken | None = None,
 ) -> None:
     async def run_command(arguments: dict[str, Any]) -> ToolResult:
-        command = arguments["command"]
+        argv = arguments.get("argv")
+        command = str(arguments.get("command") or "")
+        execution_mode = "argv" if argv is not None else "shell"
+        display_command = _display_command(command, argv)
         timeout = min(float(arguments.get("timeout", default_timeout)), 300.0)
         purpose = arguments.get("purpose", "other")
 
@@ -38,14 +42,17 @@ def register_shell_tools(
             process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             process_options["start_new_session"] = True
-        process = await asyncio.create_subprocess_shell(
-            command,
-            cwd=workspace.root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=_sanitized_environment(),
+        process_kwargs = {
+            "cwd": workspace.root,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "env": _sanitized_environment(),
             **process_options,
-        )
+        }
+        if argv is not None:
+            process = await asyncio.create_subprocess_exec(*argv, **process_kwargs)
+        else:
+            process = await asyncio.create_subprocess_shell(command, **process_kwargs)
         output_callback = arguments.get("_output_callback")
         communicate_task = asyncio.create_task(
             _communicate_with_deltas(process, output_callback)
@@ -68,7 +75,7 @@ def register_shell_tools(
                     communicate_task
                 )
                 data, output_metadata = _command_output(
-                    command, stdout_bytes, stderr_bytes, process.returncode
+                    display_command, stdout_bytes, stderr_bytes, process.returncode
                 )
                 return ToolResult.failure(
                     "COMMAND_CANCELLED",
@@ -88,7 +95,7 @@ def register_shell_tools(
                     communicate_task
                 )
                 data, output_metadata = _command_output(
-                    command, stdout_bytes, stderr_bytes, process.returncode
+                    display_command, stdout_bytes, stderr_bytes, process.returncode
                 )
                 return ToolResult.failure(
                     "COMMAND_TIMEOUT",
@@ -115,11 +122,12 @@ def register_shell_tools(
                     await cancel_task
 
         data, output_metadata = _command_output(
-            command, stdout_bytes, stderr_bytes, process.returncode
+            display_command, stdout_bytes, stderr_bytes, process.returncode
         )
         exit_code = data["exit_code"]
         metadata = {
             "purpose": purpose,
+            "execution_mode": execution_mode,
             "termination": "completed",
             "output_streamed": output_callback is not None,
             **output_metadata,
@@ -142,7 +150,15 @@ def register_shell_tools(
             {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string"},
+                    "command": {
+                        "type": "string",
+                        "description": "Legacy shell command; prefer argv for a structured invocation.",
+                    },
+                    "argv": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Executable and arguments, run without a shell.",
+                    },
                     "purpose": {
                         "type": "string",
                         "enum": ["inspect", "verify", "other"],
@@ -150,14 +166,43 @@ def register_shell_tools(
                     },
                     "timeout": {"type": "number", "default": default_timeout},
                 },
-                "required": ["command", "purpose"],
+                "required": ["purpose"],
                 "additionalProperties": False,
             },
             ToolRisk.COMMAND,
             run_command,
             timeout=default_timeout + 5,
+            validator=_validate_command_arguments,
         )
     )
+
+
+def _validate_command_arguments(arguments: dict[str, Any]) -> None:
+    command = arguments.get("command")
+    argv = arguments.get("argv")
+    if (command is None) == (argv is None):
+        raise ToolError(
+            "INVALID_ARGUMENTS",
+            "Provide exactly one of 'argv' (preferred) or 'command'",
+        )
+    if command is not None and not str(command).strip():
+        raise ToolError("INVALID_ARGUMENTS", "command must not be empty")
+    if argv is not None:
+        if not argv or any(not isinstance(item, str) or not item for item in argv):
+            raise ToolError(
+                "INVALID_ARGUMENTS",
+                "argv must contain a non-empty executable and string arguments",
+            )
+        if any("\x00" in item for item in argv):
+            raise ToolError("INVALID_ARGUMENTS", "argv cannot contain NUL bytes")
+
+
+def _display_command(command: str, argv: list[str] | None) -> str:
+    if argv is None:
+        return command
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
 
 
 async def _finish_communication(

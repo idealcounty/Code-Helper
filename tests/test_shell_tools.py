@@ -104,3 +104,55 @@ def test_command_streams_stdout_and_stderr_deltas(tmp_path: Path) -> None:
     assert result.metadata["output_streamed"] is True
     assert "out" in "".join(content for stream, content in deltas if stream == "stdout")
     assert "err" in "".join(content for stream, content in deltas if stream == "stderr")
+
+
+def test_structured_argv_runs_without_shell_interpretation(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_shell_tools(registry, Workspace(tmp_path), default_timeout=10)
+    result = asyncio.run(
+        ToolExecutor(registry).execute(
+            "run_command",
+            {
+                "argv": [sys.executable, "-c", "print('argv-ok')"],
+                "purpose": "inspect",
+            },
+        )
+    )
+
+    assert result.ok is True
+    assert result.data["stdout"].strip() == "argv-ok"
+    assert result.metadata["execution_mode"] == "argv"
+
+
+def test_structured_argv_does_not_expand_shell_metacharacters(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_shell_tools(registry, Workspace(tmp_path), default_timeout=10)
+    result = asyncio.run(
+        ToolExecutor(registry).execute(
+            "run_command",
+            {
+                "argv": [sys.executable, "-c", "import sys; print(sys.argv[1])", "a && echo injected"],
+                "purpose": "inspect",
+            },
+        )
+    )
+
+    assert result.ok is True
+    assert result.data["stdout"].strip() == "a && echo injected"
+
+
+def test_command_requires_exactly_one_invocation_form(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_shell_tools(registry, Workspace(tmp_path), default_timeout=10)
+    executor = ToolExecutor(registry)
+
+    both = asyncio.run(
+        executor.execute(
+            "run_command",
+            {"command": "echo no", "argv": ["echo", "no"], "purpose": "inspect"},
+        )
+    )
+    neither = asyncio.run(executor.execute("run_command", {"purpose": "inspect"}))
+
+    assert both.code == "INVALID_ARGUMENTS"
+    assert neither.code == "INVALID_ARGUMENTS"
