@@ -36,14 +36,14 @@ jobs:
         if: matrix.python-version == '3.11'
         run: >-
           python -m evals.runner
-          --output-dir .eval-results
+          --output-dir eval-results
           --compare evals/reports/baseline.json
       - name: Upload Agent Eval report
         if: always() && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
           name: agent-eval-report
-          path: .eval-results/*
+          path: eval-results/*
           if-no-files-found: error
 
   package:
