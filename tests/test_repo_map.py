@@ -118,8 +118,47 @@ def test_repo_map_reuses_dependency_graph_until_importer_changes(tmp_path: Path)
 
     importer.write_text("# import removed\n", encoding="utf-8")
     third = builder.build(query="core")
-    assert third["totals"]["dependency_graph_cache_misses"] == 1
+    assert third["totals"]["dependency_graph_incremental_updates"] == 1
     assert third["files"][0]["centrality"] == 0
+
+
+def test_repo_map_incremental_graph_preserves_unaffected_edges(tmp_path: Path) -> None:
+    (tmp_path / "core_a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "core_b.py").write_text("def b():\n    return 2\n", encoding="utf-8")
+    importer_a = tmp_path / "app_a.py"
+    importer_a.write_text("from core_a import a\n", encoding="utf-8")
+    (tmp_path / "app_b.py").write_text("from core_b import b\n", encoding="utf-8")
+
+    workspace = Workspace(tmp_path)
+    builder = RepoMapBuilder(workspace)
+    first = builder.build(query="core")
+    first_by_path = {item["path"]: item for item in first["files"]}
+    assert first_by_path["core_a.py"]["centrality"] == 1
+    assert first_by_path["core_b.py"]["centrality"] == 1
+
+    importer_a.write_text("# import removed\n", encoding="utf-8")
+    second = builder.build(query="core")
+    second_by_path = {item["path"]: item for item in second["files"]}
+
+    assert second["totals"]["dependency_graph_incremental_updates"] == 1
+    assert second_by_path["core_a.py"]["centrality"] == 0
+    assert second_by_path["core_b.py"]["centrality"] == 1
+    assert second_by_path["core_b.py"]["dependents"] == ["app_b.py"]
+
+
+def test_repo_map_rebuilds_graph_for_module_path_set_changes(tmp_path: Path) -> None:
+    (tmp_path / "core.py").write_text("def shared():\n    return 1\n", encoding="utf-8")
+    importer = tmp_path / "app.py"
+    importer.write_text("from core import shared\n", encoding="utf-8")
+    workspace = Workspace(tmp_path)
+    builder = RepoMapBuilder(workspace)
+
+    builder.build(query="core")
+    (tmp_path / "new_module.py").write_text("value = 1\n", encoding="utf-8")
+    second = builder.build(query="core")
+
+    assert second["totals"]["dependency_graph_cache_misses"] == 1
+    assert second["totals"]["dependency_graph_incremental_updates"] == 0
 
 
 def test_repo_map_cache_survives_workspace_restart(tmp_path: Path) -> None:

@@ -80,6 +80,7 @@ class RepoMapBuilder:
             "summary_cache_misses": 0,
             "dependency_graph_cache_hits": 0,
             "dependency_graph_cache_misses": 0,
+            "dependency_graph_incremental_updates": 0,
         }
         focus = {item.replace("\\", "/").lstrip("./") for item in (focus_paths or [])}
         seen_paths: set[Path] = set()
@@ -149,10 +150,15 @@ class RepoMapBuilder:
                 self.workspace.repo_map_cache.pop(cached_path, None)
 
         if include_dependency_graph:
-            files, graph_cache_hit = _attach_dependency_graph_cached(files, self.workspace)
-            totals[
-                "dependency_graph_cache_hits" if graph_cache_hit else "dependency_graph_cache_misses"
-            ] += 1
+            files, graph_cache_hit, graph_incremental = _attach_dependency_graph_cached(
+                files, self.workspace
+            )
+            if graph_cache_hit:
+                totals["dependency_graph_cache_hits"] += 1
+            elif graph_incremental:
+                totals["dependency_graph_incremental_updates"] += 1
+            else:
+                totals["dependency_graph_cache_misses"] += 1
         self.workspace.persist_repo_map_cache()
         ranked = sorted(files, key=lambda item: (-item.score, -item.centrality, item.path))
         ranked = ranked[:max_files]
@@ -331,7 +337,7 @@ def _attach_dependency_graph(files: list[RepoMapFile]) -> list[RepoMapFile]:
 
 def _attach_dependency_graph_cached(
     files: list[RepoMapFile], workspace: Workspace
-) -> tuple[list[RepoMapFile], bool]:
+) -> tuple[list[RepoMapFile], bool, bool]:
     signature = tuple(
         sorted(
             (
@@ -346,7 +352,30 @@ def _attach_dependency_graph_cached(
     cached = workspace.repo_graph_cache
     if cached is not None and cached[0] == signature:
         metadata = cached[1]
-        return _apply_dependency_metadata(files, metadata), True
+        return _apply_dependency_metadata(files, metadata), True, False
+
+    if cached is not None:
+        previous_paths = {path for path, _digest in cached[0]}
+        current_paths = {path for path, _digest in signature}
+        # Adding/removing/renaming a module can change package resolution in
+        # ways the lightweight importer cannot prove locally. Rebuild the
+        # graph conservatively for path-set changes; content-only edits use
+        # the incremental path below.
+        if previous_paths != current_paths:
+            enriched = _attach_dependency_graph(files)
+            metadata = {
+                item.path: (
+                    tuple(item.dependencies),
+                    tuple(item.dependents),
+                    item.centrality,
+                )
+                for item in enriched
+            }
+            workspace.repo_graph_cache = (signature, metadata)
+            return enriched, False, False
+        metadata = _incremental_dependency_metadata(files, workspace, cached)
+        workspace.repo_graph_cache = (signature, metadata)
+        return _apply_dependency_metadata(files, metadata), False, True
 
     enriched = _attach_dependency_graph(files)
     metadata = {
@@ -358,7 +387,104 @@ def _attach_dependency_graph_cached(
         for item in enriched
     }
     workspace.repo_graph_cache = (signature, metadata)
-    return enriched, False
+    return enriched, False, False
+
+
+def _incremental_dependency_metadata(
+    files: list[RepoMapFile],
+    workspace: Workspace,
+    cached: tuple[
+        tuple[tuple[str, str], ...],
+        dict[str, tuple[tuple[str, ...], tuple[str, ...], int]],
+    ],
+) -> dict[str, tuple[tuple[str, ...], tuple[str, ...], int]]:
+    """Update only sources affected by changed Python modules/importers."""
+    old_signature, old_metadata = cached
+    current_signature = {
+        path: digest
+        for path, digest in (
+            (
+                item.path,
+                workspace.repo_map_cache.get(
+                    (workspace.root / item.path).resolve(), ("", (), ())
+                )[0],
+            )
+            for item in files
+        )
+    }
+    previous_signature = dict(old_signature)
+    changed_paths = {
+        path
+        for path in set(previous_signature) | set(current_signature)
+        if previous_signature.get(path) != current_signature.get(path)
+    }
+    changed_modules = {
+        _python_module_name(path)
+        for path in changed_paths
+        if path.lower().endswith(".py")
+    }
+    current_paths = {item.path for item in files}
+    modules = {
+        _python_module_name(item.path): item.path
+        for item in files
+        if item.kind in {"python", "test"}
+    }
+    dependencies_by_path: dict[str, set[str]] = {}
+    for item in files:
+        previous = old_metadata.get(item.path)
+        previous_dependencies = set(previous[0]) if previous is not None else set()
+        if item.path in changed_paths or _imports_changed_module(item, changed_modules):
+            dependencies_by_path[item.path] = _resolve_item_dependencies(item, modules)
+        else:
+            dependencies_by_path[item.path] = {
+                path for path in previous_dependencies if path in current_paths
+            }
+    dependents_by_path: dict[str, set[str]] = {path: set() for path in current_paths}
+    for source, dependencies in dependencies_by_path.items():
+        for target in dependencies:
+            if target in dependents_by_path:
+                dependents_by_path[target].add(source)
+    return {
+        path: (
+            tuple(sorted(dependencies_by_path[path])),
+            tuple(sorted(dependents_by_path[path])),
+            len(dependents_by_path[path]),
+        )
+        for path in current_paths
+    }
+
+
+def _python_module_name(path: str) -> str:
+    module = path[:-3].replace("/", ".") if path.lower().endswith(".py") else ""
+    return module[:-9] if module.endswith(".__init__") else module
+
+
+def _imports_changed_module(item: RepoMapFile, changed_modules: set[str]) -> bool:
+    if not changed_modules or item.kind not in {"python", "test"}:
+        return False
+    source_module = _python_module_name(item.path)
+    source_package = source_module.rsplit(".", 1)[0] if "." in source_module else ""
+    return any(
+        candidate in changed_modules
+        for imported in item.imports
+        for candidate in _import_candidates(imported, source_package)
+    )
+
+
+def _resolve_item_dependencies(
+    item: RepoMapFile, modules: dict[str, str]
+) -> set[str]:
+    if item.kind not in {"python", "test"}:
+        return set()
+    source_module = _python_module_name(item.path)
+    source_package = source_module.rsplit(".", 1)[0] if "." in source_module else ""
+    dependencies: set[str] = set()
+    for imported in item.imports:
+        candidates = _import_candidates(imported, source_package)
+        target = next((modules[name] for name in candidates if name in modules), None)
+        if target is not None and target != item.path:
+            dependencies.add(target)
+    return dependencies
 
 
 def _apply_dependency_metadata(
