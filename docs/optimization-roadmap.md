@@ -71,7 +71,7 @@
 
 - 共享 `CancellationToken` 可中断模型请求、审批等待和 Tool Task；底层协程若暂时不响应取消，受控等待只给予 1 秒清理窗口，Web 再以 2 秒看门狗强制取消 Turn，避免界面永久停在“正在停止”。
 - `RunBudget` 统一执行 wall-time、Step 和供应商回报 Token 预算，耗尽后以带原因的 `PARTIAL` 结束。
-- shell 在 Windows 使用 `taskkill /T /F`、在 POSIX 使用独立进程组终止子进程树；超时和取消返回不同结构化代码。
+- shell 在 Windows 优先把命令加入带 `KILL_ON_JOB_CLOSE` 的 Job Object，取消时关闭作业并以 `taskkill /T /F` 兜底；POSIX 使用独立进程组终止子进程树。超时和取消返回不同结构化代码。
 - Web“智能”面板展示 Step、时间和 Token 遥测，“轨迹”面板展示停止与预算耗尽原因；停止后会用 Session API 校准 WebSocket 状态，避免遗漏终止事件后界面永久锁定。新建或切换对话不再被当前会话的运行状态禁用。
 - 同一 Session 支持连续多轮 `turn_started → turn_finished`；前端用运行版本号丢弃过期状态响应并乐观回显用户消息，终态之后的立即追问会等待上一任务收尾而不是误报 409。未预期的后台异常也会形成 `run_failed` 和最终失败事件，不再静默消失。
 - 已有普通及暂时拒绝取消的模型请求、Web 端到端停止、时间/Token 门禁和 Windows 子进程树清理测试。
