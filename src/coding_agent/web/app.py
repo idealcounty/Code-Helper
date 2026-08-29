@@ -561,6 +561,8 @@ def create_app(
                 "post": len(runtime.tool_executor.hooks.post),
                 "verification": len(runtime.tool_executor.hooks.verification),
                 "task_end": len(runtime.tool_executor.hooks.task_end),
+                "external": len(runtime.tool_executor.hooks.external),
+                "diagnostics": list(runtime.hook_config.diagnostics),
             },
             "permissions": {
                 "grants": runtime.runner.permission_policy.grants_snapshot(),

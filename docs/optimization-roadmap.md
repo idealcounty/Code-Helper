@@ -366,11 +366,11 @@ Claude Code Hooks 使用明确事件、matcher、结构化 JSON 输入输出、�
 - 支持 `PreToolUse`、`PostToolUse`、`OnVerification`、`OnTaskEnd` 四种事件；Pre Hook 可结构化拒绝，拒绝仍经 `ToolExecutor` 归一化为工具结果。
 - Hook 返回结构化 `allow / reason / code / additional_context`；生命周期决策写入 `hook_executed`，附加上下文写入 `hook_context` 并可恢复。
 - Runtime 默认启用安全的验证失败提示和任务结束证据提示；Hook 没有 PermissionPolicy、工具执行或审批权限。
-- Web 智能面板显示四类 Hook 的注册数量和管线状态。
+- Web 智能面板显示四类 Hook 的注册数量和管线状态，并显示外部 Hook 配置诊断。
+- 工作区可通过 `.code-helper/hooks.json` 声明受限外部 Hook：仅允许 argv（不经过 shell）、工作区内 cwd、0.1～10 秒超时和工具 matcher；stdin/stdout 使用结构化 JSON，Hook 失败会归一化为拒绝或 `HOOK_FAILED`。
 
 **已知边界与后续加固**
 
-- V1 只提供 Python 内部回调配置，尚未开放外部命令型 Hook 的 matcher、argv、超时和独立工作目录。
 - Hook 失败会被记录并保持主流程可继续；是否因 Hook 失败中止任务仍需结合真实工作流 Eval 决定。
 
 ### R12. 命令增量输出与统一运行可观测性

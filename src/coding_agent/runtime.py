@@ -9,6 +9,7 @@ from .budget import RunBudget
 from .cancellation import CancellationToken
 from .checkpoints import CheckpointManager
 from .hooks import HookDecision, HookManager
+from .hook_config import HookConfig, load_hook_config
 from .config import AppConfig
 from .context import ContextManager
 from .events import EventBus, EventListener, EventStore
@@ -53,6 +54,7 @@ class AgentRuntime:
     summary_store: SessionSummaryStore
     user_memory: UserMemoryService
     verification_config: VerificationConfig
+    hook_config: HookConfig
     cancellation: CancellationToken
     run_budget: RunBudget
     runner: AgentRunner
@@ -126,6 +128,7 @@ def create_runtime(
         initially_enabled=config.user_memory_enabled,
     )
     verification_config = VerificationConfig.load(workspace.root)
+    hook_config = load_hook_config(workspace.root)
     cancellation = CancellationToken()
     run_budget = RunBudget(
         max_seconds=config.run_timeout,
@@ -165,6 +168,7 @@ def create_runtime(
     hooks = HookManager(
         verification=[_verification_context_hook],
         task_end=[_task_end_evidence_hook],
+        external=list(hook_config.hooks),
     )
     tool_executor = ToolExecutor(
         registry,
@@ -203,6 +207,7 @@ def create_runtime(
         summary_store=summary_store,
         user_memory=user_memory,
         verification_config=verification_config,
+        hook_config=hook_config,
         cancellation=cancellation,
         run_budget=run_budget,
         runner=runner,
