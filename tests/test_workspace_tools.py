@@ -107,6 +107,34 @@ def test_patch_requires_unique_match(
     assert result.code == "EDIT_NOT_UNIQUE"
 
 
+def test_patch_rejects_identical_old_and_new_text_without_touching_file(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    path = tmp_path / "sample.txt"
+    original = "typedef long ll;\n"
+    path.write_text(original, encoding="utf-8")
+    before = path.stat().st_mtime_ns
+
+    result = asyncio.run(
+        executor.execute(
+            "apply_patch",
+            {
+                "path": "sample.txt",
+                "old_text": "typedef long ll;",
+                "new_text": "typedef long ll;",
+            },
+        )
+    )
+
+    assert result.ok is False
+    assert result.code == "NO_CHANGES"
+    assert "must differ" in result.message
+    assert result.metadata.get("mutated_files") is None
+    assert path.read_text(encoding="utf-8") == original
+    assert path.stat().st_mtime_ns == before
+
+
 def test_runtime_directory_is_reserved(
     tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
 ) -> None:

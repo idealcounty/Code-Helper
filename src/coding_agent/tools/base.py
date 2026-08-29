@@ -60,6 +60,7 @@ class ToolResult:
 
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[ToolResult]]
+ToolValidator = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,7 @@ class ToolSpec:
     risk: ToolRisk
     handler: ToolHandler
     timeout: float = 60.0
+    validator: ToolValidator | None = None
 
     def as_model_schema(self) -> dict[str, Any]:
         return {
@@ -117,6 +119,8 @@ class ToolSpec:
                     "INVALID_ARGUMENTS",
                     f"Argument {name!r} must be one of: {allowed}",
                 )
+        if self.validator is not None:
+            self.validator(arguments)
 
 
 def _matches_json_type(value: Any, expected: str) -> bool:

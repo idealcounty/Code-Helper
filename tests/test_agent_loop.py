@@ -173,6 +173,51 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     assert "tool_output_delta" in event_types
 
 
+def test_agent_rejects_noop_patch_before_checkpoint_or_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sample.py"
+    original = "typedef long ll;\n"
+    path.write_text(original, encoding="utf-8")
+    model = ScriptedModel(
+        [
+            ModelResponse(tool_calls=[ToolCall("read", "read_file", {"path": "sample.py"})]),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "noop",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "typedef long ll;",
+                            "new_text": "typedef long ll;",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(content="No change was applied."),
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=4)
+
+    result = asyncio.run(runner.run_turn(state, "Inspect the typedef"))
+    events = store.load()
+
+    assert result.status is AgentStatus.COMPLETED
+    assert path.read_text(encoding="utf-8") == original
+    assert state.changed_files == set()
+    assert state.last_mutation_sequence == 0
+    assert not any(event["type"] == "checkpoint_created" for event in events)
+    noop_result = next(
+        event
+        for event in events
+        if event["type"] == "tool_result" and event["payload"]["id"] == "noop"
+    )
+    assert noop_result["payload"]["result"]["code"] == "NO_CHANGES"
+    assert noop_result["payload"]["result"]["metadata"].get("mutated_files") is None
+
+
 def test_deepseek_reasoning_state_is_replayed_to_next_tool_round_only_in_memory(
     tmp_path: Path,
 ) -> None:

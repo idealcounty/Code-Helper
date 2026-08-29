@@ -12,6 +12,16 @@ from .workspace import Workspace
 MAX_FILE_BYTES = 1_000_000
 
 
+def _validate_apply_patch(arguments: dict[str, Any]) -> None:
+    old_text = arguments.get("old_text")
+    new_text = arguments.get("new_text")
+    if isinstance(old_text, str) and old_text == new_text:
+        raise ToolError(
+            "NO_CHANGES",
+            "old_text and new_text must differ; provide a replacement that changes the file",
+        )
+
+
 def register_filesystem_tools(registry: ToolRegistry, workspace: Workspace) -> None:
     async def list_files(arguments: dict[str, Any]) -> ToolResult:
         base = workspace.resolve(arguments.get("path", "."), must_exist=True)
@@ -215,7 +225,7 @@ def register_filesystem_tools(registry: ToolRegistry, workspace: Workspace) -> N
     registry.register(
         ToolSpec(
             "apply_patch",
-            "Replace one unique text block in a file that was previously read.",
+            "Replace one unique text block in a file that was previously read. old_text and new_text must differ.",
             _schema(
                 {
                     "path": {"type": "string"},
@@ -226,6 +236,7 @@ def register_filesystem_tools(registry: ToolRegistry, workspace: Workspace) -> N
             ),
             ToolRisk.WRITE,
             apply_patch,
+            validator=_validate_apply_patch,
         )
     )
     registry.register(
