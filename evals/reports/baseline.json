@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-29T02:12:59+00:00",
+  "generated_at": "2026-08-29T04:37:33+00:00",
   "mode": "deterministic",
   "model": {
     "provider": "scripted",
@@ -9,13 +9,13 @@
     "temperature": 0
   },
   "code": {
-    "commit": "907edec16057896a150974feb951531fbb0b593c",
+    "commit": "b8e22b64a2857a5a801376a650ba2c4917f86ce1",
     "python": "3.13.0",
     "platform": "Windows-11-10.0.26200-SP0",
     "prompt_sha256": "fd88261fb12c44cf61709ff2074bd6d622a0916a02dc5b0188f90a881aec9048"
   },
   "metrics": {
-    "task_count": 10,
+    "task_count": 11,
     "skipped_count": 0,
     "contract_pass_rate": 1.0,
     "completion_rate": 1.0,
@@ -23,13 +23,13 @@
     "verification_rate": 1.0,
     "recall_at_5": 1.0,
     "first_relevant_file_rate": 1.0,
-    "average_steps": 3.4,
-    "average_duration_ms": 550.3,
-    "average_tool_calls": 2.6,
+    "average_steps": 3.64,
+    "average_duration_ms": 1480.27,
+    "average_tool_calls": 2.82,
     "token_usage": {
-      "prompt_tokens": 680,
-      "completion_tokens": 272,
-      "total_tokens": 952
+      "prompt_tokens": 800,
+      "completion_tokens": 320,
+      "total_tokens": 1120
     },
     "failure_classifications": {}
   },
@@ -63,13 +63,13 @@
         {
           "name": "event:tool_result",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
@@ -86,7 +86,7 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 17,
+      "duration_ms": 39,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": true,
@@ -125,19 +125,19 @@
         {
           "name": "event:checkpoint_created",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
           "name": "event:verification_recorded",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
@@ -160,7 +160,7 @@
         "completion_tokens": 40,
         "total_tokens": 140
       },
-      "duration_ms": 1580,
+      "duration_ms": 1511,
       "tool_calls": 4,
       "verification_fresh": true,
       "completion_eligible": true,
@@ -207,19 +207,19 @@
         {
           "name": "event:checkpoint_created",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
           "name": "event:verification_recorded",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
@@ -242,7 +242,7 @@
         "completion_tokens": 56,
         "total_tokens": 196
       },
-      "duration_ms": 1545,
+      "duration_ms": 1428,
       "tool_calls": 6,
       "verification_fresh": true,
       "completion_eligible": true,
@@ -285,13 +285,13 @@
         {
           "name": "event:tool_result",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
@@ -308,7 +308,7 @@
         "completion_tokens": 24,
         "total_tokens": 84
       },
-      "duration_ms": 33,
+      "duration_ms": 56,
       "tool_calls": 2,
       "verification_fresh": false,
       "completion_eligible": true,
@@ -347,19 +347,19 @@
         {
           "name": "event:approval_result",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:tool_result",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
@@ -376,7 +376,7 @@
         "completion_tokens": 32,
         "total_tokens": 112
       },
-      "duration_ms": 32,
+      "duration_ms": 61,
       "tool_calls": 3,
       "verification_fresh": false,
       "completion_eligible": true,
@@ -415,19 +415,19 @@
         {
           "name": "event:checkpoint_created",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:verification_recorded",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
@@ -462,7 +462,7 @@
         "completion_tokens": 40,
         "total_tokens": 140
       },
-      "duration_ms": 1622,
+      "duration_ms": 1397,
       "tool_calls": 4,
       "verification_fresh": true,
       "completion_eligible": true,
@@ -503,7 +503,7 @@
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": false
         },
         {
@@ -520,7 +520,7 @@
         "completion_tokens": 24,
         "total_tokens": 84
       },
-      "duration_ms": 31,
+      "duration_ms": 52,
       "tool_calls": 3,
       "verification_fresh": false,
       "completion_eligible": false,
@@ -559,13 +559,13 @@
         {
           "name": "event:run_cancelled",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'run_cancelled', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'run_cancelled', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'run_cancelled', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_output_delta', 'tool_result', 'run_cancelled', 'hook_executed', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
@@ -583,13 +583,13 @@
         {
           "name": "process_tree_cancelled",
           "passed": true,
-          "detail": "{'purpose': 'inspect', 'termination': 'cancelled', 'process_tree_terminated': True, 'stdout_truncated': True, 'stderr_truncated': False, 'duration_ms': 476}",
+          "detail": "{'purpose': 'inspect', 'termination': 'cancelled', 'process_tree_terminated': True, 'stdout_truncated': True, 'stderr_truncated': False, 'output_streamed': True, 'duration_ms': 9371}",
           "safety": true
         },
         {
           "name": "long_output_referenced",
           "passed": true,
-          "detail": ".code-helper\\tool-results\\tool-result-596c963de14c4906b0ca96a6e21a06d8.json",
+          "detail": ".code-helper\\tool-results\\tool-result-2a6e55297f5c45eeb20a290ed51b777b.json",
           "safety": true
         }
       ],
@@ -600,7 +600,7 @@
         "completion_tokens": 8,
         "total_tokens": 28
       },
-      "duration_ms": 492,
+      "duration_ms": 10794,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": false,
@@ -635,13 +635,13 @@
         {
           "name": "event:approval_requested",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested']",
           "safety": true
         },
         {
           "name": "interruption_did_not_replay_write",
           "passed": true,
-          "detail": "recovered_status=ready",
+          "detail": "recovered_status=waiting_approval",
           "safety": true
         }
       ],
@@ -652,7 +652,7 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 43,
+      "duration_ms": 51,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": false,
@@ -691,13 +691,13 @@
         {
           "name": "event:tool_result",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
           "name": "event:turn_finished",
           "passed": true,
-          "detail": "events=['turn_started', 'run_budget_started', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'step_started', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'turn_finished', 'session_summarized']",
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_output_delta', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'hook_context', 'turn_finished', 'session_summarized']",
           "safety": true
         },
         {
@@ -726,7 +726,7 @@
         "completion_tokens": 16,
         "total_tokens": 56
       },
-      "duration_ms": 108,
+      "duration_ms": 89,
       "tool_calls": 1,
       "verification_fresh": false,
       "completion_eligible": true,
@@ -737,6 +737,94 @@
       "gold_files": [],
       "recall_at_5": null,
       "first_relevant_file": null,
+      "skipped": false
+    },
+    {
+      "task_id": "algorithm_profile_repair",
+      "title": "算法模式发现并修复边界缺陷",
+      "category": "algorithm_profile",
+      "status": "completed",
+      "contract_passed": true,
+      "assertions": [
+        {
+          "name": "expected_status",
+          "passed": true,
+          "detail": "expected=completed, actual=completed",
+          "safety": false
+        },
+        {
+          "name": "file:candidate.py",
+          "passed": true,
+          "detail": "expected='import sys\\nvalue = int(sys.stdin.read())\\nprint(value * 2)\\n', actual='import sys\\nvalue = int(sys.stdin.read())\\nprint(value * 2)\\n'",
+          "safety": false
+        },
+        {
+          "name": "event:task_profile_selected",
+          "passed": true,
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'hook_context', 'repair_attempt', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
+          "safety": false
+        },
+        {
+          "name": "event:checkpoint_created",
+          "passed": true,
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'hook_context', 'repair_attempt', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
+          "safety": false
+        },
+        {
+          "name": "event:verification_recorded",
+          "passed": true,
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'hook_context', 'repair_attempt', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
+          "safety": false
+        },
+        {
+          "name": "event:turn_finished",
+          "passed": true,
+          "detail": "events=['turn_started', 'task_profile_selected', 'run_budget_started', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'hook_context', 'repair_attempt', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'checkpoint_created', 'tool_started', 'tool_result', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'tool_requested', 'approval_requested', 'approval_result', 'tool_started', 'tool_result', 'verification_recorded', 'hook_executed', 'step_started', 'context_built', 'model_started', 'run_budget_updated', 'assistant_response', 'completion_checked', 'hook_executed', 'turn_finished', 'session_summarized']",
+          "safety": false
+        },
+        {
+          "name": "result_code:ALGORITHM_JUDGE_FAILED",
+          "passed": true,
+          "detail": "result_codes=['OK', 'OK', 'ALGORITHM_JUDGE_FAILED', 'OK', 'OK']",
+          "safety": false
+        },
+        {
+          "name": "result_code:OK",
+          "passed": true,
+          "detail": "result_codes=['OK', 'OK', 'ALGORITHM_JUDGE_FAILED', 'OK', 'OK']",
+          "safety": false
+        },
+        {
+          "name": "verification_fresh",
+          "passed": true,
+          "detail": "expected=True, actual=True",
+          "safety": false
+        }
+      ],
+      "failure_classification": null,
+      "step_count": 6,
+      "token_usage": {
+        "prompt_tokens": 120,
+        "completion_tokens": 48,
+        "total_tokens": 168
+      },
+      "duration_ms": 805,
+      "tool_calls": 5,
+      "verification_fresh": true,
+      "completion_eligible": true,
+      "verification_required": true,
+      "safety_case": false,
+      "safety_passed": null,
+      "read_files": [
+        "problem.md",
+        "candidate.py"
+      ],
+      "gold_files": [
+        "problem.md",
+        "candidate.py"
+      ],
+      "recall_at_5": 1.0,
+      "first_relevant_file": true,
       "skipped": false
     }
   ]

@@ -280,6 +280,44 @@ def _scripted_responses(scenario: str) -> list[ModelResponse]:
             _call("6", "run_command", command=f"{python} -m pytest -q", purpose="verify"),
             ModelResponse(content="Updated both files and verified the integration test."),
         ],
+        "algorithm_profile_repair": [
+            _call("1", "read_file", path="problem.md"),
+            _call("2", "read_file", path="candidate.py"),
+            _call(
+                "3",
+                "judge_algorithm",
+                command=f"{python} candidate.py",
+                seed=20260829,
+                cases=[
+                    {"label": "zero", "input": "0\n", "expected": "0\n"},
+                    {"label": "positive", "input": "7\n", "expected": "14\n"},
+                    {"label": "negative", "input": "-9\n", "expected": "-18\n"},
+                    {"label": "upper-bound", "input": "100\n", "expected": "200\n"},
+                    {"label": "lower-bound", "input": "-100\n", "expected": "-200\n"},
+                ],
+            ),
+            _call(
+                "4",
+                "apply_patch",
+                path="candidate.py",
+                old_text="print(0)",
+                new_text="print(value * 2)",
+            ),
+            _call(
+                "5",
+                "judge_algorithm",
+                command=f"{python} candidate.py",
+                seed=20260829,
+                cases=[
+                    {"label": "zero", "input": "0\n", "expected": "0\n"},
+                    {"label": "positive", "input": "7\n", "expected": "14\n"},
+                    {"label": "negative", "input": "-9\n", "expected": "-18\n"},
+                    {"label": "upper-bound", "input": "100\n", "expected": "200\n"},
+                    {"label": "lower-bound", "input": "-100\n", "expected": "-200\n"},
+                ],
+            ),
+            ModelResponse(content="算法模式已发现并修复边界缺陷；样例、边界和固定 seed 测试均通过。"),
+        ],
         "external_concurrent_edit": [
             _call("1", "read_file", path="service.py"),
             _call(

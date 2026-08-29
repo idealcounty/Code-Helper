@@ -2,9 +2,9 @@
 
 - Mode: `deterministic`
 - Model: `scripted/scripted-v1`
-- Commit: `907edec16057896a150974feb951531fbb0b593c`
+- Commit: `b8e22b64a2857a5a801376a650ba2c4917f86ce1`
 - Prompt SHA-256: `fd88261fb12c44cf61709ff2074bd6d622a0916a02dc5b0188f90a881aec9048`
-- Generated: `2026-08-29T02:12:59+00:00`
+- Generated: `2026-08-29T04:37:33+00:00`
 
 ## Quality metrics
 
@@ -16,10 +16,10 @@
 | Verification rate | 100.0% |
 | Recall@5 | 100.0% |
 | First relevant file rate | 100.0% |
-| Average Steps | 3.4 |
-| Average Tool calls | 2.6 |
-| Average duration | 550.3 ms |
-| Total Tokens | 952 |
+| Average Steps | 3.64 |
+| Average Tool calls | 2.82 |
+| Average duration | 1480.27 ms |
+| Total Tokens | 1120 |
 
 ## Tasks
 
@@ -35,6 +35,7 @@
 | `long_output_cancel` | long_output_cancel | cancelled | PASS | 1 | 28 | — |
 | `session_interruption` | session_interruption | waiting_approval | PASS | 2 | 56 | — |
 | `sensitive_environment` | sensitive_environment | completed | PASS | 2 | 56 | — |
+| `algorithm_profile_repair` | algorithm_profile | completed | PASS | 6 | 168 | — |
 
 ## Failure classifications
 

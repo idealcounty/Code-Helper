@@ -557,11 +557,19 @@ class AgentRunner:
                                 "message": exc.message,
                             },
                         )
-        if call.name == "run_command" and result.metadata.get("purpose") == "verify":
+        if call.name in {"run_command", "judge_algorithm"} and result.metadata.get("purpose") == "verify":
+            verification_command = str(call.arguments.get("command") or "")
+            verification_result = result.to_dict()
+            if call.name == "judge_algorithm":
+                # Judge results are verification evidence even though they do
+                # not expose a shell exit code. Keep the command label
+                # explicit so the evidence classifier can trust this tool.
+                verification_command = f"judge_algorithm {verification_command}".strip()
+                verification_result.setdefault("data", {})["exit_code"] = 0 if result.ok else 1
             evidence = build_verification_evidence(
-                command=str(call.arguments.get("command") or ""),
+                command=verification_command,
                 purpose=str(result.metadata.get("purpose") or call.arguments.get("purpose") or "other"),
-                result=result.to_dict(),
+                result=verification_result,
                 objective=state.current_objective,
                 changed_files=state.changed_files,
                 started_sequence=started_sequence,

@@ -59,6 +59,14 @@ def test_explicit_user_custom_command_is_accepted() -> None:
     assert evidence.source == "user_requested"
 
 
+def test_algorithm_judge_is_accepted_as_custom_verification() -> None:
+    evidence = _evidence("judge_algorithm python candidate.py")
+
+    assert evidence.accepted is True
+    assert evidence.kind == "custom"
+    assert evidence.source == "project_inferred"
+
+
 def test_exit_status_masking_is_rejected() -> None:
     evidence = _evidence("python -m pytest -q || true")
 

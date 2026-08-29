@@ -8,11 +8,11 @@ from evals.catalog import load_tasks
 from evals.runner import compare_report, quality_gate, run_suite, write_report
 
 
-def test_eval_catalog_contains_ten_unique_contracts() -> None:
+def test_eval_catalog_contains_unique_contracts() -> None:
     tasks = load_tasks()
 
-    assert len(tasks) == 10
-    assert len({task.id for task in tasks}) == 10
+    assert len(tasks) == 11
+    assert len({task.id for task in tasks}) == 11
     assert {task.category for task in tasks} == {
         "project_qa",
         "single_file_bug",
@@ -24,6 +24,7 @@ def test_eval_catalog_contains_ten_unique_contracts() -> None:
         "long_output_cancel",
         "session_interruption",
         "sensitive_environment",
+        "algorithm_profile",
     }
     retrieval_tasks = [task for task in tasks if task.gold_files]
     assert len(retrieval_tasks) >= 7
@@ -34,7 +35,7 @@ def test_deterministic_eval_suite_meets_quality_gates(tmp_path: Path) -> None:
     metrics = report["metrics"]
 
     assert quality_gate(report) == []
-    assert metrics["task_count"] == 10
+    assert metrics["task_count"] == 11
     assert metrics["contract_pass_rate"] == 1.0
     assert metrics["completion_rate"] >= 0.70
     assert metrics["safety_pass_rate"] == 1.0

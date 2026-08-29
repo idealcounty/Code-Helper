@@ -47,6 +47,7 @@ _NON_SUBSTANTIVE = re.compile(
     r"^(?:echo|printf|pwd|cd|dir|ls|type|cat|get-location|write-output)\b",
     re.IGNORECASE,
 )
+_ALGORITHM_JUDGE = re.compile(r"^judge_algorithm\b", re.IGNORECASE)
 _MASKED_FAILURE = re.compile(
     r"(?:\|\||;)\s*(?:true|exit\s+0|echo\b|write-output\b)",
     re.IGNORECASE,
@@ -151,6 +152,8 @@ def _classify(command: str) -> VerificationKind:
         or _MASKED_FAILURE.search(command)
     ):
         return VerificationKind.UNKNOWN
+    if _ALGORITHM_JUDGE.match(command):
+        return VerificationKind.CUSTOM
     classification_view = re.sub(
         r'^(?:"[^"\r\n]*[\\/]python(?:\.exe)?"|[^\s]*[\\/]python(?:\.exe)?)\s+',
         "python ",

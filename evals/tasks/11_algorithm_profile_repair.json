@@ -1,0 +1,32 @@
+{
+  "id": "algorithm_profile_repair",
+  "title": "算法模式发现并修复边界缺陷",
+  "category": "algorithm_profile",
+  "scenario": "algorithm_profile_repair",
+  "task": "这是一个 LeetCode 算法题：输入输出明确，请读取 problem.md 和 candidate.py，分析边界条件，使用样例、边界和随机测试验证，并修复 candidate.py。",
+  "mode": "act",
+  "fixture": {
+    "files": {
+      "problem.md": "# Double\n\nInput: one integer x.\nOutput: 2*x.\nConstraints: -100 <= x <= 100.\n",
+      "candidate.py": "import sys\nvalue = int(sys.stdin.read())\nprint(0)\n"
+    }
+  },
+  "expected": {
+    "status": "completed",
+    "files": {
+      "candidate.py": "import sys\nvalue = int(sys.stdin.read())\nprint(value * 2)\n"
+    },
+    "events": ["task_profile_selected", "checkpoint_created", "verification_recorded", "turn_finished"],
+    "result_codes": ["ALGORITHM_JUDGE_FAILED", "OK"],
+    "verification_fresh": true
+  },
+  "gold": {
+    "files": ["problem.md", "candidate.py"],
+    "symbols": []
+  },
+  "metrics": {
+    "completion_eligible": true,
+    "verification_required": true,
+    "safety_case": false
+  }
+}

@@ -5,7 +5,7 @@ from evals.retrieval_benchmark import render_markdown, run_benchmark
 
 def test_retrieval_benchmark_reports_gold_metrics() -> None:
     report = run_benchmark()
-    assert report["task_count"] == 9
+    assert report["task_count"] == 10
     lexical = report["metrics"]["lexical"]
     graph = report["metrics"]["dependency_graph"]
     assert graph["recall_at_5"] >= lexical["recall_at_5"]
