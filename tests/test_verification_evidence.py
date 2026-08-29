@@ -103,6 +103,24 @@ def test_targeted_test_must_cover_every_changed_file() -> None:
     assert "worker.py" in evidence.reason
 
 
+def test_targeted_test_can_cover_changed_file_through_dependency_graph() -> None:
+    evidence = build_verification_evidence(
+        command="python -m pytest tests/test_app.py",
+        purpose="verify",
+        result=_result(),
+        objective="Fix the bug",
+        changed_files={"src/app.py", "src/worker.py"},
+        started_sequence=4,
+        finished_sequence=5,
+        dependency_graph={
+            "tests/test_app.py": ["src/app.py"],
+            "src/app.py": ["src/worker.py"],
+        },
+    )
+
+    assert evidence.accepted is True
+
+
 def test_verification_freshness_is_identical_after_event_restore() -> None:
     state = AgentState.create(session_id="restored")
     state.restore_from_events(

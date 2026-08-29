@@ -22,6 +22,7 @@ from .stuck_detector import StuckDetector
 from .tool_executor import ToolExecutor
 from .tools.base import ToolError, ToolResult, ToolRisk
 from .tools.registry import ToolRegistry
+from .tools.workspace import Workspace
 from .verifier import CompletionStatus, Verifier
 from .verification_evidence import build_verification_evidence
 
@@ -60,6 +61,7 @@ class AgentRunner:
         cancellation: CancellationToken | None = None,
         run_budget: RunBudget | None = None,
         project_verification_commands: Collection[str] | None = None,
+        workspace: Workspace | None = None,
     ) -> None:
         self.model_client = model_client
         self.context_manager = context_manager
@@ -75,6 +77,7 @@ class AgentRunner:
         self.cancellation = cancellation or CancellationToken()
         self.run_budget = run_budget or RunBudget()
         self.project_verification_commands = tuple(project_verification_commands or ())
+        self.workspace = workspace
         self._stuck_recovery_attempts = 0
         self._stuck_signature: tuple[str, str] | None = None
 
@@ -947,6 +950,7 @@ class AgentRunner:
                 started_sequence=started_sequence,
                 finished_sequence=event.sequence,
                 project_commands=self.project_verification_commands,
+                dependency_graph=self._verification_dependency_graph(),
             )
             evidence_payload = evidence.to_dict()
             await self._emit(
@@ -966,6 +970,25 @@ class AgentRunner:
             await self._emit(state, "plan_updated", {
                 "plan": state.plan, "reason": result.data.get("reason", "")
             })
+
+    def _verification_dependency_graph(self) -> dict[str, list[str]] | None:
+        """Build a best-effort import graph for targeted-test coverage checks."""
+        workspace = self.workspace or getattr(self.context_manager, "workspace", None)
+        if workspace is None:
+            return None
+        try:
+            from .repo_map import RepoMapBuilder
+
+            data = RepoMapBuilder(workspace).build(max_files=80)
+        except Exception:
+            # Verification evidence must remain conservative and must never
+            # fail a tool result because indexing was unavailable.
+            return None
+        return {
+            str(item.get("path") or ""): [str(value) for value in item.get("dependencies", [])]
+            for item in data.get("files", [])
+            if item.get("path")
+        }
 
     def _allowed_tool_schemas(self, mode: str, task_profile: str = "project") -> list[dict[str, Any]]:
         profile_tools = get_profile(task_profile).allowed_tools

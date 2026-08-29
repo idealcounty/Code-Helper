@@ -4,7 +4,7 @@ import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import PurePath
-from typing import Any, Collection
+from typing import Any, Collection, Mapping
 
 
 class VerificationKind(StrEnum):
@@ -104,6 +104,7 @@ def build_verification_evidence(
     started_sequence: int,
     finished_sequence: int,
     project_commands: Collection[str] | None = None,
+    dependency_graph: Mapping[str, Collection[str]] | None = None,
 ) -> VerificationEvidence:
     normalized = " ".join(command.strip().split())
     data = result.get("data") or {}
@@ -127,6 +128,7 @@ def build_verification_evidence(
         source=source,
         configured=configured,
         changed_files=related_files,
+        dependency_graph=dependency_graph,
     )
     accepted = passed and applicable
     if applicable and not passed:
@@ -203,6 +205,7 @@ def _applicability(
     source: VerificationSource,
     configured: bool = False,
     changed_files: tuple[str, ...],
+    dependency_graph: Mapping[str, Collection[str]] | None = None,
 ) -> tuple[bool, str]:
     if purpose != "verify":
         return False, "Command was not requested as verification"
@@ -229,6 +232,9 @@ def _applicability(
             if not any(
                 PurePath(path.replace("\\", "/")).stem.casefold() in stem
                 for stem in target_stems
+            ) and not any(
+                _dependency_covers(target, path, dependency_graph)
+                for target in targets
             )
         ]
         if uncovered:
@@ -238,6 +244,55 @@ def _applicability(
                 + ", ".join(uncovered),
             )
     return True, f"Recognized {kind.value} command with {source.value} scope"
+
+
+def _dependency_covers(
+    target: str,
+    changed: str,
+    dependency_graph: Mapping[str, Collection[str]] | None,
+) -> bool:
+    """Return whether a targeted test transitively imports a changed file."""
+    if not dependency_graph:
+        return False
+    normalized = {
+        str(key).replace("\\", "/"): {
+            str(value).replace("\\", "/") for value in values
+        }
+        for key, values in dependency_graph.items()
+    }
+    target_path = target.replace("\\", "/").lstrip("./")
+    changed_path = changed.replace("\\", "/").lstrip("./")
+    target_candidates = {
+        target_path,
+        target_path.removeprefix("tests/"),
+    }
+    changed_candidates = {
+        changed_path,
+        changed_path.removeprefix("./"),
+    }
+    queue = list(target_candidates)
+    visited: set[str] = set()
+    while queue:
+        current = queue.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        dependencies = normalized.get(current, set())
+        if dependencies & changed_candidates:
+            return True
+        for dependency in dependencies:
+            if dependency not in visited:
+                queue.append(dependency)
+    # Repo Map may store a path with a leading `./` or use an equivalent
+    # extension-resolved path. Fall back to suffix matching only after exact
+    # traversal so unrelated same-named files remain conservative.
+    for candidate in visited:
+        if any(
+            PurePath(value).name.casefold() == PurePath(changed_path).name.casefold()
+            for value in normalized.get(candidate, set())
+        ):
+            return True
+    return False
 
 
 def _matches_project_command(
