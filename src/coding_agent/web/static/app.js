@@ -3,6 +3,8 @@ const state = {
   workspace: null,
   socket: null,
   running: false,
+  stopping: false,
+  runSyncTimer: null,
   pendingApproval: null,
   seenSequences: new Set(),
   selectedFilePath: null,
@@ -87,6 +89,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
       }),
     });
     closeSocket();
+    clearRunSyncTimer();
     state.sessionId = result.session_id;
     state.workspace = result.workspace;
     state.running = false;
@@ -134,6 +137,7 @@ function connectSocket() {
   const sessionId = state.sessionId;
   const socket = new WebSocket(`${protocol}://${location.host}/ws/sessions/${sessionId}`);
   state.socket = socket;
+  socket.onopen = () => reconcileRunState(sessionId, { quiet: true });
   socket.onmessage = (message) => {
     if (state.sessionId === sessionId) handleEvent(JSON.parse(message.data));
   };
@@ -172,7 +176,7 @@ function renderSessionList(sessions) {
     button.className = `thread-item ${session.session_id === state.sessionId ? "active" : ""}`;
     button.innerHTML = `<span class="thread-state ${escapeHtml(session.status)}"></span><span class="thread-copy"><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.preview)}</small></span><time>${formatRelativeTime(session.updated_at)}</time>`;
     button.addEventListener("click", () => {
-      if (session.session_id !== state.sessionId && !state.running) {
+      if (session.session_id !== state.sessionId) {
         openWorkspace(state.workspace, session.session_id, true);
       }
     });
@@ -411,6 +415,7 @@ async function sendMessage() {
   elements.messageInput.value = "";
   try {
     await api(`/api/sessions/${state.sessionId}/messages`, { method: "POST", body: JSON.stringify({ content }) });
+    state.stopping = false;
     setRunning(true);
   } catch (error) {
     elements.messageInput.value = content;
@@ -420,10 +425,45 @@ async function sendMessage() {
 
 async function cancelRun() {
   if (!state.sessionId) return;
+  const sessionId = state.sessionId;
   try {
     await api(`/api/sessions/${state.sessionId}/cancel`, { method: "POST" });
+    state.stopping = true;
+    elements.cancelButton.disabled = true;
+    updateRunStatus();
+    reconcileRunState(sessionId);
     showToast("已请求停止 Agent");
   } catch (error) { showToast(error.message); }
+}
+
+function clearRunSyncTimer() {
+  if (state.runSyncTimer !== null) clearTimeout(state.runSyncTimer);
+  state.runSyncTimer = null;
+}
+
+async function reconcileRunState(sessionId, { quiet = false, attempt = 0 } = {}) {
+  if (!sessionId || state.sessionId !== sessionId) return;
+  clearRunSyncTimer();
+  try {
+    const details = await api(`/api/sessions/${sessionId}`);
+    if (state.sessionId !== sessionId) return;
+    if (!details.running) {
+      state.stopping = false;
+      setRunning(false);
+      if (!quiet) showToast(details.status === "cancelled" ? "Agent 已停止，可以继续对话" : "Agent 已结束运行");
+      return;
+    }
+    setRunning(true);
+    if (state.stopping) updateRunStatus();
+  } catch (error) {
+    if (!quiet && attempt === 0) showToast(`状态同步失败：${error.message}`);
+  }
+  if (state.sessionId !== sessionId || attempt >= 60) return;
+  const delay = attempt < 8 ? 250 : Math.min(2000, 500 + attempt * 50);
+  state.runSyncTimer = setTimeout(
+    () => reconcileRunState(sessionId, { quiet: true, attempt: attempt + 1 }),
+    delay,
+  );
 }
 
 async function refreshDiff() {
@@ -486,12 +526,14 @@ function handleEvent(event) {
   if (event.sequence) state.seenSequences.add(event.sequence);
   const payload = event.payload || {};
   switch (event.type) {
-    case "turn_started": addMessage("user", payload.message); setRunning(true); break;
+    case "turn_started": state.stopping = false; addMessage("user", payload.message); setRunning(true); break;
     case "run_budget_started":
     case "run_budget_updated":
       refreshIntelligenceIfVisible();
       break;
     case "run_cancel_requested":
+      state.stopping = true;
+      updateRunStatus();
       addActivity("正在停止任务", "等待当前模型请求或工具进程安全退出", "warning");
       refreshIntelligenceIfVisible();
       break;
@@ -551,7 +593,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": clearRunSyncTimer(); state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }
@@ -665,12 +707,20 @@ function appendTerminal(text, className = "") {
 function setRunning(running) {
   state.running = running;
   elements.sendButton.disabled = running || !state.sessionId;
-  elements.cancelButton.disabled = !running;
+  elements.cancelButton.disabled = !running || state.stopping;
   elements.messageInput.disabled = running || !state.sessionId;
-  elements.newSessionButton.disabled = running || !state.workspace;
+  elements.newSessionButton.disabled = !state.workspace;
   elements.reasoningSelect.disabled = running;
   elements.runStatus.classList.toggle("running", running);
-  elements.runStatus.querySelector("span").textContent = running ? "Agent 运行中" : state.sessionId ? "就绪" : "未连接";
+  updateRunStatus();
+}
+
+function updateRunStatus() {
+  elements.runStatus.querySelector("span").textContent = state.stopping
+    ? "正在停止 · 可新建对话"
+    : state.running
+      ? "Agent 运行中"
+      : state.sessionId ? "就绪" : "未连接";
 }
 
 async function loadIntelligence() {

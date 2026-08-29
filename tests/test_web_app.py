@@ -47,6 +47,8 @@ def test_health_and_static_index() -> None:
     assert "file-preview-notice" in frontend_bundle.text
     assert "grantButton" in frontend_bundle.text
     assert 'case "model_progress"' in frontend_bundle.text
+    assert "reconcileRunState(sessionId)" in frontend_bundle.text
+    assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text
     assert "本会话允许" in index.text
 
 
@@ -357,6 +359,20 @@ def test_cancel_endpoint_interrupts_active_web_run(tmp_path: Path) -> None:
         )
         assert sent.status_code == 202
         assert model.started.wait(timeout=1)
+        original_session = application.state.session_manager.get(session_id)
+        original_task = original_session.task
+
+        reopened = client.post(
+            "/api/sessions",
+            json={
+                "workspace": str(tmp_path),
+                "mode": "ask",
+                "session_id": session_id,
+            },
+        )
+        assert reopened.status_code == 200
+        assert application.state.session_manager.get(session_id) is original_session
+        assert original_session.task is original_task
 
         cancelled = client.post(f"/api/sessions/{session_id}/cancel")
         deadline = time.monotonic() + 2

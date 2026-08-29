@@ -254,10 +254,18 @@ class WebSessionManager:
                 "API key is not configured; set DEEPSEEK_API_KEY or "
                 "CODE_HELPER_API_KEY"
             )
+        resolved_workspace = Path(workspace).expanduser().resolve(strict=True)
+        if not resolved_workspace.is_dir():
+            raise ValueError("Workspace path is not a directory")
+        if session_id and session_id in self.sessions:
+            existing = self.sessions[session_id]
+            if existing.runtime.workspace.root != resolved_workspace:
+                raise ValueError("Session belongs to a different workspace")
+            return existing
         broker = ApprovalBroker()
         runtime = create_runtime(
             config=self.config,
-            workspace_path=Path(workspace),
+            workspace_path=resolved_workspace,
             mode=mode,
             task_profile=task_profile,
             session_id=session_id,
