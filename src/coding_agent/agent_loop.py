@@ -28,6 +28,8 @@ TurnSummarizer = Callable[[AgentState, AgentStatus, str], dict[str, Any]]
 CANCEL_RESULT_GRACE_SECONDS = 12
 OPERATION_CANCEL_GRACE_SECONDS = 1.0
 CONTROL_PROGRESS_INTERVAL_SECONDS = 10.0
+OUTPUT_DELTA_INTERVAL_SECONDS = 0.05
+OUTPUT_DELTA_MAX_BYTES = 16_384
 
 
 @dataclass(frozen=True, slots=True)
@@ -669,30 +671,65 @@ class AgentRunner:
             {"id": call.id, "name": call.name, "arguments": call.arguments},
         )
         output_index = 0
+        output_pending: dict[str, list[str]] = {"stdout": [], "stderr": []}
+        output_pending_bytes = 0
+        output_last_flush = asyncio.get_running_loop().time()
+        output_lock = asyncio.Lock()
+
+        async def flush_output(*, force: bool = False) -> None:
+            nonlocal output_index, output_pending_bytes, output_last_flush
+            async with output_lock:
+                now = asyncio.get_running_loop().time()
+                if not force and (
+                    now - output_last_flush < OUTPUT_DELTA_INTERVAL_SECONDS
+                    and output_pending_bytes < OUTPUT_DELTA_MAX_BYTES
+                ):
+                    return
+                batches = {
+                    stream: "".join(chunks)
+                    for stream, chunks in output_pending.items()
+                    if chunks
+                }
+                output_pending["stdout"].clear()
+                output_pending["stderr"].clear()
+                output_pending_bytes = 0
+                output_last_flush = now
+                for stream, batch in batches.items():
+                    output_index += 1
+                    await self._emit(
+                        state,
+                        "tool_output_delta",
+                        {
+                            "id": call.id,
+                            "name": call.name,
+                            "stream": stream,
+                            "content": batch,
+                            "index": output_index,
+                            "coalesced": True,
+                        },
+                    )
 
         async def on_output(stream: str, content: str) -> None:
-            nonlocal output_index
-            output_index += 1
-            await self._emit(
-                state,
-                "tool_output_delta",
-                {
-                    "id": call.id,
-                    "name": call.name,
-                    "stream": stream,
-                    "content": content,
-                    "index": output_index,
-                },
-            )
+            nonlocal output_pending_bytes
+            async with output_lock:
+                output_pending.setdefault(stream, []).append(content)
+                output_pending_bytes += len(content.encode("utf-8", errors="replace"))
+                should_flush = output_pending_bytes >= OUTPUT_DELTA_MAX_BYTES
+            if should_flush:
+                await flush_output()
 
-        result = await self._await_controlled(
-            self.tool_executor.execute(
-                call.name,
-                call.arguments,
-                output_callback=on_output if call.name == "run_command" else None,
-            ),
-            allow_cancel_result=True,
-        )
+        try:
+            result = await self._await_controlled(
+                self.tool_executor.execute(
+                    call.name,
+                    call.arguments,
+                    output_callback=on_output if call.name == "run_command" else None,
+                ),
+                allow_cancel_result=True,
+            )
+        finally:
+            if call.name == "run_command":
+                await flush_output(force=True)
         await self._record_tool_result(
             state, call, result, started_sequence=started_event.sequence
         )

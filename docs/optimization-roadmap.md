@@ -388,7 +388,7 @@ shell 现在并发读取 stdout/stderr，并在进程运行期间通过 Agent Ev
 
 **已知边界与后续加固**
 
-- V1 仍按读取块推送，尚未实现按时间窗口的 UI 速率限制；极高频输出时可在 EventBus 层增加批量合并。
+- V1 已在 Agent Loop 层按 50ms/16KiB 窗口合并 stdout/stderr 增量，降低极高频输出对 UI 和 WebSocket 的压力；更细粒度的 EventBus 批量策略仍可按真实负载加固。
 - 模型、审批、Hook 和上下文构造的细粒度耗时尚未统一成单独 Span，当前仍由已有事件和工具统计提供可观测性。
 
 ## 7. P2：收益明确后再做
