@@ -140,6 +140,7 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     event_types = [event["type"] for event in store.load()]
     assert "checkpoint_created" in event_types
     assert "tool_result" in event_types
+    assert "tool_output_delta" in event_types
 
 
 def test_live_reducer_and_event_replay_have_matching_projection(tmp_path: Path) -> None:

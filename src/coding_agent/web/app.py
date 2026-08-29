@@ -412,12 +412,15 @@ def create_app(
         output_references: list[str] = []
         repo_map_calls = 0
         last_context_built: dict[str, Any] = {}
+        output_deltas = 0
         for event in events:
             payload = event.get("payload") or {}
             if event.get("type") == "context_compacted":
                 compactions += 1
             if event.get("type") == "context_built":
                 last_context_built = dict(payload)
+            if event.get("type") == "tool_output_delta":
+                output_deltas += 1
             if event.get("type") != "tool_result":
                 continue
             result = payload.get("result") or {}
@@ -492,6 +495,7 @@ def create_app(
                 "verification": len(runtime.tool_executor.hooks.verification),
                 "task_end": len(runtime.tool_executor.hooks.task_end),
             },
+            "observability": {"tool_output_deltas": output_deltas},
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "tool_totals": tool_totals,

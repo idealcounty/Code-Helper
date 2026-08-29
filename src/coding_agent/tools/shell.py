@@ -5,6 +5,7 @@ import contextlib
 import os
 import signal
 import subprocess
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..cancellation import CancellationToken
@@ -45,7 +46,10 @@ def register_shell_tools(
             env=_sanitized_environment(),
             **process_options,
         )
-        communicate_task = asyncio.create_task(process.communicate())
+        output_callback = arguments.get("_output_callback")
+        communicate_task = asyncio.create_task(
+            _communicate_with_deltas(process, output_callback)
+        )
         cancel_task = (
             asyncio.create_task(cancellation.wait()) if cancellation is not None else None
         )
@@ -75,6 +79,7 @@ def register_shell_tools(
                         "termination": "cancelled",
                         "process_tree_terminated": terminated,
                         **output_metadata,
+                        "output_streamed": output_callback is not None,
                     },
                 )
             if communicate_task not in done:
@@ -95,6 +100,7 @@ def register_shell_tools(
                         "termination": "timeout",
                         "process_tree_terminated": terminated,
                         **output_metadata,
+                        "output_streamed": output_callback is not None,
                     },
                 )
             stdout_bytes, stderr_bytes = communicate_task.result()
@@ -115,6 +121,7 @@ def register_shell_tools(
         metadata = {
             "purpose": purpose,
             "termination": "completed",
+            "output_streamed": output_callback is not None,
             **output_metadata,
         }
         if exit_code == 0:
@@ -163,6 +170,37 @@ async def _finish_communication(
         with contextlib.suppress(asyncio.CancelledError):
             await task
         return b"", b""
+
+
+async def _communicate_with_deltas(
+    process: asyncio.subprocess.Process,
+    callback: Callable[[str, str], Awaitable[None] | None] | None,
+) -> tuple[bytes, bytes]:
+    """Read both streams incrementally while retaining bytes for the final result."""
+    async def read_stream(stream: asyncio.StreamReader | None, name: str) -> bytes:
+        if stream is None:
+            return b""
+        chunks: list[bytes] = []
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if callback is not None:
+                try:
+                    value = callback(name, chunk.decode(errors="replace"))
+                    if hasattr(value, "__await__"):
+                        await value
+                except Exception:
+                    # Output observers must never change command success or cancellation.
+                    pass
+        return b"".join(chunks)
+
+    stdout_task = asyncio.create_task(read_stream(process.stdout, "stdout"))
+    stderr_task = asyncio.create_task(read_stream(process.stderr, "stderr"))
+    stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
+    await process.wait()
+    return stdout, stderr
 
 
 async def _terminate_process_tree(process: asyncio.subprocess.Process) -> bool:

@@ -79,3 +79,28 @@ def test_cancelled_command_terminates_child_process_tree(tmp_path: Path) -> None
     assert result.metadata["termination"] == "cancelled"
     assert result.metadata["process_tree_terminated"] is True
     assert not (tmp_path / "child-finished").exists()
+
+
+def test_command_streams_stdout_and_stderr_deltas(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_shell_tools(registry, Workspace(tmp_path), default_timeout=10)
+    executor = ToolExecutor(registry)
+    deltas: list[tuple[str, str]] = []
+
+    async def on_output(stream: str, content: str) -> None:
+        deltas.append((stream, content))
+
+    code = "import sys; print('out'); print('err', file=sys.stderr)"
+    command = f'"{sys.executable}" -c "{code}"'
+    result = asyncio.run(
+        executor.execute(
+            "run_command",
+            {"command": command, "purpose": "inspect"},
+            output_callback=on_output,
+        )
+    )
+
+    assert result.ok is True
+    assert result.metadata["output_streamed"] is True
+    assert "out" in "".join(content for stream, content in deltas if stream == "stdout")
+    assert "err" in "".join(content for stream, content in deltas if stream == "stderr")

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+from collections.abc import Awaitable, Callable
 
 from .tools.base import ToolError, ToolResult
 from .tools.registry import ToolRegistry
@@ -26,7 +27,13 @@ class ToolExecutor:
         self.result_store = result_store
         self.redactor = redactor or Redactor()
 
-    async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        output_callback: Callable[[str, str], Awaitable[None] | None] | None = None,
+    ) -> ToolResult:
         started = perf_counter()
         try:
             spec = self.registry.get(name)
@@ -39,7 +46,10 @@ class ToolExecutor:
                     data={"hook": decision.hook, "additional_context": decision.additional_context},
                 )
             else:
-                result = await asyncio.wait_for(spec.handler(arguments), timeout=spec.timeout)
+                handler_arguments = dict(arguments)
+                if output_callback is not None and name == "run_command":
+                    handler_arguments["_output_callback"] = output_callback
+                result = await asyncio.wait_for(spec.handler(handler_arguments), timeout=spec.timeout)
         except ToolError as exc:
             result = ToolResult.failure(exc.code, exc.message, data=exc.data)
         except TimeoutError:

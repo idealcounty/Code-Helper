@@ -512,6 +512,7 @@ function handleEvent(event) {
     case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
     case "assistant_response": finishAssistantResponse(payload); break;
     case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;
+    case "tool_output_delta": appendTerminal(payload.content || "", payload.stream === "stderr" ? "stderr" : ""); break;
     case "tool_result": {
       const result = payload.result || {};
       addActivity(`${result.ok ? "完成" : "失败"} ${payload.name}`, `${result.code || ""} · ${result.message || ""}`, result.ok ? "success" : "failure");
@@ -627,8 +628,10 @@ function cancellationReason(reason) { return ({ user_requested: "用户主动停
 
 function mirrorCommandResult(result) {
   const data = result.data || {};
-  if (data.stdout) appendTerminal(data.stdout.replace(/\s+$/, ""));
-  if (data.stderr) appendTerminal(data.stderr.replace(/\s+$/, ""), "stderr");
+  if (!result.metadata?.output_streamed) {
+    if (data.stdout) appendTerminal(data.stdout.replace(/\s+$/, ""));
+    if (data.stderr) appendTerminal(data.stderr.replace(/\s+$/, ""), "stderr");
+  }
   appendTerminal(`[exit ${Number.isInteger(data.exit_code) ? data.exit_code : "?"}] ${result.message || ""}`, result.ok ? "success" : "failure");
 }
 

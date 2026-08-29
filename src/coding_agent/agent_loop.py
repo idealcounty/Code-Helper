@@ -425,8 +425,29 @@ class AgentRunner:
             "tool_started",
             {"id": call.id, "name": call.name, "arguments": call.arguments},
         )
+        output_index = 0
+
+        async def on_output(stream: str, content: str) -> None:
+            nonlocal output_index
+            output_index += 1
+            await self._emit(
+                state,
+                "tool_output_delta",
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "stream": stream,
+                    "content": content,
+                    "index": output_index,
+                },
+            )
+
         result = await self._await_controlled(
-            self.tool_executor.execute(call.name, call.arguments),
+            self.tool_executor.execute(
+                call.name,
+                call.arguments,
+                output_callback=on_output if call.name == "run_command" else None,
+            ),
             allow_cancel_result=True,
         )
         await self._record_tool_result(
