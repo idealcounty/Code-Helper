@@ -308,6 +308,39 @@ def test_intelligence_aggregates_span_durations(tmp_path: Path) -> None:
     ]
 
 
+def test_intelligence_reports_cancellation_latency(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post("/api/sessions", json={"workspace": str(tmp_path)})
+        session_id = created.json()["session_id"]
+        runtime = app.state.session_manager.get(session_id).runtime
+        runtime.event_store.append(
+            AgentEvent(
+                type="run_cancel_requested",
+                session_id=session_id,
+                turn_id="turn-test",
+                timestamp="2026-08-30T00:00:00+00:00",
+            )
+        )
+        runtime.event_store.append(
+            AgentEvent(
+                type="run_cancelled",
+                session_id=session_id,
+                turn_id="turn-test",
+                timestamp="2026-08-30T00:00:00.125+00:00",
+            )
+        )
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence").json()
+
+    assert intelligence["observability"]["cancellation"] == {
+        "requests": 1,
+        "completed": 1,
+        "samples_ms": [125.0],
+        "average_ms": 125.0,
+        "max_ms": 125.0,
+    }
+
+
 def test_session_scoped_approval_grant_is_limited_and_revocable(tmp_path: Path) -> None:
     app = create_app(_config())
     with TestClient(app) as client:

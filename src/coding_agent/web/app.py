@@ -36,6 +36,17 @@ def _budget_view(runtime: AgentRuntime) -> dict[str, Any]:
     }
 
 
+def _event_timestamp(event: dict[str, Any]) -> datetime | None:
+    raw = event.get("timestamp")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def _drive_roots() -> list[Path]:
     if os.name == "nt":
         return [
@@ -451,8 +462,25 @@ def create_app(
         output_deltas = 0
         span_totals: dict[str, dict[str, float | int]] = {}
         active_span_ids: set[str] = set()
+        cancel_requests = 0
+        pending_cancel_times: dict[str, datetime] = {}
+        cancel_latencies: list[float] = []
         for event in events:
             payload = event.get("payload") or {}
+            event_type = event.get("type")
+            turn_id = str(event.get("turn_id") or "")
+            if event_type == "run_cancel_requested":
+                cancel_requests += 1
+                requested_at = _event_timestamp(event)
+                if requested_at is not None and turn_id:
+                    pending_cancel_times[turn_id] = requested_at
+            elif event_type == "run_cancelled" and turn_id:
+                started_at = pending_cancel_times.pop(turn_id, None)
+                finished_at = _event_timestamp(event)
+                if started_at is not None and finished_at is not None:
+                    latency = (finished_at - started_at).total_seconds() * 1000
+                    if latency >= 0:
+                        cancel_latencies.append(round(latency, 3))
             if event.get("type") == "context_compacted":
                 compactions += 1
             if event.get("type") == "context_built":
@@ -576,6 +604,15 @@ def create_app(
                 "tool_output_deltas": output_deltas,
                 "spans": span_observability,
                 "active_spans": len(active_span_ids),
+                "cancellation": {
+                    "requests": cancel_requests,
+                    "completed": len(cancel_latencies),
+                    "samples_ms": cancel_latencies[-20:],
+                    "average_ms": round(sum(cancel_latencies) / len(cancel_latencies), 3)
+                    if cancel_latencies
+                    else 0.0,
+                    "max_ms": max(cancel_latencies, default=0.0),
+                },
             },
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,

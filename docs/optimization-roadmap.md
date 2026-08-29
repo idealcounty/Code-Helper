@@ -386,6 +386,7 @@ shell 现在并发读取 stdout/stderr，并在进程运行期间通过 Agent Ev
 - 每次读取最多 4 KiB，完整内容仍由原有工具结果存储和脱敏引用机制处理；观察器异常不会改变命令结果。
 - Web 终端实时显示增量，智能接口统计增量事件数量，WebSocket 继续使用 sequence 去重和补发。
 - 模型请求每等待 10 秒发布一次不含思维内容的 `model_progress` 心跳，Web 轨迹显示累计等待时间和单次请求上限。
+- 智能接口从 `run_cancel_requested` 到 `run_cancelled` 的事件时间戳计算取消响应延迟，返回请求数、完成数、样本、平均值和最大值；Web 智能面板同步展示这些真实指标。
 - DeepSeek thinking 模式的工具调用采用完整供应商协议消息：`reasoning_content` 仅在当前 Runtime 内存中回传，工具调用转换为标准 `type/function/arguments` 结构，不把思维文本写入事件或 UI；流式 HTTP 错误会先读取响应体再报告具体原因。
 
 **已知边界与后续加固**
