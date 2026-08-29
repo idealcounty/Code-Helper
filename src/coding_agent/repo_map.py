@@ -3,9 +3,10 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .tools.workspace import Workspace
+if TYPE_CHECKING:
+    from .tools.workspace import Workspace
 
 
 MAX_SYMBOLS_PER_FILE = 20
@@ -50,6 +51,7 @@ class RepoMapBuilder:
         max_files: int = MAX_FILES,
         focus_paths: list[str] | None = None,
         max_chars: int | None = None,
+        include_dependency_graph: bool = True,
     ) -> dict[str, Any]:
         keywords = _keywords(query)
         files: list[RepoMapFile] = []
@@ -95,7 +97,8 @@ class RepoMapBuilder:
                 )
             )
 
-        files = _attach_dependency_graph(files)
+        if include_dependency_graph:
+            files = _attach_dependency_graph(files)
         ranked = sorted(files, key=lambda item: (-item.score, -item.centrality, item.path))
         ranked = ranked[:max_files]
         budget_truncated = False

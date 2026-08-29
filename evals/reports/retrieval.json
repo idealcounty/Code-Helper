@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "task_count": 8,
+  "metrics": {
+    "lexical": {
+      "task_count": 8,
+      "recall_at_5": 1.0,
+      "first_relevant_rate": 1.0,
+      "mrr": 1.0
+    },
+    "dependency_graph": {
+      "task_count": 8,
+      "recall_at_5": 1.0,
+      "first_relevant_rate": 1.0,
+      "mrr": 1.0
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "project_qa",
+      "gold_files": [
+        "src/greeting.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "src/greeting.py",
+          "README.md",
+          "src/unrelated.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "src/greeting.py",
+          "README.md",
+          "src/unrelated.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "single_file_bug",
+      "gold_files": [
+        "calculator.py",
+        "test_calculator.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "test_calculator.py",
+          "calculator.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "test_calculator.py",
+          "calculator.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "cross_file_feature",
+      "gold_files": [
+        "formatter.py",
+        "service.py",
+        "test_service.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "test_service.py",
+          "formatter.py",
+          "service.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "test_service.py",
+          "formatter.py",
+          "service.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "external_concurrent_edit",
+      "gold_files": [
+        "service.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "service.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "service.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "approval_rejection",
+      "gold_files": [
+        "settings.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "settings.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "settings.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "checkpoint_restore",
+      "gold_files": [
+        "feature.py",
+        "test_feature.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "test_feature.py",
+          "feature.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "test_feature.py",
+          "feature.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "stuck_termination",
+      "gold_files": [
+        "status.txt"
+      ],
+      "lexical": {
+        "top_files": [
+          "status.txt"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "status.txt"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "session_interruption",
+      "gold_files": [
+        "counter.py"
+      ],
+      "lexical": {
+        "top_files": [
+          "counter.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "counter.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    }
+  ]
+}
