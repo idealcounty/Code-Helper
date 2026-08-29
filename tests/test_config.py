@@ -14,6 +14,8 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_REASONING_EFFORT",
     "CODE_HELPER_RUN_TIMEOUT",
     "CODE_HELPER_TOKEN_BUDGET",
+    "CODE_HELPER_RESULT_STORE_MAX_BYTES",
+    "CODE_HELPER_RESULT_STORE_MAX_FILES",
     "DEEPSEEK_API_KEY",
 }
 
@@ -95,3 +97,14 @@ def test_run_budget_settings_are_loaded(monkeypatch) -> None:
 
     assert config.run_timeout == 45.5
     assert config.token_budget == 12000
+
+
+def test_result_store_limits_are_loaded(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
+    monkeypatch.setenv("CODE_HELPER_RESULT_STORE_MAX_BYTES", "2048")
+    monkeypatch.setenv("CODE_HELPER_RESULT_STORE_MAX_FILES", "3")
+
+    config = AppConfig.from_env()
+
+    assert config.result_store_max_bytes == 2048
+    assert config.result_store_max_files == 3

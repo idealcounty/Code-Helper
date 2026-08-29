@@ -23,6 +23,8 @@ class AppConfig:
     command_timeout: float = 60.0
     run_timeout: float = 600.0
     token_budget: int | None = None
+    result_store_max_bytes: int = 50_000_000
+    result_store_max_files: int = 512
     user_memory_enabled: bool = False
     user_memory_dir: Path | None = None
 
@@ -55,6 +57,12 @@ class AppConfig:
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
             run_timeout=_positive_float("CODE_HELPER_RUN_TIMEOUT", 600.0),
             token_budget=_optional_positive_int("CODE_HELPER_TOKEN_BUDGET"),
+            result_store_max_bytes=_positive_int(
+                "CODE_HELPER_RESULT_STORE_MAX_BYTES", 50_000_000
+            ),
+            result_store_max_files=_positive_int(
+                "CODE_HELPER_RESULT_STORE_MAX_FILES", 512
+            ),
             user_memory_enabled=_boolean("CODE_HELPER_USER_MEMORY_ENABLED", False),
             user_memory_dir=_optional_path("CODE_HELPER_USER_MEMORY_DIR"),
         )

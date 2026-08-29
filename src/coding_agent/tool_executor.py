@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -21,11 +22,16 @@ class ToolExecutor:
         hooks: HookManager | None = None,
         result_store: Path | None = None,
         redactor: Redactor | None = None,
+        result_store_max_bytes: int | None = 50_000_000,
+        result_store_max_files: int | None = 512,
     ) -> None:
         self.registry = registry
         self.hooks = hooks or HookManager()
         self.result_store = result_store
         self.redactor = redactor or Redactor()
+        self.result_store_max_bytes = result_store_max_bytes
+        self.result_store_max_files = result_store_max_files
+        self._result_store_lock = threading.Lock()
 
     async def execute(
         self,
@@ -85,7 +91,46 @@ class ToolExecutor:
         self.result_store.mkdir(parents=True, exist_ok=True)
         reference = f"tool-result-{uuid4().hex}.json"
         safe_full = self.redactor.redact(full)
-        (self.result_store / reference).write_text(
-            json.dumps(safe_full, ensure_ascii=False), encoding="utf-8", newline="\n"
-        )
+        encoded = json.dumps(safe_full, ensure_ascii=False).encode("utf-8")
+        with self._result_store_lock:
+            pruned = self._prune_result_store(len(encoded))
+            if (
+                self.result_store_max_bytes is not None
+                and len(encoded) > self.result_store_max_bytes
+            ):
+                result.data["result_store_error"] = "RESULT_STORE_QUOTA"
+                result.data["result_store_limit_bytes"] = self.result_store_max_bytes
+                return
+            (self.result_store / reference).write_bytes(encoded)
+        if pruned:
+            result.data["result_store_pruned"] = pruned
         result.data["result_reference"] = str(Path(".code-helper") / "tool-results" / reference)
+
+    def _prune_result_store(self, incoming_bytes: int) -> int:
+        if self.result_store is None:
+            return 0
+        files = sorted(
+            (
+                path
+                for path in self.result_store.glob("tool-result-*.json")
+                if path.is_file()
+            ),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+        total = sum(path.stat().st_size for path in files)
+        removed = 0
+        max_bytes = self.result_store_max_bytes
+        max_files = self.result_store_max_files
+        while files and (
+            (max_bytes is not None and total + incoming_bytes > max_bytes)
+            or (max_files is not None and len(files) >= max_files)
+        ):
+            oldest = files.pop(0)
+            try:
+                size = oldest.stat().st_size
+                oldest.unlink()
+            except OSError:
+                continue
+            total -= size
+            removed += 1
+        return removed

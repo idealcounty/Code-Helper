@@ -67,3 +67,45 @@ def test_full_tool_output_reference_is_redacted(tmp_path: Path) -> None:
     artifact = next((tmp_path / "tool-results").glob("*.json"))
     assert secret not in artifact.read_text(encoding="utf-8")
     assert result.data["result_reference"].startswith(".code-helper")
+
+
+def test_full_tool_output_store_prunes_old_results_to_quota(tmp_path: Path) -> None:
+    from coding_agent.tools.base import ToolResult
+
+    result_store = tmp_path / "tool-results"
+    result_store.mkdir()
+    (result_store / "tool-result-old.json").write_text("x" * 120, encoding="utf-8")
+    (result_store / "tool-result-newer.json").write_text("y" * 120, encoding="utf-8")
+    executor = ToolExecutor(
+        ToolRegistry(),
+        result_store=result_store,
+        result_store_max_bytes=260,
+        result_store_max_files=4,
+    )
+
+    result = ToolResult.success(
+        "large output", metadata={"_full_stdout": "z" * 80, "_full_stderr": ""}
+    )
+    executor._persist_full_output(result)
+
+    files = list(result_store.glob("tool-result-*.json"))
+    assert len(files) <= 2
+    assert result.data.get("result_reference")
+    assert result.data.get("result_store_pruned", 0) >= 1
+
+
+def test_full_tool_output_larger_than_quota_is_not_persisted(tmp_path: Path) -> None:
+    from coding_agent.tools.base import ToolResult
+
+    result_store = tmp_path / "tool-results"
+    executor = ToolExecutor(
+        ToolRegistry(), result_store=result_store, result_store_max_bytes=32
+    )
+    result = ToolResult.success(
+        "large output", metadata={"_full_stdout": "z" * 500, "_full_stderr": ""}
+    )
+
+    executor._persist_full_output(result)
+
+    assert result.data["result_store_error"] == "RESULT_STORE_QUOTA"
+    assert not list(result_store.glob("tool-result-*.json"))

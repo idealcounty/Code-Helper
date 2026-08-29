@@ -243,7 +243,7 @@ Cline 提供按时间点比较和恢复文件/任务的体验。本项目应只�
 - `evals/algorithm_benchmark.py` 提供固定 seed 的 15-case 算法基准，覆盖样例、边界、随机输入、错误候选检测和失败输入最小化，并输出 `algorithm.json`/`algorithm.md`。
 - Agent Eval 报告按实际选中的 `project`/`algorithm` Profile 分组，分别记录契约、完成、验证、检索和资源指标，避免总平均掩盖模式差异。
 - `evals/profile_comparison.py` 在同一组跨文件/算法任务上显式运行两个 Profile，并输出确定性对照报告；该报告只证明管线隔离和安全契约，不替代真实模型质量评测。
-- `sensitive_environment` 当前只证明命令环境不会继承 API Key；运行时统一脱敏已在 R7 V1 落地，完整格式覆盖和配额仍待增强。
+- `sensitive_environment` 当前只证明命令环境不会继承 API Key；运行时统一脱敏已在 R7 V1 落地，凭据格式覆盖仍是 best-effort。
 - Session 中断任务证明副作用不会被自动重放；等待同一审批的完整恢复仍属于 R2。
 
 **建议实现**
@@ -273,7 +273,7 @@ Cline 提供按时间点比较和恢复文件/任务的体验。本项目应只�
 
 - 当前是 best-effort 模式，尚未覆盖所有第三方凭据格式、二进制输出和跨进程密钥注入；用户仍不应把凭据放进提示词或命令行。
 - 事件内容校验目前只保护新写入事件，旧无签名事件会兼容加载并标记 `LEGACY_EVENT_UNSIGNED`，不会自动改写历史文件。
-- 尚未设置单 Session/目录磁盘配额和自动清理策略。
+- 工具完整输出目录支持 `CODE_HELPER_RESULT_STORE_MAX_BYTES` 与 `CODE_HELPER_RESULT_STORE_MAX_FILES`；达到限制时按最旧引用清理，单个超限结果保留摘要并返回 `RESULT_STORE_QUOTA`，事件 JSONL 的跨 Session 配额仍待后续实现。
 
 **建议实现**
 

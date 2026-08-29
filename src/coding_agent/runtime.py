@@ -175,6 +175,8 @@ def create_runtime(
         hooks=hooks,
         result_store=workspace.root / ".code-helper" / "tool-results",
         redactor=redactor,
+        result_store_max_bytes=config.result_store_max_bytes,
+        result_store_max_files=config.result_store_max_files,
     )
     runner = AgentRunner(
         model_client=client,
