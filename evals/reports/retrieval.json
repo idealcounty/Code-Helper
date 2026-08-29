@@ -1,21 +1,21 @@
 {
   "schema_version": 1,
-  "task_count": 10,
+  "task_count": 11,
   "metrics": {
     "no_rag": {
-      "task_count": 10,
+      "task_count": 11,
       "recall_at_5": 1.0,
-      "first_relevant_rate": 0.9,
-      "mrr": 0.95
+      "first_relevant_rate": 0.9091,
+      "mrr": 0.9545
     },
     "lexical": {
-      "task_count": 10,
-      "recall_at_5": 0.9,
-      "first_relevant_rate": 0.9,
-      "mrr": 0.9
+      "task_count": 11,
+      "recall_at_5": 0.8182,
+      "first_relevant_rate": 0.8182,
+      "mrr": 0.8182
     },
     "dependency_graph": {
-      "task_count": 10,
+      "task_count": 11,
       "recall_at_5": 1.0,
       "first_relevant_rate": 1.0,
       "mrr": 1.0
@@ -346,6 +346,40 @@
       "dependency_graph": {
         "top_files": [
           "src/core.py"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      }
+    },
+    {
+      "task_id": "cross_language_static_dependency",
+      "gold_files": [
+        "src/core/shared.ts"
+      ],
+      "no_rag": {
+        "top_files": [
+          "src/core/shared.ts",
+          "src/noise_0.ts",
+          "src/noise_1.ts",
+          "src/noise_2.ts",
+          "src/noise_3.ts"
+        ],
+        "recall_at_5": 1.0,
+        "first_relevant": true,
+        "mrr": 1.0
+      },
+      "lexical": {
+        "top_files": [
+          "src/workflow/entry.ts"
+        ],
+        "recall_at_5": 0.0,
+        "first_relevant": false,
+        "mrr": 0.0
+      },
+      "dependency_graph": {
+        "top_files": [
+          "src/core/shared.ts"
         ],
         "recall_at_5": 1.0,
         "first_relevant": true,

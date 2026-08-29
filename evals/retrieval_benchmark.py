@@ -34,6 +34,30 @@ _DISCRIMINATING_CASE = {
     },
 }
 
+_CROSS_LANGUAGE_CASE = {
+    "id": "cross_language_static_dependency",
+    "query": "workflow entrypoint",
+    "gold_files": ("src/core/shared.ts",),
+    "files": {
+        "src/core/shared.ts": "export function canonicalize(value: string) { return value.trim(); }\n",
+        "src/workflow/entry.ts": (
+            "import { canonicalize } from '../core/shared';\n"
+            "export function workflow_entry(value: string) { return canonicalize(value); }\n"
+        ),
+        **{
+            f"src/worker_{index}.ts": (
+                "import { canonicalize } from './core/shared';\n"
+                f"export function worker_{index}(value: string) {{ return canonicalize(value); }}\n"
+            )
+            for index in range(4)
+        },
+        **{
+            f"src/noise_{index}.ts": f"export const value_{index} = {index};\n"
+            for index in range(8)
+        },
+    },
+}
+
 
 def run_benchmark() -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
@@ -58,6 +82,23 @@ def run_benchmark() -> dict[str, Any]:
                 }
             )
         case = _DISCRIMINATING_CASE
+        workspace = root / case["id"]
+        workspace.mkdir()
+        write_fixture(workspace, case["files"])
+        builder = RepoMapBuilder(Workspace(workspace))
+        no_rag = _metrics(_filesystem_order(workspace), case["gold_files"])
+        lexical = builder.build(query=case["query"], max_files=1, include_dependency_graph=False)
+        graph = builder.build(query=case["query"], max_files=1, include_dependency_graph=True)
+        rows.append(
+            {
+                "task_id": case["id"],
+                "gold_files": list(case["gold_files"]),
+                "no_rag": no_rag,
+                "lexical": _metrics(lexical["files"], case["gold_files"]),
+                "dependency_graph": _metrics(graph["files"], case["gold_files"]),
+            }
+        )
+        case = _CROSS_LANGUAGE_CASE
         workspace = root / case["id"]
         workspace.mkdir()
         write_fixture(workspace, case["files"])
@@ -122,7 +163,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Repo Map 检索基线",
         "",
-        "该报告使用固定 Eval fixtures，对比无 RAG 文件顺序、词法排序与词法 + Python 导入依赖图排序。",
+        "该报告使用固定 Eval fixtures，对比无 RAG 文件顺序、词法排序与词法 + 静态导入依赖图排序。",
         "",
         "| 策略 | 任务数 | Recall@5 | 首个相关文件 | MRR |",
         "| --- | ---: | ---: | ---: | ---: |",

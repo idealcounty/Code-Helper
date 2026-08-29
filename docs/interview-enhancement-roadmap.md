@@ -100,7 +100,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 - 项目级长期记忆支持写入、检索、冲突、遗忘和自动召回。
 - 用户级记忆默认关闭，启用后与项目记忆分目录存储。
 
-现有 Repo Map、长期记忆和词法/Embedding 混排已经构成代码 RAG 的部分基础；Repo Map V1 已加入 Python 导入中心性、独立预算化上下文注入、跨进程可复用的哈希摘要与依赖图缓存，并新增固定 fixtures 的词法 vs 依赖图 Recall@5/MRR 报告。当前报告包含 10 个任务，其中专门加入了“隐藏核心模块”区分度用例：无 RAG 的首次相关文件命中率为 90.0%，仅词法为 90.0%，加入依赖图后为 100%；依赖图变更现在会增量重算受影响源文件和导入方，未受影响边保持不变；新增 `evals.rag_comparison` 可在同一任务集执行 Repo Map/no-RAG A/B 对照；真实跨文件收益证据仍待补充。
+现有 Repo Map、长期记忆和词法/Embedding 混排已经构成代码 RAG 的部分基础；Repo Map V1 已加入 Python、JavaScript/TypeScript 和 Java 静态导入中心性、独立预算化上下文注入、跨进程可复用的哈希摘要与依赖图缓存，并新增固定 fixtures 的词法 vs 依赖图 Recall@5/MRR 报告。当前报告包含 11 个任务，其中加入了 Python 隐藏核心模块和 JavaScript/TypeScript 跨语言区分度用例：无 RAG 的首次相关文件命中率为 90.9%，仅词法为 81.8%，加入依赖图后为 100%；依赖图变更现在会增量重算受影响源文件和导入方，未受影响边保持不变；新增 `evals.rag_comparison` 可在同一任务集执行 Repo Map/no-RAG A/B 对照；真实跨文件收益证据仍待补充。
 
 ### 3.5 可演示的产品闭环
 
