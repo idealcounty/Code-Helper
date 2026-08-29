@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import ast
+import json
 import posixpath
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    tomllib = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from .tools.workspace import Workspace
@@ -44,6 +50,7 @@ class RepoMapFile:
     imports: list[str] = field(default_factory=list)
     symbols: list[str] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
+    build_root: bool = False
     dependencies: list[str] = field(default_factory=list)
     dependents: list[str] = field(default_factory=list)
     centrality: int = 0
@@ -57,6 +64,7 @@ class RepoMapFile:
             "imports": self.imports,
             "symbols": self.symbols,
             "calls": self.calls,
+            "build_root": self.build_root,
             "dependencies": self.dependencies,
             "dependents": self.dependents,
             "centrality": self.centrality,
@@ -77,6 +85,7 @@ class RepoMapBuilder:
         include_dependency_graph: bool = True,
     ) -> dict[str, Any]:
         keywords = _keywords(query)
+        build_roots = _discover_build_roots(self.workspace)
         files: list[RepoMapFile] = []
         totals = {
             "files_seen": 0,
@@ -87,6 +96,7 @@ class RepoMapBuilder:
             "dependency_graph_cache_hits": 0,
             "dependency_graph_cache_misses": 0,
             "dependency_graph_incremental_updates": 0,
+            "build_roots": sorted(build_roots),
         }
         focus = {item.replace("\\", "/").lstrip("./") for item in (focus_paths or [])}
         seen_paths: set[Path] = set()
@@ -139,6 +149,10 @@ class RepoMapBuilder:
             if symbols:
                 score += 2
                 reason.append("code symbols")
+            is_build_root = relative in build_roots
+            if is_build_root:
+                score += 6
+                reason.append("build root")
             if kind == "test":
                 totals["test_files"] += 1
 
@@ -151,6 +165,7 @@ class RepoMapBuilder:
                     imports=imports[:MAX_SYMBOLS_PER_FILE],
                     symbols=symbols[:MAX_SYMBOLS_PER_FILE],
                     calls=calls[:MAX_SYMBOLS_PER_FILE],
+                    build_root=is_build_root,
                 )
             )
 
@@ -196,6 +211,94 @@ class RepoMapBuilder:
             "selected_chars": sum(len(_render_file(item)) for item in ranked)
             + max(0, len(ranked) - 1),
         }
+
+
+def _discover_build_roots(workspace: Workspace) -> set[str]:
+    """Discover conservative executable/entry files from common build metadata.
+
+    This intentionally only follows explicit paths in project configuration;
+    it never guesses generated files or external dependencies.  The result is
+    used as a small ranking boost so context selection can include an actual
+    application entry point alongside the most central modules.
+    """
+    roots: set[str] = set()
+
+    def add_candidate(base: Path, raw: str) -> None:
+        value = str(raw).strip().strip("\"'")
+        if not value or value.startswith("${"):
+            return
+        candidate = Path(value.replace("\\", "/"))
+        if candidate.is_absolute():
+            path = candidate.resolve()
+        else:
+            path = (base / candidate).resolve()
+        try:
+            if not path.is_relative_to(workspace.root) or not path.is_file():
+                return
+            if workspace.is_ignored(path) or workspace.is_sensitive(path):
+                return
+            roots.add(workspace.relative(path))
+        except (OSError, ValueError):
+            return
+
+    for config_path in workspace.root.rglob("package.json"):
+        if workspace.is_ignored(config_path) or workspace.is_sensitive(config_path):
+            continue
+        try:
+            package = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(package, dict):
+            continue
+        base = config_path.parent
+        for key in ("main", "module"):
+            value = package.get(key)
+            if isinstance(value, str):
+                add_candidate(base, value)
+        binaries = package.get("bin")
+        if isinstance(binaries, str):
+            add_candidate(base, binaries)
+        elif isinstance(binaries, dict):
+            for value in binaries.values():
+                if isinstance(value, str):
+                    add_candidate(base, value)
+
+    if tomllib is not None:
+        for config_path in workspace.root.rglob("pyproject.toml"):
+            if workspace.is_ignored(config_path) or workspace.is_sensitive(config_path):
+                continue
+            try:
+                project = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            scripts = project.get("project", {}).get("scripts", {})
+            if isinstance(scripts, dict):
+                for value in scripts.values():
+                    if not isinstance(value, str):
+                        continue
+                    module = value.split(":", 1)[0].strip()
+                    if not module or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module):
+                        continue
+                    module_path = module.replace(".", "/")
+                    for prefix in ("", "src"):
+                        base = config_path.parent / prefix if prefix else config_path.parent
+                        add_candidate(base, module_path + ".py")
+                        add_candidate(base, module_path + "/__init__.py")
+
+    for config_path in workspace.root.rglob("CMakeLists.txt"):
+        if workspace.is_ignored(config_path) or workspace.is_sensitive(config_path):
+            continue
+        try:
+            text = config_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in re.finditer(r"\badd_executable\s*\((.*?)\)", text, flags=re.IGNORECASE | re.DOTALL):
+            tokens = re.findall(r"[A-Za-z0-9_./\\+${}-]+", match.group(1))
+            for token in tokens[1:]:
+                if Path(token).suffix.lower() in _C_CPP_SUFFIXES:
+                    add_candidate(config_path.parent, token)
+
+    return roots
 
 
 def _kind_for(path: Path, relative: str) -> str:
@@ -368,6 +471,7 @@ def _attach_dependency_graph(
                 imports=item.imports,
                 symbols=item.symbols,
                 calls=item.calls,
+                build_root=item.build_root,
                 dependencies=dependencies,
                 dependents=dependents,
                 centrality=centrality,
@@ -687,6 +791,7 @@ def _apply_dependency_metadata(
                 imports=item.imports,
                 symbols=item.symbols,
                 calls=item.calls,
+                build_root=item.build_root,
                 dependencies=list(dependencies),
                 dependents=list(dependents),
                 centrality=centrality,

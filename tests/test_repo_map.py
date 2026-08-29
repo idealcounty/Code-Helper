@@ -379,6 +379,38 @@ def test_legacy_repo_map_cache_is_refreshed_for_call_edges(tmp_path: Path) -> No
     assert refreshed["files"]["module.py"]["calls"] == []
 
 
+def test_repo_map_marks_explicit_build_roots(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "src" / "index.js").write_text("export default 1;", encoding="utf-8")
+    (tmp_path / "bin" / "cli.js").write_text("console.log('ok');", encoding="utf-8")
+    (tmp_path / "pkg" / "cli.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"main": "src/index.js", "bin": {"demo": "bin/cli.js"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.scripts]\ndemo = 'pkg.cli:main'\n", encoding="utf-8"
+    )
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_executable(native src/main.cpp)\n", encoding="utf-8"
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=20)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert set(data["totals"]["build_roots"]) == {
+        "src/index.js",
+        "bin/cli.js",
+        "pkg/cli.py",
+        "src/main.cpp",
+    }
+    assert all(by_path[path]["build_root"] for path in data["totals"]["build_roots"])
+    assert "build root" in by_path["pkg/cli.py"]["reason"]
+
+
 def test_get_repo_map_is_registered_as_read_tool(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     workspace = Workspace(tmp_path)
