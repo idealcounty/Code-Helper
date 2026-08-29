@@ -4,11 +4,13 @@ import asyncio
 import inspect
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from .redaction import Redactor
 
 
 @dataclass(slots=True)
@@ -24,6 +26,7 @@ class AgentEvent:
     schema_version: int = 1
     event_id: str = field(default_factory=lambda: uuid4().hex)
     causation_id: str | None = None
+    integrity_sha256: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -35,14 +38,27 @@ EventListener = Callable[[AgentEvent], None | Awaitable[None]]
 class EventStore:
     """Append-only JSONL storage for a single session."""
 
-    def __init__(self, root: Path, session_id: str) -> None:
+    def __init__(
+        self,
+        root: Path,
+        session_id: str,
+        *,
+        redactor: Redactor | None = None,
+        secret_values: tuple[str, ...] | list[str] | None = None,
+    ) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / f"{session_id}.jsonl"
         self.last_load_diagnostics: list[dict[str, Any]] = []
+        self.redactor = redactor or Redactor(secret_values)
 
     def append(self, event: AgentEvent) -> None:
-        line = json.dumps(event.to_dict(), ensure_ascii=False, default=str)
+        safe_data = self.redactor.redact(event.to_dict())
+        safe_data.pop("integrity_sha256", None)
+        digest = _integrity_digest(safe_data)
+        safe_data["integrity_sha256"] = digest
+        event.integrity_sha256 = digest
+        line = json.dumps(safe_data, ensure_ascii=False, default=str)
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(line)
             handle.write("\n")
@@ -62,7 +78,7 @@ class EventStore:
             if not line.strip():
                 continue
             try:
-                events.append(json.loads(line))
+                parsed = json.loads(line)
             except json.JSONDecodeError as exc:
                 if line_number == last_non_empty_line:
                     self.last_load_diagnostics.append(
@@ -76,7 +92,36 @@ class EventStore:
                 raise ValueError(
                     f"Invalid session event at line {line_number}: {exc}"
                 ) from exc
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"Invalid session event at line {line_number}: expected object"
+                )
+            stored_digest = parsed.get("integrity_sha256")
+            if stored_digest:
+                unsigned = dict(parsed)
+                unsigned.pop("integrity_sha256", None)
+                if stored_digest != _integrity_digest(unsigned):
+                    if line_number == last_non_empty_line:
+                        self.last_load_diagnostics.append(
+                            {
+                                "code": "TRAILING_EVENT_INTEGRITY_FAILED",
+                                "line": line_number,
+                            }
+                        )
+                        continue
+                    raise ValueError(
+                        f"Invalid session event integrity at line {line_number}"
+                    )
+            else:
+                self.last_load_diagnostics.append(
+                    {"code": "LEGACY_EVENT_UNSIGNED", "line": line_number}
+                )
+            events.append(self.redactor.redact(parsed))
         return events
+
+    def redacted_event(self, event: AgentEvent) -> AgentEvent:
+        """Return a safe copy for UI listeners while keeping live state private."""
+        return replace(event, payload=self.redactor.redact(event.payload))
 
 
 class EventBus:
@@ -113,8 +158,9 @@ class EventBus:
                 event.event_id = uuid4().hex
             self.store.append(event)
 
+        safe_event = self.store.redacted_event(event)
         for listener in tuple(self._listeners):
-            result = listener(event)
+            result = listener(safe_event)
             if inspect.isawaitable(result):
                 await result
         return event
@@ -122,3 +168,12 @@ class EventBus:
     def _load_last_sequence(self) -> int:
         events = self.store.load()
         return int(events[-1].get("sequence", 0)) if events else 0
+
+
+def _integrity_digest(data: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+    import hashlib
+
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

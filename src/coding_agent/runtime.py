@@ -16,6 +16,7 @@ from .memory import MemoryStore
 from .memory_summary import SessionSummaryStore
 from .user_memory import UserMemoryService
 from .permissions import PermissionPolicy
+from .redaction import Redactor
 from .session import AgentState
 from .skills import SkillLibrary
 from .tool_executor import ToolExecutor
@@ -70,8 +71,11 @@ def create_runtime(
         reasoning_mode=config.reasoning_effort,
         session_id=session_id,
     )
+    redactor = Redactor([config.api_key])
     event_store = EventStore(
-        workspace.root / ".code-helper" / "sessions", state.session_id
+        workspace.root / ".code-helper" / "sessions",
+        state.session_id,
+        redactor=redactor,
     )
     event_bus = EventBus(event_store)
     if event_listener is not None:
@@ -128,7 +132,9 @@ def create_runtime(
         user_memory=user_memory,
     )
     tool_executor = ToolExecutor(
-        registry, result_store=workspace.root / ".code-helper" / "tool-results"
+        registry,
+        result_store=workspace.root / ".code-helper" / "tool-results",
+        redactor=redactor,
     )
     runner = AgentRunner(
         model_client=client,

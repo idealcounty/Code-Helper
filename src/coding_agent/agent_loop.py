@@ -24,6 +24,7 @@ from .verification_evidence import build_verification_evidence
 
 ApprovalHandler = Callable[[ToolCall, PermissionResult], Awaitable[bool]]
 TurnSummarizer = Callable[[AgentState, AgentStatus, str], dict[str, Any]]
+CANCEL_RESULT_GRACE_SECONDS = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,7 +420,8 @@ class AgentRunner:
                 if allow_cancel_result:
                     try:
                         return await asyncio.wait_for(
-                            asyncio.shield(operation_task), timeout=5
+                            asyncio.shield(operation_task),
+                            timeout=CANCEL_RESULT_GRACE_SECONDS,
                         )
                     except TimeoutError:
                         pass

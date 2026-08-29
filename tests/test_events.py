@@ -35,8 +35,12 @@ def test_event_store_discards_only_corrupt_trailing_line(tmp_path: Path) -> None
     loaded = store.load()
 
     assert len(loaded) == 1
-    assert store.last_load_diagnostics[0]["code"] == "TRAILING_EVENT_CORRUPT"
-    assert store.last_load_diagnostics[0]["line"] == 2
+    trailing = next(
+        item
+        for item in store.last_load_diagnostics
+        if item["code"] == "TRAILING_EVENT_CORRUPT"
+    )
+    assert trailing["line"] == 2
 
 
 def test_event_store_rejects_corruption_in_the_middle(tmp_path: Path) -> None:
