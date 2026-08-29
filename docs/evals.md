@@ -45,6 +45,26 @@ python -m evals.runner `
 
 如需费用估算，可同时传入 `--input-price-per-million` 和 `--output-price-per-million`。价格由运行者提供，报告不会假设供应商当前价格。
 
+### Repo Map A/B 对照
+
+项目模式可以对同一组任务执行 Repo Map 开关对照，报告会分别保存两次运行的指标：
+
+```powershell
+python -m evals.rag_comparison --output-dir .eval-results/rag
+```
+
+这条命令默认使用确定性模型，只验证开关、契约和报告链路。需要真实 DeepSeek 质量证据时，必须明确执行 `--mode real --allow-paid`；脚本会在同一任务集上先后运行启用与禁用 Repo Map 的两个隔离实验，并不会把确定性结果表述为模型智能提升。
+
+## 面试演示
+
+两个纵向演示也可以一条命令重复运行并保存报告：
+
+```powershell
+python -m evals.interview_demos --output-dir .eval-results/demos
+```
+
+其中 `algorithm` 演示固定种子 Judge 的缺陷发现与修复，`project` 演示跨文件修改和验证；两者都复用产品 Runtime、权限、事件、工具和验证管线。
+
 真实层当前只运行标记为 `real_enabled` 的项目问答、单文件缺陷和跨文件功能，其他任务会明确记为 skipped。报告会保存供应商、模型、推理档位、供应商默认 temperature、Token 预算、Prompt 哈希与代码提交。由于模型输出存在波动，真实层不会成为唯一 CI 阻塞条件。
 
 ## 已知边界

@@ -87,6 +87,21 @@ def test_context_injects_budgeted_repo_map_metadata(tmp_path: Path) -> None:
     assert context.repo_map["selected_chars"] <= 80
 
 
+def test_context_can_disable_repo_map_for_control_runs(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    state = AgentState.create()
+    state.messages = [{"role": "user", "content": "find app"}]
+
+    context = ContextManager(
+        workspace=Workspace(tmp_path), repo_map_enabled=False
+    ).build(state, [])
+
+    assert "Repository map" not in context.messages[0]["content"]
+    assert context.repo_map["selected"] == []
+    assert context.repo_map["disabled_by_config"] is True
+    assert context.repo_map["disabled_by_profile"] is False
+
+
 def test_repo_map_reuses_hash_keyed_summary_and_invalidates_external_edit(tmp_path: Path) -> None:
     source = tmp_path / "main.cpp"
     source.write_text("class First {};\n", encoding="utf-8")

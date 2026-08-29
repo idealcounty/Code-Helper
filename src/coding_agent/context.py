@@ -60,6 +60,7 @@ class ContextManager:
         max_context_chars: int = 80_000,
         max_rule_chars: int = 20_000,
         max_repo_map_chars: int = 12_000,
+        repo_map_enabled: bool = True,
     ) -> None:
         self.system_prompt = system_prompt.strip()
         self.workspace = workspace
@@ -71,6 +72,7 @@ class ContextManager:
         self.max_context_chars = max_context_chars
         self.max_rule_chars = max_rule_chars
         self.max_repo_map_chars = max_repo_map_chars
+        self.repo_map_enabled = repo_map_enabled
 
     def build(
         self,
@@ -89,7 +91,9 @@ class ContextManager:
         rules = self._project_rules(state)
         if rules.text:
             system += f"\n\nProject rules:\n{rules.text}"
-        repo_map = self._repo_map(state) if profile.retrieval_strategy == "repo_map" else {
+        repo_map = self._repo_map(state) if (
+            self.repo_map_enabled and profile.retrieval_strategy == "repo_map"
+        ) else {
             "text": "",
             "metadata": {
                 "query": _latest_user_query(state.messages),
@@ -98,7 +102,8 @@ class ContextManager:
                 "selected_chars": 0,
                 "budget": self.max_repo_map_chars,
                 "truncated": False,
-                "disabled_by_profile": True,
+                "disabled_by_profile": profile.retrieval_strategy != "repo_map",
+                "disabled_by_config": not self.repo_map_enabled,
             },
         }
         if repo_map["text"]:

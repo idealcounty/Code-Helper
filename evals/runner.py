@@ -60,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--input-price-per-million", type=float)
     parser.add_argument("--output-price-per-million", type=float)
+    parser.add_argument(
+        "--disable-retrieval",
+        action="store_true",
+        help="Disable Repo Map injection for an explicit no-RAG comparison run.",
+    )
     return parser
 
 
@@ -71,6 +76,7 @@ async def run_suite(
     input_price_per_million: float | None = None,
     output_price_per_million: float | None = None,
     profile_override: str = "auto",
+    retrieval_enabled: bool = True,
 ) -> dict[str, Any]:
     tasks = load_tasks(task_ids)
     results: list[EvalTaskResult] = []
@@ -89,6 +95,7 @@ async def run_suite(
                     mode=mode,
                     real_config=real_config,
                     task_profile=profile_override,
+                    retrieval_enabled=retrieval_enabled,
                 )
             except Exception as exc:
                 result = _crashed_result(task.id, task.title, task.category, exc)
@@ -105,6 +112,7 @@ async def run_suite(
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "mode": mode,
         "profile_override": profile_override,
+        "retrieval_enabled": retrieval_enabled,
         "model": _model_metadata(mode, real_config),
         "code": {
             "commit": _git_commit(),
@@ -284,6 +292,7 @@ def main() -> int:
             real_config=real_config,
             input_price_per_million=args.input_price_per_million,
             output_price_per_million=args.output_price_per_million,
+            retrieval_enabled=not args.disable_retrieval,
         )
     )
     json_path, markdown_path = write_report(

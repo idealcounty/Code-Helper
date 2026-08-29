@@ -75,6 +75,7 @@ async def execute_task(
     mode: str,
     real_config: AppConfig | None = None,
     task_profile: str = "auto",
+    retrieval_enabled: bool = True,
 ) -> EvalTaskResult:
     write_fixture(workspace, task.fixture_files)
     initial_files = dict(task.fixture_files)
@@ -153,6 +154,7 @@ async def execute_task(
             event_listener=on_event,
         )
         runtime_box["runtime"] = runtime
+        runtime.context_manager.repo_map_enabled = retrieval_enabled
         run_result = await runtime.runner.run_turn(runtime.state, task.task)
         scenario_assertions = await _after_scenario(
             task, runtime, run_result, workspace, config, captured_events
