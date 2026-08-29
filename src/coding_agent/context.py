@@ -9,6 +9,7 @@ from .session import AgentState
 from .skills import SkillLibrary
 from .memory import MemoryStore
 from .user_memory import UserMemoryService
+from .profiles import get_profile
 from .tools.workspace import Workspace
 
 
@@ -83,10 +84,23 @@ class ContextManager:
         }.get(state.mode, f"Current mode: {state.mode}")
 
         system = f"{self.system_prompt}\n\n{mode_rule}"
+        profile = get_profile(state.task_profile)
+        system += f"\n\n{profile.prompt_addendum}"
         rules = self._project_rules(state)
         if rules.text:
             system += f"\n\nProject rules:\n{rules.text}"
-        repo_map = self._repo_map(state)
+        repo_map = self._repo_map(state) if profile.retrieval_strategy == "repo_map" else {
+            "text": "",
+            "metadata": {
+                "query": _latest_user_query(state.messages),
+                "candidates": 0,
+                "selected": [],
+                "selected_chars": 0,
+                "budget": self.max_repo_map_chars,
+                "truncated": False,
+                "disabled_by_profile": True,
+            },
+        }
         if repo_map["text"]:
             system += f"\n\nRepository map (ranked by task relevance and import centrality):\n{repo_map['text']}"
         if state.plan:

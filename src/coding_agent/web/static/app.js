@@ -17,7 +17,7 @@ const state = {
 };
 
 const elements = Object.fromEntries([
-  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput",
+  "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
   "editorTabs", "editorBreadcrumbs", "editorLanguage", "copyFileButton",
@@ -83,6 +83,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
         mode: elements.modeSelect.value,
         session_id: sessionId,
         reasoning_profile: elements.reasoningSelect.value,
+        task_profile: elements.taskProfileSelect.value,
       }),
     });
     closeSocket();
@@ -95,6 +96,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     elements.workspaceTitle.textContent = workspaceName(result.workspace);
     elements.explorerPath.textContent = result.workspace;
     elements.reasoningSelect.value = result.reasoning_profile || elements.reasoningSelect.value;
+    elements.taskProfileSelect.value = result.task_profile || elements.taskProfileSelect.value;
     enableWorkspaceControls(true);
     resetConversationSurface();
     if (!preserveEditor) resetEditor();
@@ -504,6 +506,10 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
+    case "task_profile_selected":
+      if (elements.taskProfileSelect) elements.taskProfileSelect.value = payload.profile || "project";
+      addActivity("任务类型已确定", `${payload.profile || "project"} · ${payload.reason || ""}`, "success");
+      break;
     case "context_compacted":
       addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning");
       refreshIntelligenceIfVisible();

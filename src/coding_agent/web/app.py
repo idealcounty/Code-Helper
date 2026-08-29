@@ -152,6 +152,7 @@ class CreateSessionRequest(BaseModel):
     mode: Literal["ask", "plan", "act"] = "act"
     session_id: str | None = None
     reasoning_profile: Literal["auto", "fast", "balanced", "deep"] = "auto"
+    task_profile: Literal["auto", "project", "algorithm"] = "auto"
 
 
 class MessageRequest(BaseModel):
@@ -242,6 +243,7 @@ class WebSessionManager:
         mode: str,
         session_id: str | None = None,
         reasoning_profile: str = "auto",
+        task_profile: str = "auto",
     ) -> WebSession:
         if not self.config.api_key:
             raise ValueError(
@@ -253,6 +255,7 @@ class WebSessionManager:
             config=self.config,
             workspace_path=Path(workspace),
             mode=mode,
+            task_profile=task_profile,
             session_id=session_id,
             model_client=(
                 self.model_client_factory() if self.model_client_factory else None
@@ -365,6 +368,7 @@ def create_app(
                 request.mode,
                 request.session_id,
                 request.reasoning_profile,
+                request.task_profile,
             )
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -374,6 +378,7 @@ def create_app(
             "workspace": str(runtime.workspace.root),
             "mode": runtime.state.mode,
             "reasoning_profile": _profile_from_effort(runtime.state.reasoning_mode),
+            "task_profile": runtime.state.requested_task_profile,
         }
 
     @app.get("/api/sessions/{session_id}")
@@ -387,6 +392,7 @@ def create_app(
             "status": state.status,
             "mode": state.mode,
             "reasoning_profile": _profile_from_effort(state.reasoning_mode),
+            "task_profile": state.task_profile,
             "step": state.step,
             "running": session.running,
             "changed_files": sorted(state.changed_files),

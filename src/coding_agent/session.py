@@ -27,6 +27,8 @@ class AgentState:
     turn_id: str
     mode: str = "act"
     reasoning_mode: str | None = None
+    requested_task_profile: str = "auto"
+    task_profile: str = "project"
     status: AgentStatus = AgentStatus.READY
     step: int = 0
     max_steps: int = 20
@@ -68,6 +70,7 @@ class AgentState:
         max_steps: int = 20,
         mode: str = "act",
         reasoning_mode: str | None = None,
+        task_profile: str = "auto",
         session_id: str | None = None,
     ) -> "AgentState":
         return cls(
@@ -76,6 +79,7 @@ class AgentState:
             max_steps=max_steps,
             mode=mode,
             reasoning_mode=reasoning_mode,
+            requested_task_profile=task_profile,
         )
 
     def begin_new_turn(self) -> None:
@@ -95,6 +99,7 @@ class AgentState:
         self.recalled_memories.clear()
         self.recalled_user_memories.clear()
         self.current_objective = ""
+        self.task_profile = "project"
         self.repair_attempts = 0
         self.run_budget.clear()
         self.verification_evidence.clear()
@@ -135,6 +140,7 @@ class AgentState:
         self.recalled_memories.clear()
         self.recalled_user_memories.clear()
         self.current_objective = ""
+        self.task_profile = "project"
         self.repair_attempts = 0
         self.run_budget.clear()
         self.verification_evidence.clear()

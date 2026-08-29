@@ -44,6 +44,8 @@ class SessionReducer:
 
         if event_type == "turn_started":
             self._start_turn(str(payload.get("message") or ""))
+        elif event_type == "task_profile_selected":
+            self.state.task_profile = str(payload.get("profile") or "project")
         elif event_type == "step_started":
             self.state.step = _int(payload.get("step"), self.state.step)
             self.state.status = AgentStatus.BUILDING_CONTEXT

@@ -13,6 +13,7 @@ from .context import ContextManager
 from .events import AgentEvent, EventBus
 from .model import ModelClient, ModelError, ModelResponse, ToolCall
 from .permissions import PermissionDecision, PermissionPolicy, PermissionResult
+from .profiles import get_profile, resolve_profile
 from .session import AgentState, AgentStatus
 from .stuck_detector import StuckDetector
 from .tool_executor import ToolExecutor
@@ -81,6 +82,16 @@ class AgentRunner:
             if state.status is not AgentStatus.READY:
                 state.begin_new_turn()
             await self._emit(state, "turn_started", {"message": user_message})
+            profile = resolve_profile(state.requested_task_profile, user_message)
+            await self._emit(
+                state,
+                "task_profile_selected",
+                {
+                    "requested": state.requested_task_profile,
+                    "profile": profile.name,
+                    "reason": "explicit" if state.requested_task_profile != "auto" else "deterministic_classifier",
+                },
+            )
 
         if user_message is not None or not self.run_budget.active:
             await self._start_run_controls(state)
@@ -223,7 +234,7 @@ class AgentRunner:
             self.run_budget.check_time()
             self.run_budget.check_step(state.step + 1)
 
-            schemas = self._allowed_tool_schemas(state.mode)
+            schemas = self._allowed_tool_schemas(state.mode, state.task_profile)
             context = self.context_manager.build(state, schemas)
             self.run_budget.check_time()
             next_step = state.step + 1
@@ -233,6 +244,7 @@ class AgentRunner:
                 "context_built",
                 {
                     "estimated_chars": context.estimated_chars,
+                    "task_profile": state.task_profile,
                     "rule_candidates": context.rule_candidates,
                     "rule_chars": context.rule_chars,
                     "rule_truncated": context.rule_truncated,
@@ -574,15 +586,22 @@ class AgentRunner:
                 "plan": state.plan, "reason": result.data.get("reason", "")
             })
 
-    def _allowed_tool_schemas(self, mode: str) -> list[dict[str, Any]]:
+    def _allowed_tool_schemas(self, mode: str, task_profile: str = "project") -> list[dict[str, Any]]:
+        profile_tools = get_profile(task_profile).allowed_tools
         if mode == "act":
-            return self.registry.schemas()
+            names = set(self.registry.names())
+            if profile_tools is not None:
+                names &= profile_tools
+            return self.registry.schemas(names)
         read_names = {
             name
             for name in self.registry.names()
             if self.registry.get(name).risk is ToolRisk.READ
         }
+        if profile_tools is not None:
+            read_names &= profile_tools
         return self.registry.schemas(read_names)
+
 
     async def _finish(
         self, state: AgentState, status: AgentStatus, message: str

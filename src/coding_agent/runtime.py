@@ -82,6 +82,7 @@ def create_runtime(
     config: AppConfig,
     workspace_path: Path,
     mode: str = "act",
+    task_profile: str = "auto",
     session_id: str | None = None,
     model_client: ModelClient | None = None,
     approval_handler: ApprovalHandler | None = None,
@@ -91,6 +92,7 @@ def create_runtime(
     state = AgentState.create(
         max_steps=config.max_steps,
         mode=mode,
+        task_profile=task_profile,
         reasoning_mode=config.reasoning_effort,
         session_id=session_id,
     )
