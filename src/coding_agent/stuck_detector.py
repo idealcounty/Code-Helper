@@ -72,3 +72,23 @@ class StuckDetector:
                 "action, or finish if the task is already satisfied."
             )
         return None
+
+    def is_successful_write_loop(self, recent_actions: list[dict[str, Any]]) -> bool:
+        """Return whether a stuck window contains only successful writes.
+
+        A repeated read loop is unsafe to continue and remains a hard failure.
+        A repeated successful write is different: the requested mutation may
+        already be present, so the caller can stop further writes and report a
+        recoverable partial result instead of presenting it as an execution
+        crash.
+        """
+        if not self.is_stuck(recent_actions):
+            return False
+        latest = recent_actions[-1]
+        if str(latest.get("result_code") or "") != "OK":
+            return False
+        try:
+            signature = json.loads(str(latest.get("signature") or "{}"))
+        except (TypeError, ValueError):
+            return False
+        return str(signature.get("name") or "") in RECOVERABLE_TOOL_NAMES

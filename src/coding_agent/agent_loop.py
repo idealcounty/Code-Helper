@@ -466,6 +466,27 @@ class AgentRunner:
                             {"role": "system", "content": recovery_hint}
                         )
                         continue
+                    if self.stuck_detector.is_successful_write_loop(
+                        state.recent_actions
+                    ):
+                        latest = state.recent_actions[-1]
+                        await self._emit(
+                            state,
+                            "stuck_terminal",
+                            {
+                                "status": AgentStatus.PARTIAL,
+                                "message": (
+                                    "Repeated successful writes were stopped; "
+                                    "the latest file changes were preserved."
+                                ),
+                                "action": latest.get("signature"),
+                            },
+                        )
+                        return await self._finish(
+                            state,
+                            AgentStatus.PARTIAL,
+                            "Repeated successful writes were stopped; the latest file changes were preserved. Verify the result before continuing.",
+                        )
                     return await self._finish(
                         state,
                         AgentStatus.FAILED,

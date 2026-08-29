@@ -852,6 +852,9 @@ function handleEvent(event) {
     case "duplicate_write_satisfied":
       addActivity("已阻止重复写入", payload.message || "目标内容已经存在，未再次修改文件", "warning");
       break;
+    case "stuck_terminal":
+      addActivity("已停止重复写入", payload.message || "已保留当前修改，请先验证结果", "warning");
+      break;
     case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
     case "assistant_response": finishAssistantResponse(payload); break;
     case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;

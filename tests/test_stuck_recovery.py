@@ -60,6 +60,24 @@ def test_repeated_successful_action_gets_bounded_recovery_turn(tmp_path: Path) -
     assert "identical tool call" in hint
 
 
+def test_successful_write_loop_is_reported_as_recoverable() -> None:
+    signature = json.dumps(
+        {"name": "apply_patch", "arguments": {"path": "sample.py"}},
+        sort_keys=True,
+    )
+    actions = [
+        {
+            "signature": signature,
+            "result_code": "OK",
+            "result_fingerprint": "same-sha",
+        }
+    ] * 3
+
+    detector = StuckDetector()
+
+    assert detector.is_successful_write_loop(actions) is True
+
+
 def test_repeated_patch_with_progress_is_not_marked_stuck(tmp_path: Path) -> None:
     """A repeated action with a new file version represents progress."""
     signature = json.dumps(
