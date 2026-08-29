@@ -9,6 +9,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from coding_agent.config import AppConfig
+from coding_agent.events import AgentEvent
 from coding_agent.model import ModelResponse, ToolCall
 from coding_agent.web.app import create_app
 from coding_agent.session import AgentStatus
@@ -49,6 +50,7 @@ def test_health_and_static_index() -> None:
     assert 'case "model_progress"' in frontend_bundle.text
     assert "reconcileRunState(sessionId," in frontend_bundle.text
     assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text
+    assert "阶段耗时" in frontend_bundle.text
     assert "runEpoch" in frontend_bundle.text
     assert "pendingUserEchoes" in frontend_bundle.text
     assert "approvalPolicySelect" in frontend_bundle.text
@@ -261,8 +263,45 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert intelligence.json()["hooks"]["pipeline_enabled"] is True
     assert intelligence.json()["budget"]["max_seconds"] == 600.0
     assert intelligence.json()["budget"]["max_steps"] == 20
+    assert intelligence.json()["observability"]["spans"] == []
     assert changed.json() == {"profile": "fast", "reasoning_effort": "low"}
     assert details.json()["reasoning_profile"] == "fast"
+
+
+def test_intelligence_aggregates_span_durations(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post("/api/sessions", json={"workspace": str(tmp_path)})
+        session_id = created.json()["session_id"]
+        runtime = app.state.session_manager.get(session_id).runtime
+        runtime.event_store.append(
+            AgentEvent(
+                type="span_started",
+                session_id=session_id,
+                turn_id="turn-test",
+                payload={"span_id": "span-1", "kind": "model_request"},
+            )
+        )
+        runtime.event_store.append(
+            AgentEvent(
+                type="span_finished",
+                session_id=session_id,
+                turn_id="turn-test",
+                payload={"span_id": "span-1", "kind": "model_request", "duration_ms": 12.5},
+            )
+        )
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence").json()
+
+    assert intelligence["observability"]["active_spans"] == 0
+    assert intelligence["observability"]["spans"] == [
+        {
+            "kind": "model_request",
+            "count": 1,
+            "total_duration_ms": 12.5,
+            "average_duration_ms": 12.5,
+            "max_duration_ms": 12.5,
+        }
+    ]
 
 
 def test_session_scoped_approval_grant_is_limited_and_revocable(tmp_path: Path) -> None:
@@ -605,7 +644,9 @@ def test_websocket_receives_agent_events(tmp_path: Path) -> None:
 
             event_types: list[str] = []
             assistant_content = ""
-            for _ in range(16):
+            # Span telemetry adds lifecycle events; wait for the terminal
+            # event instead of assuming a fixed event count.
+            for _ in range(64):
                 event = websocket.receive_json()
                 event_types.append(event["type"])
                 if event["type"] == "assistant_response":

@@ -173,6 +173,13 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     assert "tool_output_delta" in event_types
     delta = next(event for event in store.load() if event["type"] == "tool_output_delta")
     assert delta["payload"]["coalesced"] is True
+    spans = [event for event in store.load() if event["type"] == "span_finished"]
+    assert {event["payload"]["kind"] for event in spans} >= {
+        "context_build",
+        "model_request",
+        "approval_wait",
+    }
+    assert all(event["payload"]["duration_ms"] >= 0 for event in spans)
 
 
 def test_agent_rejects_noop_patch_before_checkpoint_or_mutation(

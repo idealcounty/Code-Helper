@@ -1052,6 +1052,9 @@ function renderIntelligence(data) {
   const toolRows = Object.entries(data.tool_stats || {}).sort((a, b) => (b[1].calls || 0) - (a[1].calls || 0)).slice(0, 5).map(([name, stat]) => `<div class="metric-row"><span>${escapeHtml(name)}</span><b>${stat.successes || 0}/${stat.calls || 0}</b><em>${formatDuration(stat.duration_ms || 0)}</em></div>`).join("");
   const hooks = data.hooks || {};
   const outputs = data.outputs || {};
+  const observability = data.observability || {};
+  const spanLabels = { context_build: "上下文构建", model_request: "模型请求", approval_wait: "审批等待" };
+  const spanRows = (observability.spans || []).map((span) => `<div class="metric-row"><span>${escapeHtml(spanLabels[span.kind] || span.kind || "未知阶段")}</span><b>${span.count || 0} 次</b><em>均值 ${formatDuration(span.average_duration_ms || 0)} · 总计 ${formatDuration(span.total_duration_ms || 0)}</em></div>`).join("");
   const cache = data.cache || {};
   const memory = data.memory || { count: 0, categories: {}, recent: [], recalled: [] };
   const summaryMemory = memory.summaries || { count: 0, pending_candidates: 0, candidates: [] };
@@ -1147,6 +1150,11 @@ function renderIntelligence(data) {
         <div><strong>${(hooks.pre || 0) + (hooks.post || 0)}</strong><span>自定义 Hooks</span></div>
       </div>
       <p class="intel-note">Hook 管线${hooks.pipeline_enabled ? "已启用" : "未启用"}：${hooks.pre || 0} Pre / ${hooks.post || 0} Post / ${hooks.verification || 0} Verification / ${hooks.task_end || 0} TaskEnd。</p>
+    </section>
+    <section class="intelligence-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">TIM</span><strong>阶段耗时</strong></div><b>${observability.active_spans ? `${observability.active_spans} 进行中` : "已同步"}</b></div>
+      <div class="metric-list">${spanRows || '<p class="intel-note">本轮尚未记录阶段耗时。</p>'}</div>
+      <p class="intel-note">耗时来自事件日志，覆盖上下文构建、模型请求与审批等待；工具耗时见下方本轮统计。</p>
     </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MET</span><strong>本轮统计</strong></div><b>${successRate}% 成功</b></div>

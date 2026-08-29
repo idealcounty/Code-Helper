@@ -449,6 +449,8 @@ def create_app(
         repo_map_calls = 0
         last_context_built: dict[str, Any] = {}
         output_deltas = 0
+        span_totals: dict[str, dict[str, float | int]] = {}
+        active_span_ids: set[str] = set()
         for event in events:
             payload = event.get("payload") or {}
             if event.get("type") == "context_compacted":
@@ -457,6 +459,23 @@ def create_app(
                 last_context_built = dict(payload)
             if event.get("type") == "tool_output_delta":
                 output_deltas += 1
+            if event.get("type") == "span_started":
+                span_id = payload.get("span_id") or event.get("event_id")
+                if span_id:
+                    active_span_ids.add(str(span_id))
+            if event.get("type") == "span_finished":
+                span_id = payload.get("span_id")
+                if span_id:
+                    active_span_ids.discard(str(span_id))
+                kind = str(payload.get("kind") or "unknown")
+                duration = payload.get("duration_ms")
+                if isinstance(duration, (int, float)) and duration >= 0:
+                    stats = span_totals.setdefault(
+                        kind, {"count": 0, "total_duration_ms": 0.0, "max_duration_ms": 0.0}
+                    )
+                    stats["count"] = int(stats["count"]) + 1
+                    stats["total_duration_ms"] = float(stats["total_duration_ms"]) + float(duration)
+                    stats["max_duration_ms"] = max(float(stats["max_duration_ms"]), float(duration))
             if event.get("type") != "tool_result":
                 continue
             result = payload.get("result") or {}
@@ -489,6 +508,18 @@ def create_app(
                 item.get("duration_ms", 0) for item in state.tool_stats.values()
             ),
         }
+        span_observability = [
+            {
+                "kind": kind,
+                "count": int(stats["count"]),
+                "total_duration_ms": round(float(stats["total_duration_ms"]), 3),
+                "average_duration_ms": round(
+                    float(stats["total_duration_ms"]) / max(int(stats["count"]), 1), 3
+                ),
+                "max_duration_ms": round(float(stats["max_duration_ms"]), 3),
+            }
+            for kind, stats in sorted(span_totals.items())
+        ]
         return {
             "reasoning_profile": _profile_from_effort(state.reasoning_mode),
             "context": {
@@ -535,7 +566,11 @@ def create_app(
                 "grants": runtime.runner.permission_policy.grants_snapshot(),
                 "approval_policy": runtime.runner.permission_policy.approval_mode,
             },
-            "observability": {"tool_output_deltas": output_deltas},
+            "observability": {
+                "tool_output_deltas": output_deltas,
+                "spans": span_observability,
+                "active_spans": len(active_span_ids),
+            },
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,
             "tool_totals": tool_totals,

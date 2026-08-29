@@ -4,7 +4,9 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from .checkpoints import CheckpointManager
 from .budget import BudgetExceeded, RunBudget
@@ -334,7 +336,16 @@ class AgentRunner:
             self.run_budget.check_step(state.step + 1)
 
             schemas = self._allowed_tool_schemas(state.mode, state.task_profile)
-            context = self.context_manager.build(state, schemas)
+            context_span_started = perf_counter()
+            context_span_id = await self._start_span(
+                state, "context_build", {"step": state.step + 1}
+            )
+            try:
+                context = self.context_manager.build(state, schemas)
+            finally:
+                await self._finish_span(
+                    state, context_span_id, "context_build", context_span_started
+                )
             self.run_budget.check_time()
             next_step = state.step + 1
             await self._emit(state, "step_started", {"step": next_step})
@@ -360,32 +371,41 @@ class AgentRunner:
                 })
 
             await self._emit(state, "model_started", {"step": state.step})
+            model_span_started = perf_counter()
+            model_span_id = await self._start_span(
+                state, "model_request", {"step": state.step}
+            )
             try:
-                async def on_model_wait(elapsed_seconds: float) -> None:
-                    await self._emit(
-                        state,
-                        "model_progress",
-                        {
-                            "step": state.step,
-                            "elapsed_seconds": round(elapsed_seconds, 1),
-                            "request_timeout_seconds": getattr(
-                                self.model_client, "timeout", None
-                            ),
-                        },
-                    )
+                try:
+                    async def on_model_wait(elapsed_seconds: float) -> None:
+                        await self._emit(
+                            state,
+                            "model_progress",
+                            {
+                                "step": state.step,
+                                "elapsed_seconds": round(elapsed_seconds, 1),
+                                "request_timeout_seconds": getattr(
+                                    self.model_client, "timeout", None
+                                ),
+                            },
+                        )
 
-                stream_method = getattr(self.model_client, "complete_stream", None)
-                if callable(stream_method):
-                    async def on_delta(delta: str) -> None:
-                        await self._emit(state, "assistant_delta", {"content": delta})
-                    response = await self._await_controlled(
-                        stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta),
-                        progress_callback=on_model_wait,
-                    )
-                else:
-                    response = await self._await_controlled(
-                        self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode),
-                        progress_callback=on_model_wait,
+                    stream_method = getattr(self.model_client, "complete_stream", None)
+                    if callable(stream_method):
+                        async def on_delta(delta: str) -> None:
+                            await self._emit(state, "assistant_delta", {"content": delta})
+                        response = await self._await_controlled(
+                            stream_method(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode, on_delta=on_delta),
+                            progress_callback=on_model_wait,
+                        )
+                    else:
+                        response = await self._await_controlled(
+                            self.model_client.complete(messages=context.messages, tools=context.allowed_tools, reasoning_effort=state.reasoning_mode),
+                            progress_callback=on_model_wait,
+                        )
+                finally:
+                    await self._finish_span(
+                        state, model_span_id, "model_request", model_span_started
                     )
             except ModelError as exc:
                 return await self._finish(state, AgentStatus.FAILED, str(exc))
@@ -535,9 +555,21 @@ class AgentRunner:
                         state,
                     )
 
-                approved = await self._await_controlled(
-                    self.approval_handler(call, permission)
+                approval_span_started = perf_counter()
+                approval_span_id = await self._start_span(
+                    state, "approval_wait", {"tool_call_id": call.id}
                 )
+                try:
+                    approved = await self._await_controlled(
+                        self.approval_handler(call, permission)
+                    )
+                finally:
+                    await self._finish_span(
+                        state,
+                        approval_span_id,
+                        "approval_wait",
+                        approval_span_started,
+                    )
                 await self._emit(
                     state,
                     "approval_result",
@@ -993,6 +1025,30 @@ class AgentRunner:
         )
         state.apply_event(event.to_dict())
         return event
+
+    async def _start_span(
+        self, state: AgentState, kind: str, payload: dict[str, Any] | None = None
+    ) -> str:
+        span_id = uuid4().hex
+        event = await self._emit(
+            state,
+            "span_started",
+            {"span_id": span_id, "kind": kind, **(payload or {})},
+        )
+        return span_id
+
+    async def _finish_span(
+        self, state: AgentState, span_id: str, kind: str, started: float
+    ) -> None:
+        await self._emit(
+            state,
+            "span_finished",
+            {
+                "span_id": span_id,
+                "kind": kind,
+                "duration_ms": round((perf_counter() - started) * 1000, 3),
+            },
+        )
 
 
 def _serialize_call(call: ToolCall) -> dict[str, Any]:
