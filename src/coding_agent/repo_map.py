@@ -257,6 +257,12 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
     imports: list[str] = []
     if suffix in {".js", ".jsx", ".mjs", ".ts", ".tsx"}:
         imports.extend(re.findall(r"\bimport\s+[^;\n]*?\s+from\s+[\"']([^\"']+)", text))
+        imports.extend(
+            re.findall(
+                r"\bexport\s+(?:\*|\{[^}]*\})\s+from\s+[\"']([^\"']+)",
+                text,
+            )
+        )
         imports.extend(re.findall(r"\b(?:require|import)\s*\(\s*[\"']([^\"']+)", text))
     elif suffix == ".java":
         imports.extend(re.findall(r"^\s*import\s+([\w.]+)\s*;", text, flags=re.MULTILINE))
@@ -285,9 +291,11 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
     return sorted(set(imports)), symbols[:MAX_SYMBOLS_PER_FILE]
 
 
-def _attach_dependency_graph(files: list[RepoMapFile]) -> list[RepoMapFile]:
+def _attach_dependency_graph(
+    files: list[RepoMapFile], workspace: Workspace | None = None
+) -> list[RepoMapFile]:
     """Attach conservative cross-language import edges without an indexer."""
-    indexes = _dependency_indexes(files)
+    indexes = _dependency_indexes(files, workspace)
 
     dependency_map: dict[str, set[str]] = {item.path: set() for item in files}
     dependent_map: dict[str, set[str]] = {item.path: set() for item in files}
@@ -350,7 +358,7 @@ def _attach_dependency_graph_cached(
         # graph conservatively for path-set changes; content-only edits use
         # the incremental path below.
         if previous_paths != current_paths:
-            enriched = _attach_dependency_graph(files)
+            enriched = _attach_dependency_graph(files, workspace)
             metadata = {
                 item.path: (
                     tuple(item.dependencies),
@@ -365,7 +373,7 @@ def _attach_dependency_graph_cached(
         workspace.repo_graph_cache = (signature, metadata)
         return _apply_dependency_metadata(files, metadata), False, True
 
-    enriched = _attach_dependency_graph(files)
+    enriched = _attach_dependency_graph(files, workspace)
     metadata = {
         item.path: (
             tuple(item.dependencies),
@@ -407,7 +415,7 @@ def _incremental_dependency_metadata(
         if previous_signature.get(path) != current_signature.get(path)
     }
     current_paths = {item.path for item in files}
-    indexes = _dependency_indexes(files)
+    indexes = _dependency_indexes(files, workspace)
     dependencies_by_path: dict[str, set[str]] = {}
     for item in files:
         previous = old_metadata.get(item.path)
@@ -457,7 +465,9 @@ def _imports_changed_path(item: RepoMapFile, changed_paths: set[str], indexes: d
     return bool(_resolve_item_dependencies(item, indexes) & changed_paths)
 
 
-def _dependency_indexes(files: list[RepoMapFile]) -> dict[str, Any]:
+def _dependency_indexes(
+    files: list[RepoMapFile], workspace: Workspace | None = None
+) -> dict[str, Any]:
     paths = {item.path for item in files}
     python_modules: dict[str, str] = {}
     java_modules: dict[str, set[str]] = {}
@@ -472,12 +482,27 @@ def _dependency_indexes(files: list[RepoMapFile]) -> dict[str, Any]:
             dotted = item.path[:-5].replace("/", ".")
             java_modules.setdefault(dotted, set()).add(item.path)
             java_modules.setdefault(Path(item.path).stem, set()).add(item.path)
+            if workspace is not None:
+                package = _java_package_name(workspace.root / item.path)
+                if package:
+                    java_modules.setdefault(
+                        f"{package}.{Path(item.path).stem}", set()
+                    ).add(item.path)
     return {
         "paths": paths,
         "python_modules": python_modules,
         "java_modules": java_modules,
         "java_files": java_files,
     }
+
+
+def _java_package_name(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    match = re.search(r"^\s*package\s+([\w.]+)\s*;", text, flags=re.MULTILINE)
+    return match.group(1) if match else ""
 
 
 def _resolve_item_dependencies(item: RepoMapFile, indexes: dict[str, Any]) -> set[str]:

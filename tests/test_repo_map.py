@@ -93,6 +93,25 @@ def test_repo_map_links_local_javascript_and_typescript_imports(tmp_path: Path) 
     assert by_path["src/shared.ts"]["centrality"] == 2
 
 
+def test_repo_map_links_javascript_re_exports(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "shared.ts").write_text("export const answer = 42;\n", encoding="utf-8")
+    (src / "barrel.ts").write_text(
+        'export { answer } from "./shared";\n', encoding="utf-8"
+    )
+    (src / "app.ts").write_text(
+        'import { answer } from "./barrel";\nconsole.log(answer);\n',
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert by_path["src/barrel.ts"]["dependencies"] == ["src/shared.ts"]
+    assert by_path["src/app.ts"]["dependencies"] == ["src/barrel.ts"]
+
+
 def test_repo_map_links_local_java_class_imports(tmp_path: Path) -> None:
     package = tmp_path / "src" / "main" / "java" / "com" / "example"
     package.mkdir(parents=True)
@@ -109,6 +128,25 @@ def test_repo_map_links_local_java_class_imports(tmp_path: Path) -> None:
 
     assert "src/main/java/com/example/Shared.java" in by_path["src/main/java/com/example/App.java"]["dependencies"]
     assert by_path["src/main/java/com/example/Shared.java"]["centrality"] == 1
+
+
+def test_repo_map_uses_java_package_declaration_when_path_differs(tmp_path: Path) -> None:
+    library = tmp_path / "src" / "lib"
+    app = tmp_path / "src" / "app"
+    library.mkdir(parents=True)
+    app.mkdir(parents=True)
+    (library / "Shared.java").write_text(
+        "package com.example;\npublic class Shared {}\n", encoding="utf-8"
+    )
+    (app / "App.java").write_text(
+        "package app;\nimport com.example.Shared;\npublic class App {}\n",
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "src/lib/Shared.java" in by_path["src/app/App.java"]["dependencies"]
 
 
 def test_context_injects_budgeted_repo_map_metadata(tmp_path: Path) -> None:
