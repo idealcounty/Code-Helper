@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from time import perf_counter
@@ -75,6 +76,7 @@ class AgentRunner:
         self.run_budget = run_budget or RunBudget()
         self.project_verification_commands = tuple(project_verification_commands or ())
         self._stuck_recovery_attempts = 0
+        self._stuck_signature: tuple[str, str] | None = None
 
     async def run_turn(
         self, state: AgentState, user_message: str | None = None
@@ -105,6 +107,7 @@ class AgentRunner:
         if user_message is not None or not self.run_budget.active:
             if user_message is not None:
                 self._stuck_recovery_attempts = 0
+                self._stuck_signature = None
             await self._start_run_controls(state)
 
         return await self._run_safely(state)
@@ -438,6 +441,10 @@ class AgentRunner:
                 if outcome is not None:
                     return outcome
                 if self.stuck_detector.is_stuck(state.recent_actions):
+                    stuck_signature = self._stuck_fingerprint(state.recent_actions)
+                    if stuck_signature != self._stuck_signature:
+                        self._stuck_signature = stuck_signature
+                        self._stuck_recovery_attempts = 0
                     recovery_hint = self.stuck_detector.recovery_hint(
                         state.recent_actions
                     )
@@ -460,6 +467,11 @@ class AgentRunner:
                         AgentStatus.FAILED,
                         "AGENT_STUCK: repeated identical tool action and result",
                     )
+                else:
+                    # A different action breaks the current repetition streak;
+                    # a later, independent loop gets its own bounded recovery.
+                    self._stuck_signature = None
+                    self._stuck_recovery_attempts = 0
                 continue
 
             decision = self.verifier.evaluate(state, response)
@@ -588,8 +600,48 @@ class AgentRunner:
                     )
                     continue
 
+            if self._is_duplicate_successful_write(state, call):
+                await self._record_tool_result(
+                    state,
+                    call,
+                    ToolResult.failure(
+                        "DUPLICATE_TOOL_CALL",
+                        "An identical write already succeeded. Inspect the current file and continue without repeating it.",
+                    ),
+                )
+                continue
+
             await self._execute_and_observe(state, call)
         return None
+
+    @staticmethod
+    def _stuck_fingerprint(
+        recent_actions: list[dict[str, Any]],
+    ) -> tuple[str, str] | None:
+        if not recent_actions:
+            return None
+        latest = recent_actions[-1]
+        return (
+            str(latest.get("signature") or ""),
+            str(latest.get("result_code") or ""),
+        )
+
+    @staticmethod
+    def _is_duplicate_successful_write(
+        state: AgentState, call: ToolCall
+    ) -> bool:
+        if call.name not in {"apply_patch", "write_file"}:
+            return False
+        for action in reversed(state.recent_actions):
+            if str(action.get("result_code") or "") != "OK":
+                continue
+            try:
+                signature = json.loads(str(action.get("signature") or "{}"))
+            except (TypeError, ValueError):
+                continue
+            if signature.get("name") == call.name and signature.get("arguments") == call.arguments:
+                return True
+        return False
 
     def _parallel_read_specs(
         self, state: AgentState, calls: list[ToolCall]

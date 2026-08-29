@@ -58,3 +58,41 @@ def test_repeated_successful_action_gets_bounded_recovery_turn(tmp_path: Path) -
 
     assert hint is not None
     assert "identical tool call" in hint
+
+
+def test_duplicate_successful_write_is_reported_without_reapplying(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sample.py"
+    path.write_text("value = 1\n", encoding="utf-8")
+    patch = {
+        "path": "sample.py",
+        "old_text": "value = 1",
+        "new_text": "value = 2",
+    }
+    model = ScriptedModel([])
+    runner, store = _make_runner(tmp_path, model)
+    state = AgentState.create(session_id="session", max_steps=8, mode="act")
+    state.recent_actions.append(
+        {
+            "signature": json.dumps(
+                {"name": "apply_patch", "arguments": patch}, sort_keys=True
+            ),
+            "result_code": "OK",
+        }
+    )
+
+    asyncio.run(
+        runner._handle_tool_calls(
+            state, [ToolCall("edit-2", "apply_patch", patch)]
+        )
+    )
+
+    assert path.read_text(encoding="utf-8") == "value = 1\n"
+    duplicate = [
+        event
+        for event in store.load()
+        if event["type"] == "tool_result"
+        and event["payload"]["result"]["code"] == "DUPLICATE_TOOL_CALL"
+    ]
+    assert len(duplicate) == 1
