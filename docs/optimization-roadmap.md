@@ -25,7 +25,7 @@
 
 ## 3. 当前完成基线
 
-截至 2026-08-29，仓库全量测试为 `120 passed`。以下主闭环已完成，不建议重复建设：
+截至 2026-08-29，仓库全量测试为 `122 passed`。以下主闭环已完成，不建议重复建设：
 
 | 能力 | 当前状态 | 主要实现 |
 | --- | --- | --- |
@@ -58,7 +58,7 @@
 | R8 | P1 | 路径相关的 `AGENTS.md` 规则链（V1 已完成） | 避免无关目录规则污染任务 | 中 |
 | R9 | P1 | Repo Map 依赖图与预算化注入（V1 已完成） | 减少盲目搜索，提高跨文件定位率 | 中高 |
 | R10 | P1 | 高保真上下文压缩 | 长任务不丢目标、失败和验证证据 | 中高 |
-| R11 | P1 | 可配置但受控的生命周期 Hooks | 将已有空管线变成真实工作流能力 | 中 |
+| R11 | P1 | 可配置但受控的生命周期 Hooks（V1 已完成） | 将已有空管线变成真实工作流能力 | 中 |
 | R12 | P1 | 命令增量输出与统一运行可观测性 | 长命令更易停止、诊断和展示 | 中 |
 | R13 | P2 | 安全只读工具并行 | 降低仓库探索延迟 | 中 |
 | R14 | P2 | 多语言符号提取与增量 Repo Map 缓存 | 改善非 Python 仓库理解 | 中高 |
@@ -345,21 +345,25 @@ Step 级历史裁剪现在生成确定性的结构化摘要，并将摘要元数
 
 ### R11. 可配置但受控的生命周期 Hooks
 
-**当前差距**
+**实施状态：V1 已完成（2026-08-29）**
 
-仓库已有 `HookManager` 和 Pre/Post 单元测试，但 Runtime 默认创建的是空 HookManager；开发流程建议的 `OnVerification`、`OnTaskEnd` 以及真实格式化/验证 Hook 尚未落地。
+`HookManager` 现在支持 Pre/Post Tool Hook 以及 `OnVerification`、`OnTaskEnd` 两类生命周期 Hook。Runtime 默认注册的内部 Hook 只提供验证失败和任务结束的附加上下文，不改变 Agent 状态或权限决定。
 
 **业界借鉴**
 
 Claude Code Hooks 使用明确事件、matcher、结构化 JSON 输入输出、超时和决策结果。可借鉴协议清晰度，但本项目首版只支持少量本地 Hook，不开放任意插件系统。
 
-**建议实现**
+**已实现**
 
-- 支持 `PreToolUse`、`PostToolUse`、`OnVerification`、`OnTaskEnd` 四种事件。
-- Hook 配置包含 matcher、命令 argv、超时、允许的工作目录和失败策略。
-- Hook 返回结构化 `allow / deny / additional_context`；Hook 不能绕过 PermissionPolicy。
-- 默认只注册安全的内部 Hook，例如 Python 修改后的可选格式检查和结束前验证缺口检查。
-- Hook 自身命令也经过工作区、环境脱敏、超时和审批策略。
+- 支持 `PreToolUse`、`PostToolUse`、`OnVerification`、`OnTaskEnd` 四种事件；Pre Hook 可结构化拒绝，拒绝仍经 `ToolExecutor` 归一化为工具结果。
+- Hook 返回结构化 `allow / reason / code / additional_context`；生命周期决策写入 `hook_executed`，附加上下文写入 `hook_context` 并可恢复。
+- Runtime 默认启用安全的验证失败提示和任务结束证据提示；Hook 没有 PermissionPolicy、工具执行或审批权限。
+- Web 智能面板显示四类 Hook 的注册数量和管线状态。
+
+**已知边界与后续加固**
+
+- V1 只提供 Python 内部回调配置，尚未开放外部命令型 Hook 的 matcher、argv、超时和独立工作目录。
+- Hook 失败会被记录并保持主流程可继续；是否因 Hook 失败中止任务仍需结合真实工作流 Eval 决定。
 
 ### R12. 命令增量输出与统一运行可观测性
 

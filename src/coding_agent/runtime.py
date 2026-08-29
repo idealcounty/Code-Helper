@@ -8,6 +8,7 @@ from .agent_loop import AgentRunner, ApprovalHandler
 from .budget import RunBudget
 from .cancellation import CancellationToken
 from .checkpoints import CheckpointManager
+from .hooks import HookDecision, HookManager
 from .config import AppConfig
 from .context import ContextManager
 from .events import EventBus, EventListener, EventStore
@@ -52,6 +53,28 @@ class AgentRuntime:
     cancellation: CancellationToken
     run_budget: RunBudget
     runner: AgentRunner
+
+
+async def _verification_context_hook(evidence: dict[str, object]) -> HookDecision | None:
+    """Keep rejected verification visible to the next model step."""
+    if bool(evidence.get("accepted")):
+        return None
+    reason = str(evidence.get("reason") or "verification did not satisfy the completion contract")
+    return HookDecision(
+        additional_context=(
+            "Verification hook: the latest verification was rejected. "
+            f"Inspect the failure and repair before claiming completion. Reason: {reason}"
+        )
+    )
+
+
+async def _task_end_evidence_hook(summary: dict[str, object]) -> HookDecision | None:
+    """Annotate suspicious completed turns without changing their status."""
+    if str(summary.get("status")) == "completed" and not bool(summary.get("verification_fresh")):
+        return HookDecision(
+            additional_context="Task-end hook: completion was reported without fresh verification evidence."
+        )
+    return None
 
 
 def create_runtime(
@@ -131,8 +154,13 @@ def create_runtime(
         memory_store=memory_store,
         user_memory=user_memory,
     )
+    hooks = HookManager(
+        verification=[_verification_context_hook],
+        task_end=[_task_end_evidence_hook],
+    )
     tool_executor = ToolExecutor(
         registry,
+        hooks=hooks,
         result_store=workspace.root / ".code-helper" / "tool-results",
         redactor=redactor,
     )

@@ -68,6 +68,15 @@ class SessionReducer:
             self.state.context_summary_meta = copy.deepcopy(
                 dict(payload.get("summary_meta") or {})
             )
+        elif event_type == "hook_context":
+            content = str(payload.get("content") or "").strip()
+            if content:
+                self.state.messages.append(
+                    {
+                        "role": "system",
+                        "content": f"HOOK CONTEXT ({payload.get('lifecycle') or 'lifecycle'}): {content}",
+                    }
+                )
         elif event_type == "repair_attempt":
             self.state.repair_attempts = max(
                 self.state.repair_attempts, _int(payload.get("attempt"), 0)

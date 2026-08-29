@@ -8,7 +8,7 @@ from coding_agent.tools import ToolRegistry, Workspace
 from coding_agent.tools.plan import register_plan_tools
 from coding_agent.tools.skills import register_skill_tools
 from coding_agent.tool_executor import ToolExecutor
-from coding_agent.hooks import HookManager
+from coding_agent.hooks import HookDecision, HookManager
 from coding_agent.tools.base import ToolResult
 from coding_agent.context import ContextManager
 from coding_agent.verifier import CompletionStatus, Verifier
@@ -77,6 +77,38 @@ def test_tool_executor_runs_pre_and_post_hooks() -> None:
     result = asyncio.run(executor.execute("update_plan", {"steps": [{"step": "x"}]}))
     assert result.ok and result.metadata["hooked"]
     assert calls == ["pre:update_plan", "post:update_plan"]
+
+
+def test_pre_hook_can_deny_without_bypassing_executor() -> None:
+    registry = ToolRegistry()
+    register_plan_tools(registry, AgentState.create())
+
+    def deny(_: str, __: dict) -> HookDecision:
+        return HookDecision(allow=False, reason="policy test", hook="deny")
+
+    executor = ToolExecutor(registry, HookManager(pre=[deny]))
+    result = asyncio.run(
+        executor.execute("update_plan", {"steps": [{"step": "must not run"}]})
+    )
+
+    assert result.ok is False
+    assert result.code == "HOOK_DENIED"
+
+
+def test_lifecycle_hooks_return_structured_decisions() -> None:
+    async def verification(_: dict) -> HookDecision:
+        return HookDecision(additional_context="inspect the failed test", hook="verification")
+
+    async def task_end(_: dict) -> None:
+        return None
+
+    manager = HookManager(verification=[verification], task_end=[task_end])
+    decisions = asyncio.run(manager.on_verification({"accepted": False}))
+    finished = asyncio.run(manager.on_task_end({"status": "partial"}))
+
+    assert decisions[0].additional_context == "inspect the failed test"
+    assert decisions[0].hook == "verification"
+    assert finished[0].allow is True
 
 
 def test_state_restores_conversation_and_plan_from_events() -> None:

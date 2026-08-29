@@ -489,6 +489,8 @@ def create_app(
                 "pipeline_enabled": True,
                 "pre": len(runtime.tool_executor.hooks.pre),
                 "post": len(runtime.tool_executor.hooks.post),
+                "verification": len(runtime.tool_executor.hooks.verification),
+                "task_end": len(runtime.tool_executor.hooks.task_end),
             },
             "token_usage": state.token_usage,
             "tool_stats": state.tool_stats,

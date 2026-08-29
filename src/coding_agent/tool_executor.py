@@ -31,8 +31,15 @@ class ToolExecutor:
         try:
             spec = self.registry.get(name)
             spec.validate(arguments)
-            await self.hooks.before(name, arguments)
-            result = await asyncio.wait_for(spec.handler(arguments), timeout=spec.timeout)
+            decision = await self.hooks.before(name, arguments)
+            if not decision.allow:
+                result = ToolResult.failure(
+                    decision.code,
+                    decision.reason or f"Hook {decision.hook or 'pre-tool'} denied {name}",
+                    data={"hook": decision.hook, "additional_context": decision.additional_context},
+                )
+            else:
+                result = await asyncio.wait_for(spec.handler(arguments), timeout=spec.timeout)
         except ToolError as exc:
             result = ToolResult.failure(exc.code, exc.message, data=exc.data)
         except TimeoutError:
@@ -44,7 +51,12 @@ class ToolExecutor:
                 "TOOL_INTERNAL_ERROR",
                 f"{type(exc).__name__}: {exc}",
             )
-        result = await self.hooks.after(name, arguments, result)
+        try:
+            result = await self.hooks.after(name, arguments, result)
+        except Exception as exc:
+            result = ToolResult.failure(
+                "HOOK_FAILED", f"Post-tool hook failed: {type(exc).__name__}: {exc}"
+            )
         self._persist_full_output(result)
         result.metadata.setdefault("duration_ms", round((perf_counter() - started) * 1000))
         return result

@@ -538,6 +538,10 @@ class AgentRunner:
             await self._emit(
                 state, "verification_recorded", {"evidence": evidence_payload}
             )
+            await self._run_lifecycle_hooks(
+                state, "OnVerification", evidence_payload,
+                self.tool_executor.hooks.on_verification(evidence_payload),
+            )
             if not evidence.accepted:
                 await self._emit(state, "repair_attempt", {
                     "attempt": state.repair_attempts + 1,
@@ -562,6 +566,19 @@ class AgentRunner:
     async def _finish(
         self, state: AgentState, status: AgentStatus, message: str
     ) -> AgentRunResult:
+        finish_payload = {
+            "status": status,
+            "message": message,
+            "changed_files": sorted(state.changed_files),
+            "verification_fresh": state.verification_is_fresh,
+            "verification_evidence": state.verification_evidence,
+        }
+        await self._run_lifecycle_hooks(
+            state,
+            "OnTaskEnd",
+            finish_payload,
+            self.tool_executor.hooks.on_task_end(finish_payload),
+        )
         await self._emit(
             state,
             "turn_finished",
@@ -592,6 +609,47 @@ class AgentRunner:
                     {"error": str(exc), "raw_events_preserved": True},
                 )
         return AgentRunResult(status, message, state)
+
+    async def _run_lifecycle_hooks(
+        self,
+        state: AgentState,
+        lifecycle: str,
+        payload: dict[str, Any],
+        decisions_awaitable: Awaitable[list[Any]],
+    ) -> None:
+        """Run hooks and persist their decisions without granting policy authority."""
+        try:
+            decisions = await decisions_awaitable
+        except Exception as exc:  # HookManager normally normalizes this; keep loop safe.
+            decisions = [{
+                "allow": False,
+                "code": "HOOK_FAILED",
+                "reason": f"{type(exc).__name__}: {exc}",
+                "hook": "HookManager",
+            }]
+        for decision in decisions:
+            if hasattr(decision, "allow"):
+                data = {
+                    "allow": bool(decision.allow),
+                    "code": str(decision.code),
+                    "reason": str(decision.reason),
+                    "hook": str(decision.hook),
+                    "additional_context": str(decision.additional_context),
+                }
+            else:
+                data = dict(decision)
+            await self._emit(
+                state,
+                "hook_executed",
+                {"lifecycle": lifecycle, **data},
+            )
+            context = str(data.get("additional_context") or "").strip()
+            if context:
+                await self._emit(
+                    state,
+                    "hook_context",
+                    {"lifecycle": lifecycle, "hook": data.get("hook", ""), "content": context[:2_000]},
+                )
 
     async def _emit(
         self, state: AgentState, event_type: str, payload: dict[str, Any]

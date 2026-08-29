@@ -771,7 +771,7 @@ function renderIntelligence(data) {
         <div><strong>${outputs.stored_count || 0}</strong><span>完整输出引用</span></div>
         <div><strong>${(hooks.pre || 0) + (hooks.post || 0)}</strong><span>自定义 Hooks</span></div>
       </div>
-      <p class="intel-note">Hook 管线${hooks.pipeline_enabled ? "已启用" : "未启用"}：${hooks.pre || 0} Pre / ${hooks.post || 0} Post。未配置时不会虚报执行。</p>
+      <p class="intel-note">Hook 管线${hooks.pipeline_enabled ? "已启用" : "未启用"}：${hooks.pre || 0} Pre / ${hooks.post || 0} Post / ${hooks.verification || 0} Verification / ${hooks.task_end || 0} TaskEnd。</p>
     </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MET</span><strong>本轮统计</strong></div><b>${successRate}% 成功</b></div>
