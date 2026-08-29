@@ -232,6 +232,16 @@ class SessionReducer:
         if ok and mutated_files:
             self.state.changed_files.update(mutated_files)
             self.state.last_mutation_sequence = sequence
+        # Include a content/version fingerprint when a tool exposes one.  A
+        # repeated patch can be legitimate when ``old_text`` occurs multiple
+        # times: each successful replacement changes the file even though the
+        # model emits the same arguments.  The stuck detector must distinguish
+        # that progressing sequence from a true no-progress loop.  Older
+        # events may not contain this field; ``None`` keeps them compatible.
+        result_data = result.get("data") or {}
+        result_fingerprint = result_data.get("sha256")
+        if not isinstance(result_fingerprint, str):
+            result_fingerprint = None
         self.state.recent_actions.append(
             {
                 "signature": json.dumps(
@@ -240,6 +250,7 @@ class SessionReducer:
                     sort_keys=True,
                 ),
                 "result_code": result.get("code"),
+                "result_fingerprint": result_fingerprint,
             }
         )
         self.state.recent_actions[:] = self.state.recent_actions[-20:]

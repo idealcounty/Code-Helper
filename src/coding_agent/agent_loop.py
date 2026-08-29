@@ -79,7 +79,7 @@ class AgentRunner:
         self.project_verification_commands = tuple(project_verification_commands or ())
         self.workspace = workspace
         self._stuck_recovery_attempts = 0
-        self._stuck_signature: tuple[str, str] | None = None
+        self._stuck_signature: tuple[str, str, str] | None = None
 
     async def run_turn(
         self, state: AgentState, user_message: str | None = None
@@ -637,13 +637,14 @@ class AgentRunner:
     @staticmethod
     def _stuck_fingerprint(
         recent_actions: list[dict[str, Any]],
-    ) -> tuple[str, str] | None:
+    ) -> tuple[str, str, str] | None:
         if not recent_actions:
             return None
         latest = recent_actions[-1]
         return (
             str(latest.get("signature") or ""),
             str(latest.get("result_code") or ""),
+            str(latest.get("result_fingerprint") or ""),
         )
 
     @staticmethod

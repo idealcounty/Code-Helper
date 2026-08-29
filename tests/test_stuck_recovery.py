@@ -60,6 +60,20 @@ def test_repeated_successful_action_gets_bounded_recovery_turn(tmp_path: Path) -
     assert "identical tool call" in hint
 
 
+def test_repeated_patch_with_progress_is_not_marked_stuck(tmp_path: Path) -> None:
+    """A repeated action with a new file version represents progress."""
+    signature = json.dumps(
+        {"name": "apply_patch", "arguments": {"path": "sample.py"}},
+        sort_keys=True,
+    )
+    actions = [
+        {"signature": signature, "result_code": "OK", "result_fingerprint": digest}
+        for digest in ("sha-1", "sha-2", "sha-3")
+    ]
+
+    assert StuckDetector().is_stuck(actions) is False
+
+
 def test_duplicate_successful_write_is_reported_without_reapplying(
     tmp_path: Path,
 ) -> None:

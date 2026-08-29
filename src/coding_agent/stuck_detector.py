@@ -27,7 +27,12 @@ class StuckDetector:
             return False
         window = recent_actions[-threshold:]
         signatures = {
-            (item.get("signature"), item.get("result_code")) for item in window
+            (
+                item.get("signature"),
+                item.get("result_code"),
+                item.get("result_fingerprint"),
+            )
+            for item in window
         }
         return len(signatures) == 1
 
