@@ -450,6 +450,18 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str], list[str]]:
                 text,
             )
         )
+    elif suffix in _JAVASCRIPT_SUFFIXES:
+        # Class methods omit a return type, so they are not captured by the
+        # C-like function pattern.  Keep this intentionally conservative and
+        # only index method-shaped lines with a body; call resolution still
+        # requires a unique symbol name before adding a cross-file edge.
+        method_names = re.findall(
+            r"^[ \t]*(?:static\s+|async\s+)*(?!if\b|for\b|while\b|switch\b|catch\b)"
+            r"([A-Za-z_$][\w$]*)\s*\([^;{}\n]*\)\s*\{",
+            text,
+            flags=re.MULTILINE,
+        )
+        symbols.extend(f"def {name}" for name in method_names)
     calls = _generic_call_names(text)
     return sorted(set(imports)), symbols[:MAX_SYMBOLS_PER_FILE], calls[:MAX_SYMBOLS_PER_FILE]
 

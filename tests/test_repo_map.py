@@ -206,6 +206,29 @@ def test_repo_map_links_local_javascript_and_typescript_imports(tmp_path: Path) 
     assert by_path["src/shared.ts"]["centrality"] == 2
 
 
+def test_repo_map_indexes_javascript_class_methods_for_unique_calls(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "service.ts").write_text(
+        "export class Service {\n"
+        "  execute(value: string) { return value.trim(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (src / "app.ts").write_text(
+        'import { Service } from "./service";\n'
+        "export function run(value: string) { return new Service().execute(value); }\n",
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "def execute" in by_path["src/service.ts"]["symbols"]
+    assert "execute" in by_path["src/app.ts"]["calls"]
+    assert by_path["src/app.ts"]["dependencies"] == ["src/service.ts"]
+
+
 def test_repo_map_links_javascript_re_exports(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
