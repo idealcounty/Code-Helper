@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import posixpath
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,8 @@ _GENERIC_CODE_SUFFIXES = {
     ".ts",
     ".tsx",
 }
+_JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".ts", ".tsx"}
+_JAVA_SUFFIXES = {".java"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,29 +286,14 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
 
 
 def _attach_dependency_graph(files: list[RepoMapFile]) -> list[RepoMapFile]:
-    """Attach best-effort Python import edges without requiring an indexer."""
-    modules: dict[str, str] = {}
-    for item in files:
-        if item.kind not in {"python", "test"}:
-            continue
-        module = item.path[:-3].replace("/", ".")
-        if module.endswith(".__init__"):
-            module = module[:-9]
-        modules[module] = item.path
+    """Attach conservative cross-language import edges without an indexer."""
+    indexes = _dependency_indexes(files)
 
     dependency_map: dict[str, set[str]] = {item.path: set() for item in files}
     dependent_map: dict[str, set[str]] = {item.path: set() for item in files}
     for item in files:
-        if item.kind not in {"python", "test"}:
-            continue
-        source_module = item.path[:-3].replace("/", ".")
-        if source_module.endswith(".__init__"):
-            source_module = source_module[:-9]
-        source_package = source_module.rsplit(".", 1)[0] if "." in source_module else ""
-        for imported in item.imports:
-            candidates = _import_candidates(imported, source_package)
-            target = next((modules[name] for name in candidates if name in modules), None)
-            if target is None or target == item.path:
+        for target in _resolve_item_dependencies(item, indexes):
+            if target == item.path:
                 continue
             dependency_map[item.path].add(target)
             dependent_map[target].add(item.path)
@@ -398,7 +386,7 @@ def _incremental_dependency_metadata(
         dict[str, tuple[tuple[str, ...], tuple[str, ...], int]],
     ],
 ) -> dict[str, tuple[tuple[str, ...], tuple[str, ...], int]]:
-    """Update only sources affected by changed Python modules/importers."""
+    """Update only sources affected by changed modules/importers."""
     old_signature, old_metadata = cached
     current_signature = {
         path: digest
@@ -418,23 +406,14 @@ def _incremental_dependency_metadata(
         for path in set(previous_signature) | set(current_signature)
         if previous_signature.get(path) != current_signature.get(path)
     }
-    changed_modules = {
-        _python_module_name(path)
-        for path in changed_paths
-        if path.lower().endswith(".py")
-    }
     current_paths = {item.path for item in files}
-    modules = {
-        _python_module_name(item.path): item.path
-        for item in files
-        if item.kind in {"python", "test"}
-    }
+    indexes = _dependency_indexes(files)
     dependencies_by_path: dict[str, set[str]] = {}
     for item in files:
         previous = old_metadata.get(item.path)
         previous_dependencies = set(previous[0]) if previous is not None else set()
-        if item.path in changed_paths or _imports_changed_module(item, changed_modules):
-            dependencies_by_path[item.path] = _resolve_item_dependencies(item, modules)
+        if item.path in changed_paths or _imports_changed_path(item, changed_paths, indexes):
+            dependencies_by_path[item.path] = _resolve_item_dependencies(item, indexes)
         else:
             dependencies_by_path[item.path] = {
                 path for path in previous_dependencies if path in current_paths
@@ -471,20 +450,89 @@ def _imports_changed_module(item: RepoMapFile, changed_modules: set[str]) -> boo
     )
 
 
-def _resolve_item_dependencies(
-    item: RepoMapFile, modules: dict[str, str]
-) -> set[str]:
-    if item.kind not in {"python", "test"}:
-        return set()
-    source_module = _python_module_name(item.path)
-    source_package = source_module.rsplit(".", 1)[0] if "." in source_module else ""
+def _imports_changed_path(item: RepoMapFile, changed_paths: set[str], indexes: dict[str, Any]) -> bool:
+    """Return whether an unchanged importer currently points at a changed file."""
+    if not changed_paths:
+        return False
+    return bool(_resolve_item_dependencies(item, indexes) & changed_paths)
+
+
+def _dependency_indexes(files: list[RepoMapFile]) -> dict[str, Any]:
+    paths = {item.path for item in files}
+    python_modules: dict[str, str] = {}
+    java_modules: dict[str, set[str]] = {}
+    java_files: set[str] = set()
+    for item in files:
+        suffix = Path(item.path).suffix.lower()
+        if suffix == ".py":
+            module = _python_module_name(item.path)
+            python_modules[module] = item.path
+        elif suffix == ".java":
+            java_files.add(item.path)
+            dotted = item.path[:-5].replace("/", ".")
+            java_modules.setdefault(dotted, set()).add(item.path)
+            java_modules.setdefault(Path(item.path).stem, set()).add(item.path)
+    return {
+        "paths": paths,
+        "python_modules": python_modules,
+        "java_modules": java_modules,
+        "java_files": java_files,
+    }
+
+
+def _resolve_item_dependencies(item: RepoMapFile, indexes: dict[str, Any]) -> set[str]:
+    suffix = Path(item.path).suffix.lower()
     dependencies: set[str] = set()
     for imported in item.imports:
-        candidates = _import_candidates(imported, source_package)
-        target = next((modules[name] for name in candidates if name in modules), None)
-        if target is not None and target != item.path:
-            dependencies.add(target)
+        if suffix == ".py":
+            source_module = _python_module_name(item.path)
+            source_package = source_module.rsplit(".", 1)[0] if "." in source_module else ""
+            candidates = _import_candidates(imported, source_package)
+            target = next(
+                (indexes["python_modules"][name] for name in candidates if name in indexes["python_modules"]),
+                None,
+            )
+            if target is not None:
+                dependencies.add(target)
+        elif suffix in _JAVASCRIPT_SUFFIXES:
+            target = _resolve_javascript_import(item.path, imported, indexes["paths"])
+            if target is not None:
+                dependencies.add(target)
+        elif suffix in _JAVA_SUFFIXES:
+            dependencies.update(
+                target
+                for target in _resolve_java_import(imported, indexes["java_modules"], indexes["java_files"])
+                if target != item.path
+            )
     return dependencies
+
+
+def _resolve_javascript_import(source_path: str, imported: str, paths: set[str]) -> str | None:
+    """Resolve only local relative JS/TS imports; package imports stay external."""
+    if not imported.startswith((".", "/")):
+        return None
+    base = posixpath.normpath(posixpath.join(posixpath.dirname(source_path), imported))
+    extensions = ("", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".d.ts")
+    candidates = [base + extension for extension in extensions]
+    candidates.extend(posixpath.join(base, "index" + extension) for extension in extensions[1:])
+    return next((candidate for candidate in candidates if candidate in paths), None)
+
+
+def _resolve_java_import(
+    imported: str, java_modules: dict[str, set[str]], java_files: set[str]
+) -> set[str]:
+    """Resolve local Java classes by dotted path, ignoring JDK/external packages."""
+    name = imported.removesuffix(".*")
+    direct = java_modules.get(name)
+    if direct:
+        return set(direct)
+    suffix = "." + name
+    return {
+        path
+        for path in java_files
+        if path[:-5].replace("/", ".").endswith(suffix)
+        or (".*" in imported and path[:-5].replace("/", ".").startswith(name + "."))
+    }
 
 
 def _apply_dependency_metadata(

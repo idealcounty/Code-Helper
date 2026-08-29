@@ -72,6 +72,45 @@ def test_repo_map_extracts_cpp_and_java_symbols_and_imports(tmp_path: Path) -> N
     assert "def run" in by_path["Service.java"]["symbols"]
 
 
+def test_repo_map_links_local_javascript_and_typescript_imports(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "shared.ts").write_text("export const answer = 42;\n", encoding="utf-8")
+    (src / "feature.ts").write_text(
+        'import { answer } from "./shared";\nexport function run() { return answer; }\n',
+        encoding="utf-8",
+    )
+    (src / "legacy.js").write_text(
+        'const shared = require("./shared");\n', encoding="utf-8"
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="shared", max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "./shared" in by_path["src/feature.ts"]["imports"]
+    assert "src/shared.ts" in by_path["src/feature.ts"]["dependencies"]
+    assert "src/shared.ts" in by_path["src/legacy.js"]["dependencies"]
+    assert by_path["src/shared.ts"]["centrality"] == 2
+
+
+def test_repo_map_links_local_java_class_imports(tmp_path: Path) -> None:
+    package = tmp_path / "src" / "main" / "java" / "com" / "example"
+    package.mkdir(parents=True)
+    (package / "Shared.java").write_text(
+        "package com.example;\npublic class Shared {}\n", encoding="utf-8"
+    )
+    (package / "App.java").write_text(
+        "package com.example;\nimport com.example.Shared;\npublic class App {}\n",
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="Shared", max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "src/main/java/com/example/Shared.java" in by_path["src/main/java/com/example/App.java"]["dependencies"]
+    assert by_path["src/main/java/com/example/Shared.java"]["centrality"] == 1
+
+
 def test_context_injects_budgeted_repo_map_metadata(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
