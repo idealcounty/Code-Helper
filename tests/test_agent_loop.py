@@ -159,6 +159,18 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
         ]
     )
     runner, store = _make_runner(tmp_path, model)
+    async def observed_hook(_: dict[str, Any]) -> None:
+        return None
+
+    async def pre_hook(_: str, __: dict[str, Any]) -> None:
+        return None
+
+    async def post_hook(_: str, __: dict[str, Any], ___: ToolResult) -> None:
+        return None
+
+    runner.tool_executor.hooks.verification.append(observed_hook)
+    runner.tool_executor.hooks.pre.append(pre_hook)
+    runner.tool_executor.hooks.post.append(post_hook)
     state = AgentState.create(session_id="session", max_steps=10)
 
     result = asyncio.run(runner.run_turn(state, "Change value to 2 and verify it"))
@@ -179,7 +191,22 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
         "model_request",
         "approval_wait",
         "hook_pipeline",
+        "hook",
     }
+    hook_span = next(
+        event
+        for event in spans
+        if event["payload"]["kind"] == "hook"
+        and event["payload"]["lifecycle"] == "OnVerification"
+    )
+    assert hook_span["payload"]["hook"] == "observed_hook"
+    assert hook_span["payload"]["duration_ms"] >= 0
+    hook_lifecycles = {
+        event["payload"]["lifecycle"]
+        for event in spans
+        if event["payload"]["kind"] == "hook"
+    }
+    assert {"Pre/PostToolUse", "OnVerification"} <= hook_lifecycles
     assert all(event["payload"]["duration_ms"] >= 0 for event in spans)
 
 

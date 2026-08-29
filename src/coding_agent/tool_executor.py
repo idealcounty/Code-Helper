@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 
 from .tools.base import ToolError, ToolResult
 from .tools.registry import ToolRegistry
-from .hooks import HookManager
+from .hooks import HookManager, HookTraceCallback
 from .redaction import Redactor
 from uuid import uuid4
 
@@ -39,12 +39,13 @@ class ToolExecutor:
         arguments: dict[str, Any],
         *,
         output_callback: Callable[[str, str], Awaitable[None] | None] | None = None,
+        trace_callback: HookTraceCallback | None = None,
     ) -> ToolResult:
         started = perf_counter()
         try:
             spec = self.registry.get(name)
             spec.validate(arguments)
-            decision = await self.hooks.before(name, arguments)
+            decision = await self.hooks.before(name, arguments, trace=trace_callback)
             if not decision.allow:
                 result = ToolResult.failure(
                     decision.code,
@@ -68,7 +69,9 @@ class ToolExecutor:
                 f"{type(exc).__name__}: {exc}",
             )
         try:
-            result = await self.hooks.after(name, arguments, result)
+            result = await self.hooks.after(
+                name, arguments, result, trace=trace_callback
+            )
         except Exception as exc:
             result = ToolResult.failure(
                 "HOOK_FAILED", f"Post-tool hook failed: {type(exc).__name__}: {exc}"

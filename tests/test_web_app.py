@@ -312,6 +312,52 @@ def test_intelligence_aggregates_span_durations(tmp_path: Path) -> None:
     ]
 
 
+def test_intelligence_keeps_lifecycle_hook_spans_separate(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post("/api/sessions", json={"workspace": str(tmp_path)})
+        session_id = created.json()["session_id"]
+        runtime = app.state.session_manager.get(session_id).runtime
+        for span_id, hook, duration in (
+            ("span-hook-a", "verification_hook", 3.0),
+            ("span-hook-b", "task_end_hook", 5.0),
+        ):
+            runtime.event_store.append(
+                AgentEvent(
+                    type="span_started",
+                    session_id=session_id,
+                    turn_id="turn-test",
+                    payload={
+                        "span_id": span_id,
+                        "kind": "hook",
+                        "lifecycle": "OnVerification",
+                        "hook": hook,
+                    },
+                )
+            )
+            runtime.event_store.append(
+                AgentEvent(
+                    type="span_finished",
+                    session_id=session_id,
+                    turn_id="turn-test",
+                    payload={
+                        "span_id": span_id,
+                        "kind": "hook",
+                        "lifecycle": "OnVerification",
+                        "hook": hook,
+                        "duration_ms": duration,
+                    },
+                )
+            )
+        intelligence = client.get(f"/api/sessions/{session_id}/intelligence").json()
+
+    spans = intelligence["observability"]["spans"]
+    assert [(item["hook"], item["count"], item["total_duration_ms"]) for item in spans] == [
+        ("task_end_hook", 1, 5.0),
+        ("verification_hook", 1, 3.0),
+    ]
+
+
 def test_intelligence_reports_cancellation_latency(tmp_path: Path) -> None:
     app = create_app(_config())
     with TestClient(app) as client:

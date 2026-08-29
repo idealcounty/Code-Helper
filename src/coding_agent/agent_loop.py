@@ -14,6 +14,7 @@ from .budget import BudgetExceeded, RunBudget
 from .cancellation import CancellationToken, RunCancelled
 from .context import ContextManager
 from .events import AgentEvent, EventBus
+from .hooks import HookTraceCallback
 from .model import ModelClient, ModelError, ModelResponse, ToolCall
 from .permissions import PermissionDecision, PermissionPolicy, PermissionResult
 from .profiles import get_profile, resolve_profile
@@ -881,6 +882,9 @@ class AgentRunner:
                     call.name,
                     call.arguments,
                     output_callback=on_output if call.name == "run_command" else None,
+                    trace_callback=self._hook_trace_callback(
+                        state, "Pre/PostToolUse"
+                    ),
                 ),
                 allow_cancel_result=True,
             )
@@ -1025,7 +1029,9 @@ class AgentRunner:
             )
             await self._run_lifecycle_hooks(
                 state, "OnVerification", evidence_payload,
-                self.tool_executor.hooks.on_verification(evidence_payload),
+                lambda trace: self.tool_executor.hooks.on_verification(
+                    evidence_payload, trace=trace
+                ),
             )
             if not evidence.accepted:
                 await self._emit(state, "repair_attempt", {
@@ -1088,7 +1094,9 @@ class AgentRunner:
             state,
             "OnTaskEnd",
             finish_payload,
-            self.tool_executor.hooks.on_task_end(finish_payload),
+            lambda trace: self.tool_executor.hooks.on_task_end(
+                finish_payload, trace=trace
+            ),
         )
         if self.turn_summarizer is not None:
             try:
@@ -1126,16 +1134,19 @@ class AgentRunner:
         state: AgentState,
         lifecycle: str,
         payload: dict[str, Any],
-        decisions_awaitable: Awaitable[list[Any]],
+        decisions_factory: Callable[[HookTraceCallback], Awaitable[list[Any]]],
     ) -> None:
         """Run hooks and persist their decisions without granting policy authority."""
         hook_started = perf_counter()
         hook_span_id = await self._start_span(
             state, "hook_pipeline", {"lifecycle": lifecycle}
         )
+
         try:
             try:
-                decisions = await decisions_awaitable
+                decisions = await decisions_factory(
+                    self._hook_trace_callback(state, lifecycle)
+                )
             except Exception as exc:  # HookManager normally normalizes this; keep loop safe.
                 decisions = [{
                     "allow": False,
@@ -1168,6 +1179,49 @@ class AgentRunner:
                     "hook_context",
                     {"lifecycle": lifecycle, "hook": data.get("hook", ""), "content": context[:2_000]},
                 )
+
+    def _hook_trace_callback(
+        self, state: AgentState, lifecycle: str
+    ) -> HookTraceCallback:
+        """Create an isolated callback that turns each Hook into a Span."""
+        active: dict[str, float] = {}
+
+        async def trace(info: dict[str, Any]) -> None:
+            span_id = str(info.get("span_id") or "")
+            hook_name = str(info.get("hook") or "Hook")
+            if info.get("phase") == "start":
+                active[span_id] = perf_counter()
+                await self._emit(
+                    state,
+                    "span_started",
+                    {
+                        "span_id": span_id,
+                        "kind": "hook",
+                        "lifecycle": lifecycle,
+                        "hook": hook_name,
+                        **({"tool": info["tool"]} if info.get("tool") else {}),
+                    },
+                )
+                return
+            started = active.pop(span_id, None)
+            if started is None:
+                return
+            await self._emit(
+                state,
+                "span_finished",
+                {
+                    "span_id": span_id,
+                    "kind": "hook",
+                    "lifecycle": lifecycle,
+                    "hook": hook_name,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "result_code": str(info.get("code") or "OK"),
+                    "allow": bool(info.get("allow", True)),
+                    **({"tool": info["tool"]} if info.get("tool") else {}),
+                },
+            )
+
+        return trace
 
     async def _emit(
         self, state: AgentState, event_type: str, payload: dict[str, Any]

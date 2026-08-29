@@ -484,7 +484,9 @@ def create_app(
         repo_map_calls = 0
         last_context_built: dict[str, Any] = {}
         output_deltas = 0
-        span_totals: dict[str, dict[str, Any]] = {}
+        # Keep lifecycle Hook spans separate by hook name.  Other spans retain
+        # the historical kind-only aggregation shape for API compatibility.
+        span_totals: dict[tuple[str, str, str], dict[str, Any]] = {}
         active_span_ids: set[str] = set()
         cancel_requests = 0
         pending_cancel_times: dict[str, datetime] = {}
@@ -520,10 +522,12 @@ def create_app(
                 if span_id:
                     active_span_ids.discard(str(span_id))
                 kind = str(payload.get("kind") or "unknown")
+                lifecycle = str(payload.get("lifecycle") or "")
+                hook = str(payload.get("hook") or "")
                 duration = payload.get("duration_ms")
                 if isinstance(duration, (int, float)) and duration >= 0:
                     stats = span_totals.setdefault(
-                        kind,
+                        (kind, lifecycle, hook),
                         {
                             "count": 0,
                             "total_duration_ms": 0.0,
@@ -574,8 +578,9 @@ def create_app(
                 item.get("duration_ms", 0) for item in state.tool_stats.values()
             ),
         }
-        span_observability = [
-            {
+        span_observability = []
+        for (kind, lifecycle, hook), stats in sorted(span_totals.items()):
+            item = {
                 "kind": kind,
                 "count": int(stats["count"]),
                 "total_duration_ms": round(float(stats["total_duration_ms"]), 3),
@@ -586,8 +591,11 @@ def create_app(
                 "p50_duration_ms": round(_percentile(stats["samples_ms"], 0.50), 3),
                 "p95_duration_ms": round(_percentile(stats["samples_ms"], 0.95), 3),
             }
-            for kind, stats in sorted(span_totals.items())
-        ]
+            if lifecycle:
+                item["lifecycle"] = lifecycle
+            if hook:
+                item["hook"] = hook
+            span_observability.append(item)
         return {
             "reasoning_profile": _profile_from_effort(state.reasoning_mode),
             "context": {

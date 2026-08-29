@@ -1074,8 +1074,11 @@ function renderIntelligence(data) {
   const outputs = data.outputs || {};
   const observability = data.observability || {};
   const cancellation = observability.cancellation || {};
-  const spanLabels = { context_build: "上下文构建", model_request: "模型请求", approval_wait: "审批等待", hook_pipeline: "Hook 执行" };
-  const spanRows = (observability.spans || []).map((span) => `<div class="metric-row"><span>${escapeHtml(spanLabels[span.kind] || span.kind || "未知阶段")}</span><b>${span.count || 0} 次</b><em>均值 ${formatDuration(span.average_duration_ms || 0)} · P95 ${formatDuration(span.p95_duration_ms || 0)} · 总计 ${formatDuration(span.total_duration_ms || 0)}</em></div>`).join("");
+  const spanLabels = { context_build: "上下文构建", model_request: "模型请求", approval_wait: "审批等待", hook_pipeline: "Hook 管线", hook: "单个 Hook" };
+  const spanRows = (observability.spans || []).map((span) => {
+    const hookDetail = span.kind === "hook" && span.hook ? ` · ${span.lifecycle || ""}/${span.hook}` : "";
+    return `<div class="metric-row"><span>${escapeHtml(spanLabels[span.kind] || span.kind || "未知阶段")}${escapeHtml(hookDetail)}</span><b>${span.count || 0} 次</b><em>均值 ${formatDuration(span.average_duration_ms || 0)} · P95 ${formatDuration(span.p95_duration_ms || 0)} · 总计 ${formatDuration(span.total_duration_ms || 0)}</em></div>`;
+  }).join("");
   const cache = data.cache || {};
   const memory = data.memory || { count: 0, categories: {}, recent: [], recalled: [] };
   const summaryMemory = memory.summaries || { count: 0, pending_candidates: 0, candidates: [] };

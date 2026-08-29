@@ -6,13 +6,16 @@ import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from .tools.base import ToolResult
 
 PreToolHook = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 PostToolHook = Callable[[str, dict[str, Any], ToolResult], Awaitable[ToolResult | None] | ToolResult | None]
 LifecycleHook = Callable[[dict[str, Any]], Awaitable[Any] | Any]
+HookTraceCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,51 +124,157 @@ class HookManager:
         verification: list[LifecycleHook] | None = None,
         task_end: list[LifecycleHook] | None = None,
         external: list[ExternalHookSpec] | None = None,
+        trace: HookTraceCallback | None = None,
     ) -> None:
         self.pre = pre or []
         self.post = post or []
         self.verification = verification or []
         self.task_end = task_end or []
         self.external = external or []
+        self.trace = trace
 
-    async def before(self, name: str, arguments: dict[str, Any]) -> HookDecision:
+    async def before(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        trace: HookTraceCallback | None = None,
+    ) -> HookDecision:
         for hook in self.pre:
             hook_name = _hook_name(hook)
+            span_id = uuid4().hex
+            started = perf_counter()
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "start",
+                    "span_id": span_id,
+                    "lifecycle": "PreToolUse",
+                    "hook": hook_name,
+                    "tool": name,
+                },
+            )
+            decision: HookDecision
             try:
                 result = hook(name, arguments)
                 if hasattr(result, "__await__"):
                     result = await result
+                decision = HookDecision.from_result(result, hook=hook_name)
             except Exception as exc:
-                return HookDecision(
+                decision = HookDecision(
                     allow=False,
                     reason=f"{type(exc).__name__}: {exc}",
                     code="HOOK_FAILED",
                     hook=hook_name,
                 )
-            decision = HookDecision.from_result(result, hook=hook_name)
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "finish",
+                    "span_id": span_id,
+                    "lifecycle": "PreToolUse",
+                    "hook": hook_name,
+                    "tool": name,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "allow": decision.allow,
+                    "code": decision.code,
+                },
+            )
             if not decision.allow:
                 return decision
         for hook in self.external:
             if hook.event != "pre_tool" or not hook.matches(name):
                 continue
+            span_id = uuid4().hex
+            started = perf_counter()
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "start",
+                    "span_id": span_id,
+                    "lifecycle": "PreToolUse",
+                    "hook": hook.name,
+                    "tool": name,
+                },
+            )
             decision = await hook.run(
                 {"event": "PreToolUse", "tool": name, "arguments": arguments}
+            )
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "finish",
+                    "span_id": span_id,
+                    "lifecycle": "PreToolUse",
+                    "hook": hook.name,
+                    "tool": name,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "allow": decision.allow,
+                    "code": decision.code,
+                },
             )
             if not decision.allow:
                 return decision
         return HookDecision()
 
-    async def after(self, name: str, arguments: dict[str, Any], result: ToolResult) -> ToolResult:
+    async def after(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+        *,
+        trace: HookTraceCallback | None = None,
+    ) -> ToolResult:
         current = result
         for hook in self.post:
-            replacement = hook(name, arguments, current)
-            if hasattr(replacement, "__await__"):
-                replacement = await replacement
-            if replacement is not None:
-                current = replacement
+            hook_name = _hook_name(hook)
+            span_id = uuid4().hex
+            started = perf_counter()
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "start",
+                    "span_id": span_id,
+                    "lifecycle": "PostToolUse",
+                    "hook": hook_name,
+                    "tool": name,
+                },
+            )
+            try:
+                replacement = hook(name, arguments, current)
+                if hasattr(replacement, "__await__"):
+                    replacement = await replacement
+                if replacement is not None:
+                    current = replacement
+            finally:
+                await _notify_trace(
+                    trace or self.trace,
+                    {
+                        "phase": "finish",
+                        "span_id": span_id,
+                        "lifecycle": "PostToolUse",
+                        "hook": hook_name,
+                        "tool": name,
+                        "duration_ms": round((perf_counter() - started) * 1000, 3),
+                        "allow": True,
+                        "code": "OK",
+                    },
+                )
         for hook in self.external:
             if hook.event != "post_tool" or not hook.matches(name):
                 continue
+            span_id = uuid4().hex
+            started = perf_counter()
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "start",
+                    "span_id": span_id,
+                    "lifecycle": "PostToolUse",
+                    "hook": hook.name,
+                    "tool": name,
+                },
+            )
             decision = await hook.run(
                 {
                     "event": "PostToolUse",
@@ -173,6 +282,19 @@ class HookManager:
                     "arguments": arguments,
                     "result": current.to_dict(),
                 }
+            )
+            await _notify_trace(
+                trace or self.trace,
+                {
+                    "phase": "finish",
+                    "span_id": span_id,
+                    "lifecycle": "PostToolUse",
+                    "hook": hook.name,
+                    "tool": name,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "allow": decision.allow,
+                    "code": decision.code,
+                },
             )
             if not decision.allow:
                 return ToolResult.failure(
@@ -182,38 +304,114 @@ class HookManager:
                 )
         return current
 
-    async def on_verification(self, evidence: dict[str, Any]) -> list[HookDecision]:
-        return await self._run_lifecycle(self.verification, evidence)
+    async def on_verification(
+        self,
+        evidence: dict[str, Any],
+        *,
+        trace: HookTraceCallback | None = None,
+    ) -> list[HookDecision]:
+        return await self._run_lifecycle(self.verification, evidence, trace=trace)
 
-    async def on_task_end(self, summary: dict[str, Any]) -> list[HookDecision]:
-        return await self._run_lifecycle(self.task_end, summary)
+    async def on_task_end(
+        self,
+        summary: dict[str, Any],
+        *,
+        trace: HookTraceCallback | None = None,
+    ) -> list[HookDecision]:
+        return await self._run_lifecycle(self.task_end, summary, trace=trace)
 
     async def _run_lifecycle(
-        self, hooks: list[LifecycleHook], payload: dict[str, Any]
+        self,
+        hooks: list[LifecycleHook],
+        payload: dict[str, Any],
+        *,
+        trace: HookTraceCallback | None = None,
     ) -> list[HookDecision]:
+        tracer = trace or self.trace
         decisions: list[HookDecision] = []
+        event_name = "verification" if hooks is self.verification else "task_end"
         for hook in hooks:
             hook_name = _hook_name(hook)
+            span_id = uuid4().hex
+            started = perf_counter()
+            await _notify_trace(
+                tracer,
+                {
+                    "phase": "start",
+                    "span_id": span_id,
+                    "lifecycle": event_name,
+                    "hook": hook_name,
+                },
+            )
+            decision: HookDecision
             try:
                 result = hook(payload)
                 if hasattr(result, "__await__"):
                     result = await result
-                decisions.append(HookDecision.from_result(result, hook=hook_name))
+                decision = HookDecision.from_result(result, hook=hook_name)
             except Exception as exc:
-                decisions.append(
-                    HookDecision(
-                        allow=False,
-                        reason=f"{type(exc).__name__}: {exc}",
-                        code="HOOK_FAILED",
-                        hook=hook_name,
-                    )
+                decision = HookDecision(
+                    allow=False,
+                    reason=f"{type(exc).__name__}: {exc}",
+                    code="HOOK_FAILED",
+                    hook=hook_name,
                 )
-        event_name = "verification" if hooks is self.verification else "task_end"
+            decisions.append(decision)
+            await _notify_trace(
+                tracer,
+                {
+                    "phase": "finish",
+                    "span_id": span_id,
+                    "lifecycle": event_name,
+                    "hook": hook_name,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "allow": decision.allow,
+                    "code": decision.code,
+                },
+            )
         for hook in self.external:
             if hook.event != event_name:
                 continue
-            decisions.append(await hook.run({"event": event_name, **payload}))
+            span_id = uuid4().hex
+            started = perf_counter()
+            await _notify_trace(
+                tracer,
+                {
+                    "phase": "start",
+                    "span_id": span_id,
+                    "lifecycle": event_name,
+                    "hook": hook.name,
+                },
+            )
+            decision = await hook.run({"event": event_name, **payload})
+            decisions.append(decision)
+            await _notify_trace(
+                tracer,
+                {
+                    "phase": "finish",
+                    "span_id": span_id,
+                    "lifecycle": event_name,
+                    "hook": hook.name,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "allow": decision.allow,
+                    "code": decision.code,
+                },
+            )
         return decisions
+
+
+async def _notify_trace(
+    callback: HookTraceCallback | None, payload: dict[str, Any]
+) -> None:
+    """Tracing must never change whether a Hook executes or what it returns."""
+    if callback is None:
+        return
+    try:
+        result = callback(payload)
+        if hasattr(result, "__await__"):
+            await result
+    except Exception:
+        return
 
 
 def _hook_name(hook: Any) -> str:
