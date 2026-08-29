@@ -106,6 +106,23 @@ def test_repo_map_links_local_cpp_include_edges(tmp_path: Path) -> None:
     assert by_path["src/main.cpp"]["dependencies"] == ["include/math.hpp"]
 
 
+def test_repo_map_links_go_module_package_imports(tmp_path: Path) -> None:
+    (tmp_path / "go.mod").write_text("module example.com/demo\n\ngo 1.22\n", encoding="utf-8")
+    package = tmp_path / "internal" / "mathx"
+    package.mkdir(parents=True)
+    (package / "math.go").write_text("package mathx\nfunc Add() int { return 1 }\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text(
+        'package main\n\nimport (\n    "fmt"\n    "example.com/demo/internal/mathx"\n)\n\nfunc main() { fmt.Println(mathx.Add()) }\n',
+        encoding="utf-8",
+    )
+
+    data = RepoMapBuilder(Workspace(tmp_path)).build(query="main", max_files=10)
+    by_path = {item["path"]: item for item in data["files"]}
+
+    assert "example.com/demo/internal/mathx" in by_path["main.go"]["imports"]
+    assert by_path["main.go"]["dependencies"] == ["internal/mathx/math.go"]
+
+
 def test_repo_map_links_local_javascript_and_typescript_imports(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()

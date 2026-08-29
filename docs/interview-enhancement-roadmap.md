@@ -142,7 +142,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 ### 4.4 仓库理解
 
 - Repo Map 按文件名、类型、代码顶层符号和轻量导入图中心性评分；Python 使用 AST，JavaScript/TypeScript、Java、C/C++ 与 Go 使用保守正则提取。
-- 当前导入图已连接 Python 模块（含静态字符串动态导入）、JavaScript/TypeScript 本地相对路径与重导出、C/C++ 本地 `#include`，以及基于 `package` 声明的仓库内 Java 类；调用关系和构建工具源码根解析仍待补齐，运行时计算出的动态导入仍会保守忽略。
+- 当前导入图已连接 Python 模块（含静态字符串动态导入）、JavaScript/TypeScript 本地相对路径与重导出、C/C++ 本地 `#include`、Go `go.mod` 模块内包，以及基于 `package` 声明的仓库内 Java 类；调用关系和构建工具源码根解析仍待补齐，运行时计算出的动态导入仍会保守忽略。
 - `AGENTS.md` 已按目标路径构造作用域规则链，支持 `AGENTS.override.md`、字符预算、自然语言多目标路径解析和 `context_built` 事件；同一目标链中同名标题的不同内容会生成潜在冲突证据，并在轨迹和智能面板展示来源与作用域。
 - Step 级历史摘要已改为基于 reducer 事实的结构化模板，记录版本、覆盖消息和事件序列；供应商 tokenizer 和更高保真的语义压缩仍待通过 Eval 后再引入。
 

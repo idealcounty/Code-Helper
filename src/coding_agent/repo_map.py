@@ -281,7 +281,16 @@ def _generic_code_summary(path: Path) -> tuple[list[str], list[str]]:
     elif suffix == ".java":
         imports.extend(re.findall(r"^\s*import\s+([\w.]+)\s*;", text, flags=re.MULTILINE))
     elif suffix == ".go":
-        imports.extend(re.findall(r"^\s*import\s+(?:\(\s*)?[\"']([^\"']+)[\"']", text, flags=re.MULTILINE))
+        imports.extend(
+            re.findall(
+                r"^\s*import\s+(?:[A-Za-z_]\w*\s+)?[\"']([^\"']+)[\"']",
+                text,
+                flags=re.MULTILINE,
+            )
+        )
+        block = re.search(r"\bimport\s*\((.*?)\)", text, flags=re.DOTALL)
+        if block:
+            imports.extend(re.findall(r"[\"']([^\"']+)[\"']", block.group(1)))
     else:
         imports.extend(re.findall(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]", text, flags=re.MULTILINE))
 
@@ -486,6 +495,8 @@ def _dependency_indexes(
     python_modules: dict[str, str] = {}
     java_modules: dict[str, set[str]] = {}
     java_files: set[str] = set()
+    go_module = _go_module_name(workspace) if workspace is not None else ""
+    go_packages: dict[str, set[str]] = {}
     for item in files:
         suffix = Path(item.path).suffix.lower()
         if suffix == ".py":
@@ -502,11 +513,17 @@ def _dependency_indexes(
                     java_modules.setdefault(
                         f"{package}.{Path(item.path).stem}", set()
                     ).add(item.path)
+        elif suffix == ".go" and go_module:
+            package_dir = posixpath.dirname(item.path)
+            package_name = package_dir.strip("/")
+            go_packages.setdefault(package_name, set()).add(item.path)
     return {
         "paths": paths,
         "python_modules": python_modules,
         "java_modules": java_modules,
         "java_files": java_files,
+        "go_module": go_module,
+        "go_packages": go_packages,
     }
 
 
@@ -517,6 +534,15 @@ def _java_package_name(path: Path) -> str:
         return ""
     match = re.search(r"^\s*package\s+([\w.]+)\s*;", text, flags=re.MULTILINE)
     return match.group(1) if match else ""
+
+
+def _go_module_name(workspace: Workspace) -> str:
+    try:
+        text = (workspace.root / "go.mod").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    match = re.search(r"^\s*module\s+([^\s]+)", text, flags=re.MULTILINE)
+    return match.group(1).strip() if match else ""
 
 
 def _resolve_item_dependencies(item: RepoMapFile, indexes: dict[str, Any]) -> set[str]:
@@ -547,6 +573,8 @@ def _resolve_item_dependencies(item: RepoMapFile, indexes: dict[str, Any]) -> se
             target = _resolve_c_cpp_include(item.path, imported, indexes["paths"])
             if target is not None:
                 dependencies.add(target)
+        elif suffix == ".go":
+            dependencies.update(_resolve_go_import(imported, indexes))
     return dependencies
 
 
@@ -573,6 +601,15 @@ def _resolve_c_cpp_include(
         posixpath.normpath(normalized_import),
     ]
     return next((candidate for candidate in candidates if candidate in paths), None)
+
+
+def _resolve_go_import(imported: str, indexes: dict[str, Any]) -> set[str]:
+    """Resolve imports that point inside the workspace's declared Go module."""
+    module = str(indexes.get("go_module") or "")
+    if not module or imported != module and not imported.startswith(module + "/"):
+        return set()
+    package = imported[len(module) :].lstrip("/")
+    return set(indexes.get("go_packages", {}).get(package, ()))
 
 
 def _resolve_java_import(
