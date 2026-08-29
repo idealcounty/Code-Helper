@@ -256,3 +256,32 @@ def test_streaming_client_retries_invalid_arguments_without_streaming() -> None:
     assert [request["stream"] for request in requests] == [True, False]
     assert response.tool_calls[0].id == "call_retry"
     assert response.tool_calls[0].arguments == {"path": "app.py"}
+
+
+def test_streaming_client_accepts_object_tool_arguments() -> None:
+    lines = (
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+        '"function":{"name":"read_file","arguments":{"path":"app.py"}}}]},'
+        '"finish_reason":"tool_calls"}]}\n'
+        "data: [DONE]\n"
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=lines.encode(),
+        )
+
+    client = OpenAICompatibleModelClient(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = asyncio.run(
+        client.complete_stream(messages=[], tools=[], on_delta=lambda _: None)
+    )
+
+    assert response.tool_calls[0].arguments == {"path": "app.py"}

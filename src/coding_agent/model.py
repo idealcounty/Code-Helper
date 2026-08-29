@@ -159,7 +159,7 @@ class OpenAICompatibleModelClient:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         content: list[str] = []
         reasoning: list[str] = []
-        calls: dict[int, dict[str, str]] = {}
+        calls: dict[int, dict[str, Any]] = {}
         usage: dict[str, Any] = {}
         finish_reason: str | None = None
         try:
@@ -207,9 +207,21 @@ class OpenAICompatibleModelClient:
                             item["name"] = _merge_stream_piece(
                                 item["name"], str(function.get("name") or "")
                             )
-                            item["arguments"] = _merge_stream_piece(
-                                item["arguments"], str(function.get("arguments") or "")
-                            )
+                            raw_arguments = function.get("arguments")
+                            if isinstance(raw_arguments, dict):
+                                # A few OpenAI-compatible gateways decode the
+                                # arguments before serializing the SSE chunk.
+                                # Re-encode as strict JSON instead of turning
+                                # the mapping into an invalid single-quoted
+                                # Python representation.
+                                item["arguments"] = json.dumps(
+                                    raw_arguments, ensure_ascii=False
+                                )
+                            else:
+                                item["arguments"] = _merge_stream_piece(
+                                    str(item["arguments"] or ""),
+                                    str(raw_arguments or ""),
+                                )
         except httpx.TimeoutException as exc:
             raise ModelError("Model request timed out") from exc
         except httpx.HTTPStatusError as exc:
@@ -258,14 +270,18 @@ def _merge_stream_piece(current: str, incoming: str) -> str:
 
 
 def _parse_streamed_tool_calls(
-    calls: dict[int, dict[str, str]],
+    calls: dict[int, dict[str, Any]],
 ) -> list[ToolCall]:
     parsed: list[ToolCall] = []
     for index in sorted(calls):
         item = calls[index]
         if not item["id"] or not item["name"]:
             raise ModelProtocolError("Streamed tool call is missing id or name")
-        arguments = _decode_tool_arguments(item["arguments"])
+        raw_arguments = item.get("arguments")
+        if isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        else:
+            arguments = _decode_tool_arguments(str(raw_arguments or ""))
         parsed.append(ToolCall(item["id"], item["name"], arguments))
     return parsed
 
