@@ -55,11 +55,15 @@ class StuckDetector:
                 "corrected edit; if the requested change is already present, explain that "
                 "no further write is needed."
             )
-        # A successful result can still be a model-side loop (for example, the
-        # same patch is emitted after every round). Give the model one bounded
-        # chance to observe the current state before terminating the run.
-        return (
-            "The identical tool call produced the same result repeatedly. Do not "
-            "repeat it again; inspect the latest state, choose a different next "
-            "action, or finish if the task is already satisfied."
-        )
+        # A successful mutation can still be a model-side loop (for example,
+        # the same patch is emitted after every round). Give the model one
+        # bounded chance to observe the current state before terminating. For
+        # repeated reads, terminate immediately: there is no new state to
+        # discover and deterministic stuck evals must remain bounded.
+        if name in RECOVERABLE_TOOL_NAMES:
+            return (
+                "The identical tool call produced the same result repeatedly. Do not "
+                "repeat it again; inspect the latest state, choose a different next "
+                "action, or finish if the task is already satisfied."
+            )
+        return None
