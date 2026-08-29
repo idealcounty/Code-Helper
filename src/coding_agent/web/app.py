@@ -182,6 +182,12 @@ class ApprovalPolicyRequest(BaseModel):
     policy: Literal["ask", "auto", "full"]
 
 
+class RecoveryRequest(BaseModel):
+    action: Literal["retry", "abandon"]
+    tool_call_id: str = Field(min_length=1)
+    confirm: bool = False
+
+
 class MemoryCandidateRequest(BaseModel):
     action: Literal["confirm", "reject"]
 
@@ -540,6 +546,8 @@ def create_app(
                 "successful_sequence": state.last_successful_verification_sequence,
                 "evidence": state.verification_evidence,
             },
+            "interrupted_tool_calls": state.interrupted_tool_calls,
+            "recovery_warnings": state.recovery_warnings,
         }
 
     @app.post("/api/sessions/{session_id}/memory/candidates/{candidate_id}")
@@ -780,6 +788,85 @@ def create_app(
             "approved": request.approved,
             "scope": request.scope,
             **({"grant": grant_details} if grant_details else {}),
+        }
+
+    @app.post("/api/sessions/{session_id}/recovery", status_code=202)
+    async def recover_interrupted(
+        session_id: str, request: RecoveryRequest
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        if session.running:
+            raise HTTPException(
+                status_code=409, detail="Cannot recover while the agent is running"
+            )
+        state = session.runtime.state
+        interrupted = next(
+            (
+                item
+                for item in state.interrupted_tool_calls
+                if str(item.get("id") or "") == request.tool_call_id
+            ),
+            None,
+        )
+        if interrupted is None:
+            raise HTTPException(status_code=404, detail="Interrupted tool call not found")
+        try:
+            spec = session.runtime.registry.get(str(interrupted.get("name") or ""))
+            spec.validate(dict(interrupted.get("arguments") or {}))
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=exc.message) from exc
+
+        if request.action == "retry":
+            if spec.risk.value != "read" and not request.confirm:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Retrying a write or command may repeat an unknown side effect; "
+                        "confirm explicitly"
+                    ),
+                )
+            permission = session.runtime.runner.permission_policy.evaluate(
+                mode=state.mode,
+                spec=spec,
+                arguments=dict(interrupted.get("arguments") or {}),
+            )
+            if permission.decision.value == "deny":
+                raise HTTPException(status_code=403, detail=permission.reason)
+
+            async def execute_retry() -> AgentRunResult:
+                try:
+                    return await session.runtime.runner.retry_interrupted(
+                        state, tool_call_id=request.tool_call_id
+                    )
+                except Exception as exc:
+                    session.last_error = f"{type(exc).__name__}: {exc}"
+                    raise
+
+            session.last_error = None
+            session.task = asyncio.create_task(execute_retry())
+
+            def consume_retry_result(task: asyncio.Task[AgentRunResult]) -> None:
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    session.last_error = f"{type(exc).__name__}: {exc}"
+
+            session.task.add_done_callback(consume_retry_result)
+            return {
+                "accepted": True,
+                "action": request.action,
+                "tool_call_id": request.tool_call_id,
+            }
+
+        await session.runtime.runner.abandon_interrupted(
+            state, tool_call_id=request.tool_call_id
+        )
+        return {
+            "accepted": True,
+            "action": request.action,
+            "tool_call_id": request.tool_call_id,
         }
 
     @app.get("/api/sessions/{session_id}/permissions")

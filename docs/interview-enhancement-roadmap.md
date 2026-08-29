@@ -120,7 +120,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 - 时间、Step 和供应商回报 Token 预算已有事件与 UI 遥测；Token 在供应商仅于响应结束后返回 usage 时属于请求间门禁。
 - Windows 本地和 Ubuntu CI 已通过同一子进程树取消测试，形成双平台证据。
 - SessionReducer V1 已统一在线/离线归约，能够恢复待审批 Tool Call、最近 Action、修改序列和验证序列；四个关键断点已有恢复矩阵测试。
-- 未完成工具会标记 `INTERRUPTED_UNKNOWN` 且不会自动重放；跨进程版本兼容和逐调用人工重试 UI 仍待补齐。
+- 未完成工具会标记 `INTERRUPTED_UNKNOWN` 且不会自动重放；Web 已提供逐调用人工重试/放弃 UI，跨进程版本兼容仍待验证。
 
 ### 4.2 验证与权限
 

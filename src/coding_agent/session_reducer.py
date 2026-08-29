@@ -63,6 +63,10 @@ class SessionReducer:
             self._tool_started(payload, sequence)
         elif event_type == "tool_result":
             self._tool_result(payload, sequence)
+        elif event_type == "recovery_retry_requested":
+            self._recovery_resolved(payload, status=None)
+        elif event_type == "recovery_abandoned":
+            self._recovery_resolved(payload, status=AgentStatus.PARTIAL)
         elif event_type == "plan_updated":
             self.state.plan = copy.deepcopy(list(payload.get("plan") or []))
         elif event_type == "context_compacted":
@@ -239,6 +243,43 @@ class SessionReducer:
             }
         )
         self.state.recent_actions[:] = self.state.recent_actions[-20:]
+
+    def _recovery_resolved(
+        self, payload: Mapping[str, Any], *, status: AgentStatus | None
+    ) -> None:
+        """Remove a manually resolved interrupted call from recovery warnings."""
+        call_id = str(payload.get("tool_call_id") or payload.get("id") or "")
+        if not call_id:
+            return
+        self.state.interrupted_tool_calls[:] = [
+            item
+            for item in self.state.interrupted_tool_calls
+            if str(item.get("id") or "") != call_id
+        ]
+        self.state.recovery_warnings[:] = [
+            item
+            for item in self.state.recovery_warnings
+            if str(item.get("tool_call_id") or "") != call_id
+        ]
+        if status is AgentStatus.PARTIAL:
+            name = str(payload.get("name") or "unknown")
+            self.state.completed_tool_call_ids.add(call_id)
+            self.state.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": name,
+                    "content": json.dumps(
+                        {
+                            "ok": False,
+                            "code": "RECOVERY_ABANDONED",
+                            "message": "User abandoned the interrupted operation; it was not replayed.",
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+            self.state.status = status
 
     def _verification_recorded(self, payload: Mapping[str, Any], sequence: int) -> None:
         evidence = payload.get("evidence")

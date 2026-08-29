@@ -1032,6 +1032,7 @@ function renderIntelligence(data) {
   const userMemory = data.user_memory || { enabled: false, count: 0, recent: [], recalled: [] };
   const permissions = data.permissions || { grants: [] };
   const approvalPolicy = permissions.approval_policy || state.approvalPolicy || "ask";
+  const interrupted = data.interrupted_tool_calls || [];
   const memoryCategories = memory.categories || {};
   const recalledIds = new Set((memory.recalled || []).map((item) => item.memory?.id || item.id));
   const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
@@ -1042,6 +1043,12 @@ function renderIntelligence(data) {
     const scope = grant.path_prefix || grant.command_prefix || "当前工作区";
     const expiry = grant.expires_at ? new Date(grant.expires_at * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "未知";
     return `<li class="permission-row"><div><b>${escapeHtml((grant.capabilities || []).join(" · "))}</b><span title="${escapeHtml(scope)}">${escapeHtml(scope)}</span><small>到期 ${escapeHtml(expiry)}</small></div><button data-permission-action="revoke" data-grant-id="${escapeHtml(grant.grant_id)}" type="button">撤销</button></li>`;
+  }).join("");
+  const recoveryRows = interrupted.map((item) => {
+    const id = escapeHtml(item.id || "");
+    const name = escapeHtml(item.name || "unknown");
+    const detail = item.arguments?.path || item.arguments?.command || "副作用未确认";
+    return `<li class="permission-row recovery-row"><div><b>${name}</b><span title="${escapeHtml(String(detail))}">${escapeHtml(String(detail))}</span><small>工具已启动但结果未持久化</small></div><div class="memory-actions"><button data-recovery-action="abandon" data-tool-call-id="${id}" type="button">放弃</button><button data-recovery-action="retry" data-tool-call-id="${id}" type="button">人工重试</button></div></li>`;
   }).join("");
   elements.intelligenceContent.innerHTML = `
     <section class="intelligence-section run-budget-section ${runBudgetState}">
@@ -1090,6 +1097,11 @@ function renderIntelligence(data) {
       <ul class="permission-list">${permissionRows || '<li class="empty"><span>没有长期授权；审批默认只对当前操作生效</span></li>'}</ul>
       <p class="intel-note">${approvalPolicy === "ask" ? "写入与命令会请求批准。" : approvalPolicy === "auto" ? "常规操作自动批准，硬性安全拒绝仍生效。" : "Act 模式工具已完全放开；Ask/Plan 的工具集合不会因此扩大。"} 范围授权 ${(permissions.grants || []).length} 条。</p>
     </section>
+    <section class="intelligence-section recovery-section">
+      <div class="intelligence-heading"><div><span class="intel-icon">REC</span><strong>中断操作恢复</strong></div><b class="${interrupted.length ? "status-off" : "status-on"}">${interrupted.length} 条</b></div>
+      <ul class="permission-list">${recoveryRows || '<li class="empty"><span>没有待处理的中断操作</span></li>'}</ul>
+      <p class="intel-note">恢复不会自动重放副作用；“人工重试”会再次执行选中的工具，“放弃”只记录为未执行。</p>
+    </section>
     <section class="intelligence-section">
       <div class="intelligence-heading"><div><span class="intel-icon">MAP</span><strong>Repo Map Lite</strong></div><b>${repo.calls || 0} 次调用</b></div>
       <div class="intel-facts"><span>${totals.files_seen || 0} 文件</span><span>${totals.python_files || 0} Python</span><span>${totals.test_files || 0} 测试</span></div>
@@ -1118,6 +1130,21 @@ function renderIntelligence(data) {
 }
 
 async function handleIntelligenceAction(event) {
+  const recoveryButton = event.target.closest("[data-recovery-action]");
+  if (recoveryButton) {
+    const action = recoveryButton.dataset.recoveryAction;
+    const toolCallId = recoveryButton.dataset.toolCallId;
+    if (action === "retry" && !window.confirm("该工具的执行结果未知，重试可能重复文件修改或命令副作用。确定继续吗？")) return;
+    try {
+      await api(`/api/sessions/${state.sessionId}/recovery`, {
+        method: "POST",
+        body: JSON.stringify({ action, tool_call_id: toolCallId, confirm: action === "retry" }),
+      });
+      showToast(action === "retry" ? "已提交人工重试" : "已放弃中断操作");
+      if (action === "retry") setRunning(true);
+      return loadIntelligence();
+    } catch (error) { return showToast(error.message); }
+  }
   const permissionButton = event.target.closest("[data-permission-action]");
   if (permissionButton) {
     if (permissionButton.dataset.permissionAction !== "revoke") return;

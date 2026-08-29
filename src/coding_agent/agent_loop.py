@@ -116,6 +116,86 @@ class AgentRunner:
             state, self._resume_approval(state, pending, approved=approved)
         )
 
+    async def retry_interrupted(
+        self, state: AgentState, *, tool_call_id: str
+    ) -> AgentRunResult:
+        """Manually retry one interrupted call after an explicit user action.
+
+        Recovery never replays calls automatically.  The web UI invokes this
+        method only after the user selected a specific call, so the normal
+        permission checks are applied again by the execution path.
+        """
+        interrupted = next(
+            (
+                item
+                for item in state.interrupted_tool_calls
+                if str(item.get("id") or "") == tool_call_id
+            ),
+            None,
+        )
+        if interrupted is None:
+            raise RuntimeError("Interrupted tool call not found")
+        call = ToolCall(
+            id=str(interrupted.get("id") or ""),
+            name=str(interrupted.get("name") or ""),
+            arguments=dict(interrupted.get("arguments") or {}),
+        )
+        spec = self.registry.get(call.name)
+        spec.validate(call.arguments)
+        permission = self.permission_policy.evaluate(
+            mode=state.mode, spec=spec, arguments=call.arguments
+        )
+        if permission.decision is PermissionDecision.DENY:
+            raise ToolError("PERMISSION_DENIED", permission.reason)
+        if _contains_redacted(call.arguments):
+            raise RuntimeError(
+                "Persisted tool arguments were redacted; resubmit the operation"
+            )
+        await self._emit(
+            state,
+            "recovery_retry_requested",
+            {"tool_call_id": call.id, "name": call.name},
+        )
+        if not self.run_budget.active:
+            await self._start_run_controls(state)
+        return await self._run_safely(
+            state, self._retry_interrupted_call(state, call)
+        )
+
+    async def abandon_interrupted(
+        self, state: AgentState, *, tool_call_id: str
+    ) -> AgentRunResult:
+        """Acknowledge an interrupted call without executing it again."""
+        interrupted = next(
+            (
+                item
+                for item in state.interrupted_tool_calls
+                if str(item.get("id") or "") == tool_call_id
+            ),
+            None,
+        )
+        if interrupted is None:
+            raise RuntimeError("Interrupted tool call not found")
+        await self._emit(
+            state,
+            "recovery_abandoned",
+            {
+                "tool_call_id": tool_call_id,
+                "name": str(interrupted.get("name") or "unknown"),
+            },
+        )
+        return AgentRunResult(
+            AgentStatus.PARTIAL,
+            "Interrupted tool call was abandoned; no operation was replayed",
+            state,
+        )
+
+    async def _retry_interrupted_call(
+        self, state: AgentState, call: ToolCall
+    ) -> AgentRunResult:
+        await self._execute_and_observe(state, call)
+        return await self._run_loop(state)
+
     async def _resume_approval(
         self,
         state: AgentState,
@@ -880,6 +960,16 @@ class AgentRunner:
 
 def _serialize_call(call: ToolCall) -> dict[str, Any]:
     return {"id": call.id, "name": call.name, "arguments": call.arguments}
+
+
+def _contains_redacted(value: Any) -> bool:
+    if isinstance(value, str):
+        return value == "[REDACTED]"
+    if isinstance(value, dict):
+        return any(_contains_redacted(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_redacted(item) for item in value)
+    return False
 
 
 async def _cancel_operation_task(task: asyncio.Future[Any]) -> None:
