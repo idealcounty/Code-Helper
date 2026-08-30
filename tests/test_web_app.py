@@ -40,6 +40,7 @@ def test_health_and_static_index() -> None:
     assert index.headers["cache-control"] == "no-store, max-age=0"
     assert "浏览文件夹" in index.text
     assert "代码编辑区" in index.text
+    assert "快速打开（规划中）" not in index.text
     assert 'id="userMenuButton"' in index.text
     assert 'id="settingsPage"' in index.text
     assert 'id="settingsApiKey"' in index.text
