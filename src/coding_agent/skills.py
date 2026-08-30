@@ -21,9 +21,16 @@ class SkillSummary:
 class SkillLibrary:
     """Safe, read-only loader for project-local Markdown skills."""
 
-    def __init__(self, root: Path, *, max_chars: int = 12_000) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        max_chars: int = 12_000,
+        enabled: set[str] | None = None,
+    ) -> None:
         self.root = root.resolve()
         self.max_chars = max_chars
+        self.enabled = frozenset(enabled) if enabled is not None else None
 
     def list_summaries(self) -> list[SkillSummary]:
         if not self.root.is_dir():
@@ -31,6 +38,8 @@ class SkillLibrary:
         summaries: list[SkillSummary] = []
         for directory in sorted(self.root.iterdir()):
             if not directory.is_dir() or directory.name.startswith("."):
+                continue
+            if self.enabled is not None and directory.name not in self.enabled:
                 continue
             path = directory / "SKILL.md"
             if not path.is_file():
@@ -40,6 +49,8 @@ class SkillLibrary:
 
     def load(self, name: str) -> tuple[SkillSummary, str] | None:
         if not name or Path(name).name != name or name in {".", ".."}:
+            return None
+        if self.enabled is not None and name not in self.enabled:
             return None
         path = (self.root / name / "SKILL.md").resolve()
         try:

@@ -13,6 +13,7 @@ from coding_agent.tools.base import ToolResult
 from coding_agent.context import ContextManager
 from coding_agent.verifier import CompletionStatus, Verifier
 from coding_agent.model import ModelResponse
+from coding_agent.runtime import _skills_root
 
 
 def test_skill_library_lists_and_loads_safely(tmp_path: Path) -> None:
@@ -26,6 +27,28 @@ def test_skill_library_lists_and_loads_safely(tmp_path: Path) -> None:
     summary, content = library.load("bug-fix") or (None, "")
     assert summary is not None and "# Steps" in content
     assert library.load("../bug-fix") is None
+
+
+def test_skill_library_can_disable_unselected_skills(tmp_path: Path) -> None:
+    for name in ("bug-fix", "code-review"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "SKILL.md").write_text(
+            f"description: {name}\n", encoding="utf-8"
+        )
+
+    library = SkillLibrary(tmp_path, enabled={"code-review"})
+
+    assert [item.name for item in library.list_summaries()] == ["code-review"]
+    assert library.load("code-review") is not None
+    assert library.load("bug-fix") is None
+
+
+def test_packaged_skill_root_uses_pyinstaller_internal_directory(tmp_path: Path) -> None:
+    module_file = tmp_path / "_internal" / "coding_agent" / "runtime.py"
+    expected = tmp_path / "_internal" / "skills"
+
+    assert _skills_root(module_file, frozen=True) == expected
 
 
 def test_plan_tool_updates_state_and_rejects_multiple_active_steps() -> None:

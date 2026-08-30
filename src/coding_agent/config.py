@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 DEEPSEEK_PROVIDER = "deepseek"
@@ -35,6 +37,13 @@ class AppConfig:
     event_store_max_files: int = 256
     user_memory_enabled: bool = False
     user_memory_dir: Path | None = None
+    default_workspace: Path | None = None
+    default_mode: str = "act"
+    default_reasoning_profile: str = "auto"
+    default_task_profile: str = "auto"
+    default_approval_policy: str = "ask"
+    enabled_skills: tuple[str, ...] | None = None
+    server_workspace_root: Path | None = None
 
     def __post_init__(self) -> None:
         prices = (
@@ -54,8 +63,9 @@ class AppConfig:
             raise ValueError("Cost budgets require input and output prices")
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
+    def from_env(cls, settings_path: Path | None = None) -> "AppConfig":
         _load_local_env(Path.cwd() / ".env")
+        settings = load_user_settings(settings_path)
         provider = (
             os.getenv("CODE_HELPER_PROVIDER", DEEPSEEK_PROVIDER).strip().lower()
             or DEEPSEEK_PROVIDER
@@ -65,9 +75,27 @@ class AppConfig:
             DEEPSEEK_BASE_URL if is_deepseek else "https://api.openai.com/v1"
         )
         default_model = DEEPSEEK_DEFAULT_MODEL if is_deepseek else "gpt-4.1-mini"
-        api_key = os.getenv("CODE_HELPER_API_KEY", "").strip()
-        if not api_key and is_deepseek:
+        if "api_key" in settings:
+            api_key = str(settings.get("api_key") or "").strip()
+        else:
+            api_key = os.getenv("CODE_HELPER_API_KEY", "").strip()
+        if "api_key" not in settings and not api_key and is_deepseek:
             api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        reasoning_profile = _settings_choice(
+            settings, "default_reasoning_profile", {"auto", "fast", "balanced", "deep"}, "auto"
+        )
+        reasoning_effort = (
+            {"fast": "low", "balanced": "medium", "deep": "high"}.get(reasoning_profile)
+            if "default_reasoning_profile" in settings
+            else _reasoning_effort()
+        )
+        enabled_skills = settings.get("enabled_skills")
+        normalized_skills = (
+            tuple(dict.fromkeys(str(item) for item in enabled_skills if str(item).strip()))
+            if isinstance(enabled_skills, list)
+            else None
+        )
+        workspace_raw = str(settings.get("default_workspace") or "").strip()
         return cls(
             api_key=api_key,
             provider=provider,
@@ -76,7 +104,7 @@ class AppConfig:
             thinking_mode=_optional_choice(
                 "CODE_HELPER_THINKING_MODE", {"enabled", "disabled"}
             ),
-            reasoning_effort=_reasoning_effort(),
+            reasoning_effort=reasoning_effort,
             max_steps=_positive_int("CODE_HELPER_MAX_STEPS", 20),
             request_timeout=_positive_float("CODE_HELPER_REQUEST_TIMEOUT", 120.0),
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
@@ -114,7 +142,62 @@ class AppConfig:
             ),
             user_memory_enabled=_boolean("CODE_HELPER_USER_MEMORY_ENABLED", False),
             user_memory_dir=_optional_path("CODE_HELPER_USER_MEMORY_DIR"),
+            default_workspace=Path(workspace_raw).expanduser().resolve() if workspace_raw else None,
+            default_mode=_settings_choice(settings, "default_mode", {"ask", "plan", "act"}, "act"),
+            default_reasoning_profile=reasoning_profile,
+            default_task_profile=_settings_choice(
+                settings, "default_task_profile", {"auto", "project", "algorithm"}, "auto"
+            ),
+            default_approval_policy=_settings_choice(
+                settings, "default_approval_policy", {"ask", "auto", "full"}, "ask"
+            ),
+            enabled_skills=normalized_skills,
+            server_workspace_root=_optional_path("CODE_HELPER_WORKSPACE_ROOT"),
         )
+
+
+def default_settings_path() -> Path:
+    override = os.getenv("CODE_HELPER_SETTINGS_PATH", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "CodeHelper" / "settings.json"
+    return Path.home() / ".code-helper" / "settings.json"
+
+
+def load_user_settings(path: Path | None = None) -> dict[str, Any]:
+    target = (path or default_settings_path()).expanduser()
+    if not target.is_file():
+        return {}
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_user_settings(payload: dict[str, Any], path: Path | None = None) -> Path:
+    target = (path or default_settings_path()).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
+    return target
+
+
+def _settings_choice(
+    settings: dict[str, Any], name: str, choices: set[str], fallback: str
+) -> str:
+    value = str(settings.get(name) or fallback).strip().lower()
+    return value if value in choices else fallback
 
 
 def _optional_choice(name: str, choices: set[str]) -> str | None:

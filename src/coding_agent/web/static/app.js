@@ -1,4 +1,9 @@
 const PANEL_LAYOUT_KEY = "code-helper.panel-layout.v1";
+const WORKSPACE_STATE_KEY = "code-helper.workspace-state.v1";
+const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence", "diff", "terminal"]);
+const RESTORABLE_MODES = new Set(["act", "plan", "ask"]);
+const RESTORABLE_REASONING = new Set(["auto", "fast", "balanced", "deep"]);
+const RESTORABLE_TASK_PROFILES = new Set(["auto", "project", "algorithm"]);
 const PANEL_DEFAULTS = Object.freeze({ explorer: 252, assistant: 420, threads: 112 });
 const PANEL_LIMITS = Object.freeze({
   explorer: { min: 180, max: 480 },
@@ -28,8 +33,12 @@ const state = {
   browserPath: "",
   browserParent: null,
   browserSelection: null,
+  browserPurpose: "workspace",
   restorePreview: [],
   activeView: "chat",
+  appSettings: null,
+  clearApiKey: false,
+  settingsOpen: false,
   panelLayout: loadPanelLayout(),
 };
 
@@ -50,6 +59,12 @@ const elements = Object.fromEntries([
   "approvalBackdrop", "approvalTitle", "approvalReason", "approvalArguments",
   "approveButton", "grantButton", "denyButton", "toast",
   "restoreBackdrop", "restoreFileList", "restorePreviewDiff", "confirmRestoreButton", "closeRestoreButton", "cancelRestoreButton",
+  "userMenuButton", "accountStatus", "userMenu", "userMenuModel", "openSettingsButton",
+  "settingsPage", "settingsBackButton", "settingsForm", "saveSettingsButton",
+  "settingsApiKey", "settingsApiStatus", "settingsProviderModel", "toggleApiKeyButton", "clearApiKeyButton",
+  "settingsDefaultWorkspace", "browseDefaultWorkspaceButton", "useCurrentWorkspaceButton", "clearDefaultWorkspaceButton",
+  "settingsMode", "settingsReasoning", "settingsTaskProfile", "settingsApprovalPolicy",
+  "settingsSkillsList", "enableAllSkillsButton", "disableAllSkillsButton",
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 async function api(path, options = {}) {
@@ -83,12 +98,218 @@ async function checkHealth() {
   }
 }
 
+function updateSettingsIdentity(settings) {
+  const model = `${settings.provider}/${settings.model}`;
+  elements.userMenuModel.textContent = model;
+  elements.accountStatus.textContent = settings.api_key_configured
+    ? `${settings.provider} · 已连接`
+    : "需要配置 API Key";
+}
+
+function renderSettingsSkills(skills) {
+  elements.settingsSkillsList.innerHTML = "";
+  if (!skills.length) {
+    elements.settingsSkillsList.innerHTML = '<div class="settings-loading">当前项目没有可用的 Skills。</div>';
+    return;
+  }
+  skills.forEach((skill) => {
+    const label = document.createElement("label");
+    label.className = "settings-skill";
+    label.innerHTML = `<span class="settings-skill-copy"><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description || skill.when_to_use || "项目工作流")}</small></span><span class="skill-toggle"><input type="checkbox" name="enabled-skill" value="${escapeHtml(skill.name)}" ${skill.enabled ? "checked" : ""}><i aria-hidden="true"></i></span>`;
+    elements.settingsSkillsList.append(label);
+  });
+}
+
+function renderSettingsForm(settings) {
+  state.appSettings = settings;
+  state.clearApiKey = false;
+  elements.settingsApiKey.value = "";
+  elements.settingsApiKey.disabled = false;
+  elements.settingsApiKey.type = "password";
+  elements.toggleApiKeyButton.textContent = "显示";
+  elements.clearApiKeyButton.textContent = "清除";
+  elements.settingsApiStatus.className = settings.api_key_configured ? "configured" : "cleared";
+  elements.settingsApiStatus.textContent = settings.api_key_configured
+    ? `已配置 · ${settings.api_key_hint}`
+    : "尚未配置 API Key";
+  elements.settingsProviderModel.textContent = `${settings.provider}/${settings.model}`;
+  elements.settingsDefaultWorkspace.value = settings.default_workspace || "";
+  elements.settingsMode.value = settings.default_mode;
+  elements.settingsReasoning.value = settings.default_reasoning_profile;
+  elements.settingsTaskProfile.value = settings.default_task_profile;
+  elements.settingsApprovalPolicy.value = settings.default_approval_policy;
+  renderSettingsSkills(settings.skills || []);
+  updateSettingsIdentity(settings);
+}
+
+async function loadAppSettings() {
+  try {
+    const settings = await api("/api/settings");
+    renderSettingsForm(settings);
+    if (!state.sessionId) {
+      elements.modeSelect.value = settings.default_mode;
+      elements.reasoningSelect.value = settings.default_reasoning_profile;
+      elements.taskProfileSelect.value = settings.default_task_profile;
+      elements.approvalPolicySelect.value = settings.default_approval_policy;
+      state.approvalPolicy = settings.default_approval_policy;
+      updateApprovalPolicyVisual();
+    }
+    return settings;
+  } catch (error) {
+    elements.settingsSkillsList.innerHTML = `<div class="settings-loading">${escapeHtml(error.message)}</div>`;
+    elements.accountStatus.textContent = "设置不可用";
+    return null;
+  }
+}
+
+function positionUserMenu() {
+  const anchor = elements.userMenuButton.getBoundingClientRect();
+  const menuWidth = 260;
+  const left = Math.min(window.innerWidth - menuWidth - 10, Math.max(10, anchor.left));
+  const menuHeight = elements.userMenu.offsetHeight || 120;
+  const top = Math.max(10, anchor.top - menuHeight - 7);
+  elements.userMenu.style.left = `${left}px`;
+  elements.userMenu.style.top = `${top}px`;
+}
+
+function closeUserMenu() {
+  elements.userMenu.classList.add("hidden");
+  elements.userMenuButton.setAttribute("aria-expanded", "false");
+}
+
+function toggleUserMenu() {
+  const opening = elements.userMenu.classList.contains("hidden");
+  if (!opening) return closeUserMenu();
+  elements.userMenu.classList.remove("hidden");
+  elements.userMenuButton.setAttribute("aria-expanded", "true");
+  positionUserMenu();
+  elements.openSettingsButton.focus();
+}
+
+async function openSettingsPage() {
+  closeUserMenu();
+  state.settingsOpen = true;
+  elements.workbench.classList.add("hidden");
+  elements.settingsPage.classList.remove("hidden");
+  await loadAppSettings();
+  elements.settingsBackButton.focus();
+}
+
+function closeSettingsPage() {
+  state.settingsOpen = false;
+  elements.settingsPage.classList.add("hidden");
+  elements.workbench.classList.remove("hidden");
+  applyPanelLayout();
+  elements.userMenuButton.focus();
+}
+
+async function syncCurrentSessionDefaults(settings) {
+  elements.modeSelect.value = settings.default_mode;
+  elements.reasoningSelect.value = settings.default_reasoning_profile;
+  elements.taskProfileSelect.value = settings.default_task_profile;
+  state.approvalPolicy = settings.default_approval_policy;
+  elements.approvalPolicySelect.value = state.approvalPolicy;
+  updateApprovalPolicyVisual();
+  if (!state.sessionId || state.running) return !state.running;
+  try {
+    await Promise.all([
+      api(`/api/sessions/${state.sessionId}/mode`, {
+        method: "POST",
+        body: JSON.stringify({ mode: settings.default_mode }),
+      }),
+      api(`/api/sessions/${state.sessionId}/reasoning`, {
+        method: "POST",
+        body: JSON.stringify({ profile: settings.default_reasoning_profile }),
+      }),
+      api(`/api/sessions/${state.sessionId}/approval-policy`, {
+        method: "POST",
+        body: JSON.stringify({ policy: settings.default_approval_policy }),
+      }),
+    ]);
+    saveWorkspaceState();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function saveSettings(event) {
+  event?.preventDefault();
+  const enabledSkills = [...elements.settingsSkillsList.querySelectorAll('input[name="enabled-skill"]:checked')]
+    .map((input) => input.value);
+  const payload = {
+    api_key: elements.settingsApiKey.value.trim() || null,
+    clear_api_key: state.clearApiKey,
+    default_workspace: elements.settingsDefaultWorkspace.value.trim(),
+    default_mode: elements.settingsMode.value,
+    default_reasoning_profile: elements.settingsReasoning.value,
+    default_task_profile: elements.settingsTaskProfile.value,
+    default_approval_policy: elements.settingsApprovalPolicy.value,
+    enabled_skills: enabledSkills,
+  };
+  elements.saveSettingsButton.disabled = true;
+  elements.saveSettingsButton.querySelector("span").textContent = "保存中…";
+  try {
+    const settings = await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+    renderSettingsForm(settings);
+    const synced = await syncCurrentSessionDefaults(settings);
+    await checkHealth();
+    showToast(synced ? "设置已保存" : "设置已保存；当前任务结束后应用会话默认值");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    elements.saveSettingsButton.disabled = false;
+    elements.saveSettingsButton.querySelector("span").textContent = "保存更改";
+  }
+}
+
 function workspaceName(path) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
 }
 
 function effortToProfile(value) {
   return ({ low: "fast", medium: "balanced", high: "deep" })[value] || "auto";
+}
+
+function loadWorkspaceState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WORKSPACE_STATE_KEY) || "null");
+    if (!saved || typeof saved.workspace !== "string" || !saved.workspace.trim()) return null;
+    const openFiles = Array.isArray(saved.openFiles)
+      ? saved.openFiles.filter((path) => typeof path === "string" && path.trim()).slice(0, 24)
+      : [];
+    return {
+      workspace: saved.workspace,
+      sessionId: typeof saved.sessionId === "string" && saved.sessionId ? saved.sessionId : null,
+      openFiles,
+      activeFilePath: typeof saved.activeFilePath === "string" ? saved.activeFilePath : null,
+      activeView: RESTORABLE_VIEWS.has(saved.activeView) ? saved.activeView : "chat",
+      mode: RESTORABLE_MODES.has(saved.mode) ? saved.mode : "act",
+      reasoningProfile: RESTORABLE_REASONING.has(saved.reasoningProfile) ? saved.reasoningProfile : "auto",
+      taskProfile: RESTORABLE_TASK_PROFILES.has(saved.taskProfile) ? saved.taskProfile : "auto",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveWorkspaceState() {
+  if (!state.workspace || !state.sessionId) return;
+  const snapshot = {
+    workspace: state.workspace,
+    sessionId: state.sessionId,
+    openFiles: state.openFiles.slice(0, 24),
+    activeFilePath: state.activeFilePath,
+    activeView: state.activeView,
+    mode: elements.modeSelect.value,
+    reasoningProfile: elements.reasoningSelect.value,
+    taskProfile: elements.taskProfileSelect.value,
+  };
+  try { localStorage.setItem(WORKSPACE_STATE_KEY, JSON.stringify(snapshot)); } catch { /* localStorage may be disabled */ }
+}
+
+function clearWorkspaceState() {
+  try { localStorage.removeItem(WORKSPACE_STATE_KEY); } catch { /* localStorage may be disabled */ }
 }
 
 function loadPanelLayout() {
@@ -243,7 +464,7 @@ function initializePanelResizers() {
   applyPanelLayout();
 }
 
-async function openWorkspace(workspace, sessionId = null, preserveEditor = false) {
+async function openWorkspace(workspace, sessionId = null, preserveEditor = false, restoring = false) {
   const candidate = String(workspace || "").trim();
   if (!candidate) return showToast("请选择一个本地文件夹");
   try {
@@ -281,10 +502,42 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     setRunning(false);
     connectSocket();
     await Promise.all([loadRootFiles(), loadWorkspaceSessions(), loadIntelligence()]);
-    showToast(sessionId ? "已切换对话" : "工作区已打开");
+    saveWorkspaceState();
+    if (!restoring) showToast(sessionId ? "已切换对话" : "工作区已打开");
+    return true;
   } catch (error) {
     showToast(error.message);
+    return false;
   }
+}
+
+async function restoreLastWorkspace() {
+  const saved = loadWorkspaceState();
+  if (!saved) return false;
+  elements.workspaceInput.value = saved.workspace;
+  elements.modeSelect.value = saved.mode;
+  elements.reasoningSelect.value = saved.reasoningProfile;
+  elements.taskProfileSelect.value = saved.taskProfile;
+  try {
+    await api(`/api/fs/browse?${new URLSearchParams({ path: saved.workspace })}`);
+  } catch {
+    clearWorkspaceState();
+    elements.workspaceInput.value = "";
+    showToast("上次工作区已不可用，请重新选择文件夹");
+    return false;
+  }
+  const opened = await openWorkspace(saved.workspace, saved.sessionId, false, true);
+  if (!opened) return false;
+  for (const path of saved.openFiles) await openFile(path);
+  if (saved.activeFilePath && state.fileCache.has(saved.activeFilePath)) {
+    state.activeFilePath = saved.activeFilePath;
+    renderEditorTabs();
+    renderFile(state.fileCache.get(saved.activeFilePath));
+  }
+  setAssistantView(saved.activeView);
+  saveWorkspaceState();
+  showToast("已恢复上次工作区");
+  return true;
 }
 
 function enableWorkspaceControls(enabled) {
@@ -454,6 +707,7 @@ async function openFile(path, force = false) {
     state.activeFilePath = path;
     renderEditorTabs();
     renderFile(file);
+    saveWorkspaceState();
   } catch (error) {
     if (error.status === 415) {
       const file = {
@@ -472,6 +726,7 @@ async function openFile(path, force = false) {
       state.activeFilePath = path;
       renderEditorTabs();
       renderFile(file);
+      saveWorkspaceState();
       return;
     }
     elements.fileStatus.textContent = "ERROR";
@@ -493,6 +748,7 @@ function renderEditorTabs() {
       state.activeFilePath = path;
       renderEditorTabs();
       renderFile(state.fileCache.get(path));
+      saveWorkspaceState();
     });
     tab.querySelector(".tab-close").addEventListener("click", () => closeFile(path));
     elements.editorTabs.append(tab);
@@ -509,6 +765,7 @@ function closeFile(path) {
   renderEditorTabs();
   if (state.activeFilePath) renderFile(state.fileCache.get(state.activeFilePath));
   else showEditorEmpty();
+  saveWorkspaceState();
 }
 
 function renderFile(file) {
@@ -1327,9 +1584,13 @@ function setAssistantView(view) {
   document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[view]));
   if (view === "diff") refreshDiff();
   if (view === "intelligence") loadIntelligence();
+  saveWorkspaceState();
 }
 
 async function browseWorkspace() {
+  state.browserPurpose = "workspace";
+  document.querySelector("#folderDialogTitle").textContent = "打开文件夹";
+  elements.chooseWorkspaceButton.textContent = "选择并打开";
   try {
     const picker = window.pywebview?.api?.pick_folder;
     if (picker) {
@@ -1340,6 +1601,22 @@ async function browseWorkspace() {
   } catch (error) { showToast(`原生选择器不可用：${error.message}`); }
   elements.browserBackdrop.classList.remove("hidden");
   await browseTo(state.workspace || "");
+}
+
+async function browseDefaultWorkspace() {
+  state.browserPurpose = "settings";
+  document.querySelector("#folderDialogTitle").textContent = "选择默认文件夹";
+  elements.chooseWorkspaceButton.textContent = "设为默认";
+  try {
+    const picker = window.pywebview?.api?.pick_folder;
+    if (picker) {
+      const selected = await picker();
+      if (selected) elements.settingsDefaultWorkspace.value = selected;
+      return;
+    }
+  } catch (error) { showToast(`原生选择器不可用：${error.message}`); }
+  elements.browserBackdrop.classList.remove("hidden");
+  await browseTo(elements.settingsDefaultWorkspace.value || state.workspace || "");
 }
 
 async function browseTo(path) {
@@ -1449,7 +1726,7 @@ elements.newSessionButton.addEventListener("click", () => openWorkspace(state.wo
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
 elements.messageInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.ctrlKey) { event.preventDefault(); sendMessage(); } });
-elements.modeSelect.addEventListener("change", async () => { if (!state.sessionId || state.running) return; try { await api(`/api/sessions/${state.sessionId}/mode`, { method: "POST", body: JSON.stringify({ mode: elements.modeSelect.value }) }); showToast(`已切换为 ${elements.modeSelect.value.toUpperCase()} 模式`); } catch (error) { showToast(error.message); } });
+elements.modeSelect.addEventListener("change", async () => { if (!state.sessionId || state.running) return; try { await api(`/api/sessions/${state.sessionId}/mode`, { method: "POST", body: JSON.stringify({ mode: elements.modeSelect.value }) }); saveWorkspaceState(); showToast(`已切换为 ${elements.modeSelect.value.toUpperCase()} 模式`); } catch (error) { showToast(error.message); } });
 elements.reasoningSelect.addEventListener("change", async () => {
   if (!state.sessionId) return;
   if (state.running) {
@@ -1462,11 +1739,13 @@ elements.reasoningSelect.addEventListener("change", async () => {
       body: JSON.stringify({ profile: elements.reasoningSelect.value }),
     });
     elements.reasoningSelect.value = result.profile;
+    saveWorkspaceState();
     showToast(`推理档位已切换为 ${result.profile.toUpperCase()}`);
     loadIntelligence();
   } catch (error) { showToast(error.message); }
 });
 elements.approvalPolicySelect.addEventListener("change", changeApprovalPolicy);
+elements.taskProfileSelect.addEventListener("change", saveWorkspaceState);
 document.querySelectorAll(".assistant-tabs button").forEach((button) => button.addEventListener("click", () => setAssistantView(button.dataset.view)));
 elements.refreshIntelligenceButton.addEventListener("click", loadIntelligence);
 elements.exportTraceButton.addEventListener("click", exportTrace);
@@ -1484,10 +1763,89 @@ elements.closeBrowserButton.addEventListener("click", closeBrowser);
 elements.cancelBrowserButton.addEventListener("click", closeBrowser);
 elements.browserBackdrop.addEventListener("click", (event) => { if (event.target === elements.browserBackdrop) closeBrowser(); });
 elements.browserUpButton.addEventListener("click", () => browseTo(state.browserParent || ""));
-elements.chooseWorkspaceButton.addEventListener("click", async () => { const selected = state.browserSelection; if (!selected) return; closeBrowser(); elements.workspaceInput.value = selected; await openWorkspace(selected); });
-document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !elements.browserBackdrop.classList.contains("hidden")) closeBrowser(); });
+elements.chooseWorkspaceButton.addEventListener("click", async () => {
+  const selected = state.browserSelection;
+  if (!selected) return;
+  const purpose = state.browserPurpose;
+  closeBrowser();
+  if (purpose === "settings") {
+    elements.settingsDefaultWorkspace.value = selected;
+    return;
+  }
+  elements.workspaceInput.value = selected;
+  await openWorkspace(selected);
+});
+elements.userMenuButton.addEventListener("click", toggleUserMenu);
+elements.openSettingsButton.addEventListener("click", openSettingsPage);
+elements.settingsBackButton.addEventListener("click", closeSettingsPage);
+elements.settingsForm.addEventListener("submit", saveSettings);
+elements.toggleApiKeyButton.addEventListener("click", () => {
+  const visible = elements.settingsApiKey.type === "text";
+  elements.settingsApiKey.type = visible ? "password" : "text";
+  elements.toggleApiKeyButton.textContent = visible ? "显示" : "隐藏";
+});
+elements.clearApiKeyButton.addEventListener("click", () => {
+  state.clearApiKey = !state.clearApiKey;
+  elements.settingsApiKey.value = "";
+  elements.settingsApiKey.disabled = state.clearApiKey;
+  elements.clearApiKeyButton.textContent = state.clearApiKey ? "撤销" : "清除";
+  elements.settingsApiStatus.className = state.clearApiKey ? "cleared" : (state.appSettings?.api_key_configured ? "configured" : "cleared");
+  elements.settingsApiStatus.textContent = state.clearApiKey
+    ? "保存后移除已配置的 API Key"
+    : (state.appSettings?.api_key_configured ? `已配置 · ${state.appSettings.api_key_hint}` : "尚未配置 API Key");
+});
+elements.settingsApiKey.addEventListener("input", () => {
+  if (elements.settingsApiKey.value) {
+    state.clearApiKey = false;
+    elements.settingsApiKey.disabled = false;
+    elements.clearApiKeyButton.textContent = "清除";
+    elements.settingsApiStatus.className = "configured";
+    elements.settingsApiStatus.textContent = "将使用新输入的 API Key";
+  }
+});
+elements.browseDefaultWorkspaceButton.addEventListener("click", browseDefaultWorkspace);
+elements.useCurrentWorkspaceButton.addEventListener("click", () => {
+  if (!state.workspace) return showToast("请先打开一个工作区");
+  elements.settingsDefaultWorkspace.value = state.workspace;
+});
+elements.clearDefaultWorkspaceButton.addEventListener("click", () => { elements.settingsDefaultWorkspace.value = ""; });
+elements.enableAllSkillsButton.addEventListener("click", () => elements.settingsSkillsList.querySelectorAll('input[name="enabled-skill"]').forEach((input) => { input.checked = true; }));
+elements.disableAllSkillsButton.addEventListener("click", () => elements.settingsSkillsList.querySelectorAll('input[name="enabled-skill"]').forEach((input) => { input.checked = false; }));
+document.querySelectorAll("[data-settings-section]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-settings-section]").forEach((item) => item.classList.toggle("active", item === button));
+  document.querySelector(`#${button.dataset.settingsSection}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}));
+document.addEventListener("click", (event) => {
+  if (!elements.userMenu.classList.contains("hidden") && !elements.userMenu.contains(event.target) && !elements.userMenuButton.contains(event.target)) closeUserMenu();
+});
+window.addEventListener("resize", () => { if (!elements.userMenu.classList.contains("hidden")) positionUserMenu(); });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (!elements.browserBackdrop.classList.contains("hidden")) closeBrowser();
+    else if (!elements.userMenu.classList.contains("hidden")) closeUserMenu();
+  }
+  if (event.ctrlKey && event.key === ",") {
+    event.preventDefault();
+    openSettingsPage();
+  }
+  if (event.ctrlKey && event.key.toLowerCase() === "s" && state.settingsOpen) {
+    event.preventDefault();
+    saveSettings(event);
+  }
+});
 
-initializePanelResizers();
-resetEditor();
-setAssistantView("chat");
-checkHealth();
+async function initializeApplication() {
+  initializePanelResizers();
+  resetEditor();
+  setAssistantView("chat");
+  await checkHealth();
+  const settings = await loadAppSettings();
+  const restored = await restoreLastWorkspace();
+  if (!restored && settings?.default_workspace) {
+    elements.workspaceInput.value = settings.default_workspace;
+    await openWorkspace(settings.default_workspace, null, false, true);
+    showToast("已打开默认工作区");
+  }
+}
+
+initializeApplication();

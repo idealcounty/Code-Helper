@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import os
-from dataclasses import dataclass, field
+import secrets
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -17,15 +20,93 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..agent_loop import AgentRunResult
-from ..config import AppConfig
+from ..config import (
+    AppConfig,
+    default_settings_path,
+    load_user_settings,
+    save_user_settings,
+)
 from ..events import AgentEvent
 from ..model import ModelClient, ToolCall
 from ..permissions import ApprovalMode, PermissionResult
 from ..repo_map import RepoMapBuilder
-from ..runtime import AgentRuntime, create_runtime
+from ..runtime import AgentRuntime, create_runtime, _skills_root
 from ..session import AgentStatus
+from ..skills import SkillLibrary
 from ..trace_export import build_trace
 from ..tools.base import ToolError
+
+
+class SharedPasswordAuthMiddleware:
+    """Small HTTP Basic boundary for trusted, low-traffic server deployments."""
+
+    def __init__(self, app: Any, *, username: str, password: str) -> None:
+        self.app = app
+        self.username = username
+        self.password = password
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        if self._authorized(scope):
+            await self.app(scope, receive, send)
+            return
+        if scope.get("type") == "websocket":
+            await send(
+                {
+                    "type": "websocket.close",
+                    "code": 4401,
+                    "reason": "Authentication required",
+                }
+            )
+            return
+        response = Response(
+            "Authentication required",
+            status_code=401,
+            media_type="text/plain",
+            headers={"WWW-Authenticate": 'Basic realm="Code Helper", charset="UTF-8"'},
+        )
+        await response(scope, receive, send)
+
+    def _authorized(self, scope: dict[str, Any]) -> bool:
+        headers = dict(scope.get("headers") or [])
+        value = headers.get(b"authorization", b"")
+        if not value.lower().startswith(b"basic "):
+            return False
+        try:
+            decoded = base64.b64decode(value[6:], validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return False
+        username, separator, password = decoded.partition(":")
+        return bool(separator) and secrets.compare_digest(
+            username, self.username
+        ) and secrets.compare_digest(password, self.password)
+
+
+def _server_host() -> str:
+    return os.getenv("CODE_HELPER_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+
+def _server_port() -> int:
+    raw = os.getenv("CODE_HELPER_PORT", "8765").strip()
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ValueError("CODE_HELPER_PORT must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("CODE_HELPER_PORT must be between 1 and 65535")
+    return port
+
+
+def _require_workspace_scope(config: AppConfig, path: Path) -> None:
+    allowed_root = config.server_workspace_root
+    if allowed_root is None:
+        return
+    if not path.resolve().is_relative_to(allowed_root.resolve()):
+        raise ValueError(
+            f"Workspace must stay inside the server workspace root: {allowed_root}"
+        )
 
 
 def _budget_view(runtime: AgentRuntime) -> dict[str, Any]:
@@ -192,11 +273,11 @@ def _profile_from_effort(value: str | None) -> str:
 
 class CreateSessionRequest(BaseModel):
     workspace: str = Field(min_length=1)
-    mode: Literal["ask", "plan", "act"] = "act"
+    mode: Literal["ask", "plan", "act"] | None = None
     session_id: str | None = None
-    reasoning_profile: Literal["auto", "fast", "balanced", "deep"] = "auto"
-    task_profile: Literal["auto", "project", "algorithm"] = "auto"
-    approval_policy: Literal["ask", "auto", "full"] = "ask"
+    reasoning_profile: Literal["auto", "fast", "balanced", "deep"] | None = None
+    task_profile: Literal["auto", "project", "algorithm"] | None = None
+    approval_policy: Literal["ask", "auto", "full"] | None = None
 
 
 class MessageRequest(BaseModel):
@@ -220,6 +301,17 @@ class ReasoningRequest(BaseModel):
 
 class ApprovalPolicyRequest(BaseModel):
     policy: Literal["ask", "auto", "full"]
+
+
+class AppSettingsRequest(BaseModel):
+    api_key: str | None = Field(default=None, max_length=512)
+    clear_api_key: bool = False
+    default_workspace: str = Field(default="", max_length=4096)
+    default_mode: Literal["ask", "plan", "act"] = "act"
+    default_reasoning_profile: Literal["auto", "fast", "balanced", "deep"] = "auto"
+    default_task_profile: Literal["auto", "project", "algorithm"] = "auto"
+    default_approval_policy: Literal["ask", "auto", "full"] = "ask"
+    enabled_skills: list[str] = Field(default_factory=list, max_length=100)
 
 
 class RecoveryRequest(BaseModel):
@@ -311,6 +403,7 @@ class WebSessionManager:
         resolved_workspace = Path(workspace).expanduser().resolve(strict=True)
         if not resolved_workspace.is_dir():
             raise ValueError("Workspace path is not a directory")
+        _require_workspace_scope(self.config, resolved_workspace)
         if session_id and session_id in self.sessions:
             existing = self.sessions[session_id]
             if existing.runtime.workspace.root != resolved_workspace:
@@ -350,11 +443,32 @@ class WebSessionManager:
 def create_app(
     config: AppConfig | None = None,
     model_client_factory: Callable[[], ModelClient] | None = None,
+    settings_path: Path | None = None,
+    access_username: str | None = None,
+    access_password: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Code Helper", version="0.1.0")
+    resolved_settings_path = (settings_path or default_settings_path()).expanduser()
     manager = WebSessionManager(
-        config or AppConfig.from_env(), model_client_factory=model_client_factory
+        config or AppConfig.from_env(resolved_settings_path),
+        model_client_factory=model_client_factory,
     )
+    resolved_access_username = (
+        access_username
+        if access_username is not None
+        else os.getenv("CODE_HELPER_ACCESS_USERNAME", "codehelper")
+    ).strip() or "codehelper"
+    resolved_access_password = (
+        access_password
+        if access_password is not None
+        else os.getenv("CODE_HELPER_ACCESS_PASSWORD", "") if config is None else ""
+    )
+    if resolved_access_password:
+        app.add_middleware(
+            SharedPasswordAuthMiddleware,
+            username=resolved_access_username,
+            password=resolved_access_password,
+        )
     static_root = Path(__file__).with_name("static")
 
     @app.get("/api/health")
@@ -368,9 +482,123 @@ def create_app(
             "reasoning_effort": manager.config.reasoning_effort,
         }
 
+    def settings_view() -> dict[str, Any]:
+        config_view = manager.config
+        available = SkillLibrary(_skills_root()).list_summaries()
+        enabled = (
+            {item.name for item in available}
+            if config_view.enabled_skills is None
+            else set(config_view.enabled_skills)
+        )
+        key = config_view.api_key.strip()
+        return {
+            "api_key_configured": bool(key),
+            "api_key_hint": f"••••{key[-4:]}" if key else "",
+            "provider": config_view.provider,
+            "model": config_view.model,
+            "default_workspace": str(config_view.default_workspace or ""),
+            "default_mode": config_view.default_mode,
+            "default_reasoning_profile": config_view.default_reasoning_profile,
+            "default_task_profile": config_view.default_task_profile,
+            "default_approval_policy": config_view.default_approval_policy,
+            "skills": [
+                {**item.to_dict(), "enabled": item.name in enabled}
+                for item in available
+            ],
+        }
+
+    @app.get("/api/settings")
+    async def get_settings() -> dict[str, Any]:
+        return settings_view()
+
+    @app.post("/api/settings")
+    async def update_settings(request: AppSettingsRequest) -> dict[str, Any]:
+        workspace_text = request.default_workspace.strip()
+        workspace: Path | None = None
+        if workspace_text:
+            try:
+                workspace = Path(workspace_text).expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise HTTPException(status_code=400, detail=f"默认文件夹不可用：{exc}") from exc
+            if not workspace.is_dir():
+                raise HTTPException(status_code=400, detail="默认文件夹必须是一个目录")
+            try:
+                _require_workspace_scope(manager.config, workspace)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        available_names = {
+            item.name for item in SkillLibrary(_skills_root()).list_summaries()
+        }
+        requested_skills = list(dict.fromkeys(request.enabled_skills))
+        unknown = sorted(set(requested_skills) - available_names)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知 Skills：{', '.join(unknown)}",
+            )
+
+        api_key = manager.config.api_key
+        supplied_key = (request.api_key or "").strip()
+        if request.clear_api_key:
+            api_key = ""
+        elif supplied_key:
+            api_key = supplied_key
+        reasoning_effort = REASONING_PROFILES[request.default_reasoning_profile]
+        manager.config = replace(
+            manager.config,
+            api_key=api_key,
+            reasoning_effort=reasoning_effort,
+            default_workspace=workspace,
+            default_mode=request.default_mode,
+            default_reasoning_profile=request.default_reasoning_profile,
+            default_task_profile=request.default_task_profile,
+            default_approval_policy=request.default_approval_policy,
+            enabled_skills=tuple(requested_skills),
+        )
+
+        persisted = load_user_settings(resolved_settings_path)
+        if request.clear_api_key:
+            persisted["api_key"] = ""
+        elif supplied_key:
+            persisted["api_key"] = supplied_key
+        persisted.update({
+            "default_workspace": str(workspace or ""),
+            "default_mode": request.default_mode,
+            "default_reasoning_profile": request.default_reasoning_profile,
+            "default_task_profile": request.default_task_profile,
+            "default_approval_policy": request.default_approval_policy,
+            "enabled_skills": requested_skills,
+        })
+        try:
+            save_user_settings(persisted, resolved_settings_path)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"无法保存设置：{exc}") from exc
+        return settings_view()
+
     @app.get("/api/fs/browse")
     async def browse_directories(path: str = "") -> dict[str, Any]:
+        allowed_root = manager.config.server_workspace_root
         if not path:
+            if allowed_root is not None:
+                try:
+                    directory = allowed_root.expanduser().resolve(strict=True)
+                    if not directory.is_dir():
+                        raise ValueError("Server workspace root is not a directory")
+                    entries = _directory_entries(directory)[:300]
+                except (OSError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot browse server workspace root: {exc}",
+                    ) from exc
+                return {
+                    "path": str(directory),
+                    "parent": None,
+                    "entries": [
+                        {"name": child.name, "path": str(child), "kind": "directory"}
+                        for child in entries
+                    ],
+                }
             return {
                 "path": "",
                 "parent": None,
@@ -383,12 +611,15 @@ def create_app(
             directory = Path(path).expanduser().resolve(strict=True)
             if not directory.is_dir():
                 raise ValueError("Path is not a directory")
+            _require_workspace_scope(manager.config, directory)
             entries = _directory_entries(directory)[:300]
         except (OSError, ValueError) as exc:
             raise HTTPException(
                 status_code=400, detail=f"Cannot browse directory: {exc}"
             ) from exc
         parent = directory.parent if directory.parent != directory else None
+        if allowed_root is not None and directory == allowed_root.resolve():
+            parent = None
         return {
             "path": str(directory),
             "parent": str(parent) if parent else None,
@@ -402,7 +633,8 @@ def create_app(
     async def list_workspace_sessions(workspace: str) -> dict[str, Any]:
         try:
             root = Path(workspace).expanduser().resolve(strict=True)
-        except OSError as exc:
+            _require_workspace_scope(manager.config, root)
+        except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not root.is_dir():
             raise HTTPException(status_code=400, detail="Workspace is not a directory")
@@ -432,11 +664,11 @@ def create_app(
         try:
             session = manager.create(
                 request.workspace,
-                request.mode,
+                request.mode or manager.config.default_mode,
                 request.session_id,
-                request.reasoning_profile,
-                request.task_profile,
-                request.approval_policy,
+                request.reasoning_profile or manager.config.default_reasoning_profile,
+                request.task_profile or manager.config.default_task_profile,
+                request.approval_policy or manager.config.default_approval_policy,
             )
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1291,6 +1523,7 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=static_root), name="static")
     app.state.session_manager = manager
+    app.state.shared_password_enabled = bool(resolved_access_password)
     return app
 
 
@@ -1298,10 +1531,18 @@ app = create_app()
 
 
 def main() -> None:
+    host = _server_host()
+    port = _server_port()
+    if host not in {"127.0.0.1", "localhost", "::1"} and not os.getenv(
+        "CODE_HELPER_ACCESS_PASSWORD", ""
+    ):
+        raise SystemExit(
+            "Refusing a non-local listener without CODE_HELPER_ACCESS_PASSWORD"
+        )
     uvicorn.run(
-        "coding_agent.web.app:app",
-        host="127.0.0.1",
-        port=8765,
+        app,
+        host=host,
+        port=port,
         reload=False,
     )
 

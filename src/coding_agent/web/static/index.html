@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/modern.css?v=20260829.4" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260830.1" />
   </head>
   <body>
     <div class="app-shell">
@@ -39,6 +39,13 @@
             <div class="empty-compact"><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z" /></svg><p>打开一个本地文件夹</p><button class="inline-link" id="emptyBrowseButton" type="button">浏览文件夹</button></div>
           </div>
           <div class="pane-footer"><span>受保护文件自动隐藏</span><span>LOCAL</span></div>
+          <div class="account-dock">
+            <button class="account-button" id="userMenuButton" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="account-avatar" aria-hidden="true">CH</span>
+              <span class="account-copy"><strong>Code Helper</strong><small id="accountStatus">本地工作区</small></span>
+              <svg class="account-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 14 4-4 4 4" /></svg>
+            </button>
+          </div>
         </aside>
 
         <div class="panel-resizer panel-resizer-column" id="explorerResizer" data-resize="explorer" role="separator" aria-label="调整文件栏宽度" aria-orientation="vertical" aria-valuemin="180" aria-valuemax="480" aria-valuenow="252" tabindex="0" title="拖动调整文件栏宽度，双击恢复默认"><span></span></div>
@@ -79,6 +86,73 @@
           <div class="assistant-status"><div class="run-status" id="runStatus"><i></i><span>未连接</span></div><span id="providerLabel">MODEL · CHECKING</span></div>
         </aside>
       </main>
+
+      <section class="settings-page hidden" id="settingsPage" aria-labelledby="settingsPageTitle">
+        <aside class="settings-sidebar">
+          <button class="settings-back" id="settingsBackButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            返回工作区
+          </button>
+          <div class="settings-identity">
+            <span class="account-avatar large" aria-hidden="true">CH</span>
+            <div><span class="eyebrow">LOCAL PROFILE</span><strong>Code Helper</strong></div>
+          </div>
+          <nav class="settings-nav" aria-label="设置分区">
+            <button class="active" type="button" data-settings-section="settingsModelSection"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5 5 18l2.4-1a7 7 0 0 0 1.7 1l.4 3h5l.4-3a7 7 0 0 0 1.7-1l2.4 1 2-3.5-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg><span>模型与密钥</span></button>
+            <button type="button" data-settings-section="settingsWorkspaceSection"><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z"/></svg><span>默认工作区</span></button>
+            <button type="button" data-settings-section="settingsAgentSection"><svg viewBox="0 0 24 24"><path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M18 12h3M18.4 5.6l-2.1 2.1"/><rect x="6" y="8" width="12" height="11" rx="3"/><path d="M9.5 13h.1M14.5 13h.1M9.5 16h5"/></svg><span>Agent 默认值</span></button>
+            <button type="button" data-settings-section="settingsSkillsSection"><svg viewBox="0 0 24 24"><path d="m14 4 6 6-10 10H4v-6zM13 5l6 6M7 14l3 3"/></svg><span>Skills</span></button>
+          </nav>
+          <div class="settings-local-note"><i></i><span>配置仅保存在此设备</span></div>
+        </aside>
+
+        <main class="settings-content">
+          <header class="settings-header">
+            <div><span class="eyebrow">PREFERENCES</span><h1 id="settingsPageTitle">设置</h1><p>配置模型连接与新会话的默认行为。</p></div>
+            <button class="settings-save" id="saveSettingsButton" type="submit" form="settingsForm"><span>保存更改</span><kbd>Ctrl S</kbd></button>
+          </header>
+
+          <form class="settings-form" id="settingsForm">
+            <section class="settings-section" id="settingsModelSection">
+              <div class="settings-section-heading"><span class="settings-index">01</span><div><h2>模型与 API Key</h2><p>连接 DeepSeek 兼容接口。保存后只显示密钥尾号，不回传完整内容。</p></div></div>
+              <div class="settings-card">
+                <div class="setting-row api-key-row">
+                  <div class="setting-copy"><label for="settingsApiKey">API Key</label><p id="settingsApiStatus">正在检查密钥状态…</p></div>
+                  <div class="api-key-control"><input id="settingsApiKey" type="password" placeholder="输入新 API Key（留空则保持不变）" autocomplete="new-password" spellcheck="false"/><button class="field-action" id="toggleApiKeyButton" type="button">显示</button><button class="field-action danger" id="clearApiKeyButton" type="button">清除</button></div>
+                </div>
+                <div class="setting-row compact"><div class="setting-copy"><span>当前模型</span><p>由本地环境中的供应商与模型配置决定</p></div><code id="settingsProviderModel">检测中</code></div>
+              </div>
+            </section>
+
+            <section class="settings-section" id="settingsWorkspaceSection">
+              <div class="settings-section-heading"><span class="settings-index">02</span><div><h2>默认工作区</h2><p>没有可恢复的上次界面时，启动后自动打开此文件夹。</p></div></div>
+              <div class="settings-card">
+                <div class="setting-block"><label for="settingsDefaultWorkspace">文件夹路径</label><div class="folder-field"><input id="settingsDefaultWorkspace" type="text" placeholder="未设置默认文件夹" autocomplete="off"/><button class="field-action primary" id="browseDefaultWorkspaceButton" type="button">浏览</button></div><div class="setting-inline-actions"><button id="useCurrentWorkspaceButton" type="button">使用当前工作区</button><button id="clearDefaultWorkspaceButton" type="button">取消默认文件夹</button></div></div>
+              </div>
+            </section>
+
+            <section class="settings-section" id="settingsAgentSection">
+              <div class="settings-section-heading"><span class="settings-index">03</span><div><h2>Agent 默认值</h2><p>用于创建新会话；权限、模式和推理强度也会同步到当前空闲会话。</p></div></div>
+              <div class="settings-card setting-grid">
+                <label class="select-setting"><span>工作模式</span><small>控制 Agent 是回答、规划还是实际执行</small><select id="settingsMode"><option value="ask">Ask · 只分析回答</option><option value="plan">Plan · 先制定方案</option><option value="act">Act · 执行修改</option></select></label>
+                <label class="select-setting"><span>权限策略</span><small>决定工具操作何时需要人工确认</small><select id="settingsApprovalPolicy"><option value="ask">请求批准</option><option value="auto">帮我批准</option><option value="full">完全放开</option></select></label>
+                <label class="select-setting"><span>推理强度</span><small>更高强度通常需要更长的响应时间</small><select id="settingsReasoning"><option value="auto">Auto · 服务端默认</option><option value="fast">Fast · 快速响应</option><option value="balanced">Balanced · 平衡</option><option value="deep">Deep · 深度思考</option></select></label>
+                <label class="select-setting"><span>任务类型</span><small>选择项目开发或算法题优化提示</small><select id="settingsTaskProfile"><option value="auto">自动识别</option><option value="project">项目开发</option><option value="algorithm">算法题</option></select></label>
+              </div>
+            </section>
+
+            <section class="settings-section" id="settingsSkillsSection">
+              <div class="settings-section-heading"><span class="settings-index">04</span><div><h2>Skills</h2><p>选择 Agent 可以按需加载的工作流。关闭后不会进入新会话的能力目录。</p></div><div class="section-actions"><button id="enableAllSkillsButton" type="button">全选</button><button id="disableAllSkillsButton" type="button">清空</button></div></div>
+              <div class="settings-card skills-settings-list" id="settingsSkillsList"><div class="settings-loading">正在读取 Skills…</div></div>
+            </section>
+          </form>
+        </main>
+      </section>
+    </div>
+
+    <div class="user-menu hidden" id="userMenu" role="menu" aria-label="用户菜单">
+      <div class="user-menu-profile"><span class="account-avatar" aria-hidden="true">CH</span><div><strong>Code Helper</strong><small id="userMenuModel">本地 Agent</small></div></div>
+      <button id="openSettingsButton" type="button" role="menuitem"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5 5 18l2.4-1a7 7 0 0 0 1.7 1l.4 3h5l.4-3a7 7 0 0 0 1.7-1l2.4 1 2-3.5-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg><span><strong>设置</strong><small>模型、工作区、权限与 Skills</small></span><kbd>Ctrl ,</kbd></button>
     </div>
 
     <div class="modal-backdrop hidden" id="browserBackdrop">
@@ -97,6 +171,6 @@
       <div class="restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restoreTitle"><header><div><span class="eyebrow">CHECKPOINT RESTORE</span><h2 id="restoreTitle">选择要恢复的文件</h2></div><button class="icon-button" id="closeRestoreButton" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header><div class="restore-body"><div class="restore-file-list" id="restoreFileList"></div><pre class="restore-preview" id="restorePreviewDiff">选择文件查看恢复差异。</pre></div><footer><span>外部修改会要求二次确认</span><div><button class="dialog-secondary" id="cancelRestoreButton" type="button">取消</button><button class="dialog-primary" id="confirmRestoreButton" type="button">恢复选中文件</button></div></footer></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260829.4" defer></script>
+    <script src="/assets/app.bundle.js?v=20260830.1" defer></script>
   </body>
 </html>

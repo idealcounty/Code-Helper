@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from coding_agent.config import AppConfig
 from coding_agent.events import AgentEvent
@@ -37,6 +40,10 @@ def test_health_and_static_index() -> None:
     assert index.headers["cache-control"] == "no-store, max-age=0"
     assert "浏览文件夹" in index.text
     assert "代码编辑区" in index.text
+    assert 'id="userMenuButton"' in index.text
+    assert 'id="settingsPage"' in index.text
+    assert 'id="settingsApiKey"' in index.text
+    assert 'id="settingsSkillsList"' in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
     assert rendering_script.status_code == 200
@@ -69,9 +76,113 @@ def test_health_and_static_index() -> None:
     assert "code-helper.panel-layout.v1" in frontend_bundle.text
     assert "initializePanelResizers" in frontend_bundle.text
     assert "localStorage.setItem(PANEL_LAYOUT_KEY" in frontend_bundle.text
+    assert "code-helper.workspace-state.v1" in frontend_bundle.text
+    assert "saveWorkspaceState" in frontend_bundle.text
+    assert "restoreLastWorkspace" in frontend_bundle.text
+    assert "已恢复上次工作区" in frontend_bundle.text
+    assert 'api("/api/settings")' in frontend_bundle.text
+    assert "saveSettings" in frontend_bundle.text
+    assert "browseDefaultWorkspace" in frontend_bundle.text
+    assert "approvalPolicy" not in frontend_bundle.text.split("function saveWorkspaceState()", 1)[1].split("function clearWorkspaceState()", 1)[0]
     assert "copyTextToClipboard" in frontend_bundle.text
     assert "window.pywebview?.api?.copy_text" in frontend_bundle.text
     assert ':scope > .tree-children' not in frontend_bundle.text
+
+
+def test_shared_password_protects_http_and_websocket() -> None:
+    application = create_app(
+        _config(),
+        access_username="reviewer",
+        access_password="long-test-password",
+    )
+    token = base64.b64encode(b"reviewer:long-test-password").decode("ascii")
+    with TestClient(application) as client:
+        missing = client.get("/")
+        wrong = client.get("/", auth=("reviewer", "wrong"))
+        allowed = client.get("/", auth=("reviewer", "long-test-password"))
+        with pytest.raises(WebSocketDisconnect) as denied_socket:
+            with client.websocket_connect("/ws/sessions/missing"):
+                pass
+        with pytest.raises(WebSocketDisconnect) as missing_session:
+            with client.websocket_connect(
+                "/ws/sessions/missing",
+                headers={"Authorization": f"Basic {token}"},
+            ):
+                pass
+
+    assert missing.status_code == 401
+    assert missing.headers["www-authenticate"].startswith("Basic")
+    assert wrong.status_code == 401
+    assert allowed.status_code == 200
+    assert denied_socket.value.code == 4401
+    assert missing_session.value.code == 4404
+
+
+def test_server_workspace_root_blocks_other_directories(tmp_path: Path) -> None:
+    allowed_root = tmp_path / "workspaces"
+    project = allowed_root / "demo"
+    outside = tmp_path / "private"
+    project.mkdir(parents=True)
+    outside.mkdir()
+    config = AppConfig(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        server_workspace_root=allowed_root,
+    )
+
+    with TestClient(create_app(config)) as client:
+        root_listing = client.get("/api/fs/browse")
+        blocked_browse = client.get("/api/fs/browse", params={"path": str(outside)})
+        blocked_session = client.post(
+            "/api/sessions", json={"workspace": str(outside), "mode": "ask"}
+        )
+        allowed_session = client.post(
+            "/api/sessions", json={"workspace": str(project), "mode": "ask"}
+        )
+
+    assert root_listing.status_code == 200
+    assert root_listing.json()["path"] == str(allowed_root.resolve())
+    assert root_listing.json()["parent"] is None
+    assert [item["name"] for item in root_listing.json()["entries"]] == ["demo"]
+    assert blocked_browse.status_code == 400
+    assert blocked_session.status_code == 400
+    assert "server workspace root" in blocked_session.json()["detail"]
+    assert allowed_session.status_code == 200
+
+
+def test_settings_api_persists_defaults_without_returning_secret(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    with TestClient(create_app(_config(), settings_path=settings_path)) as client:
+        initial = client.get("/api/settings")
+        skill_names = [item["name"] for item in initial.json()["skills"]]
+        selected = skill_names[:1]
+        updated = client.post(
+            "/api/settings",
+            json={
+                "api_key": "new-private-key",
+                "default_workspace": str(tmp_path),
+                "default_mode": "plan",
+                "default_reasoning_profile": "balanced",
+                "default_task_profile": "algorithm",
+                "default_approval_policy": "auto",
+                "enabled_skills": selected,
+            },
+        )
+        created = client.post("/api/sessions", json={"workspace": str(tmp_path)})
+        health = client.get("/api/health")
+
+    assert updated.status_code == 200
+    assert updated.json()["api_key_configured"] is True
+    assert updated.json()["api_key_hint"].endswith("-key")
+    assert "new-private-key" not in updated.text
+    assert created.json()["mode"] == "plan"
+    assert created.json()["reasoning_profile"] == "balanced"
+    assert created.json()["task_profile"] == "algorithm"
+    assert created.json()["approval_policy"] == "auto"
+    assert health.json()["api_key_configured"] is True
+    persisted = settings_path.read_text(encoding="utf-8")
+    assert "new-private-key" in persisted
+    assert '"enabled_skills"' in persisted
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:

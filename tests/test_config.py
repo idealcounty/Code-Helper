@@ -27,7 +27,14 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_EVENT_STORE_MAX_BYTES",
     "CODE_HELPER_EVENT_STORE_MAX_FILES",
     "DEEPSEEK_API_KEY",
+    "CODE_HELPER_SETTINGS_PATH",
+    "CODE_HELPER_WORKSPACE_ROOT",
 }
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_settings(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CODE_HELPER_SETTINGS_PATH", str(tmp_path / "settings.json"))
 
 
 def _clear_config_environment(monkeypatch) -> None:
@@ -96,6 +103,38 @@ def test_reasoning_profiles_are_normalized(monkeypatch) -> None:
     assert AppConfig.from_env().reasoning_effort == "high"
     monkeypatch.setenv("CODE_HELPER_REASONING_EFFORT", "auto")
     assert AppConfig.from_env().reasoning_effort is None
+
+
+def test_persisted_ui_settings_override_defaults(tmp_path: Path, monkeypatch) -> None:
+    settings = tmp_path / "ui-settings.json"
+    settings.write_text(
+        '{"api_key":"saved-key","default_workspace":"%s",'
+        '"default_mode":"plan","default_reasoning_profile":"balanced",'
+        '"default_task_profile":"algorithm","default_approval_policy":"auto",'
+        '"enabled_skills":["bug-fix"]}' % str(tmp_path).replace("\\", "\\\\"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODE_HELPER_API_KEY", "environment-key")
+
+    config = AppConfig.from_env(settings)
+
+    assert config.api_key == "saved-key"
+    assert config.default_workspace == tmp_path.resolve()
+    assert config.default_mode == "plan"
+    assert config.reasoning_effort == "medium"
+    assert config.default_task_profile == "algorithm"
+    assert config.default_approval_policy == "auto"
+    assert config.enabled_skills == ("bug-fix",)
+
+
+def test_server_workspace_root_is_loaded_from_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CODE_HELPER_WORKSPACE_ROOT", str(tmp_path))
+
+    config = AppConfig.from_env()
+
+    assert config.server_workspace_root == tmp_path.resolve()
 
 
 def test_run_budget_settings_are_loaded(monkeypatch) -> None:

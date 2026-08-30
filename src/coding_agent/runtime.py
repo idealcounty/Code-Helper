@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 
 from .agent_loop import AgentRunner, ApprovalHandler
 from .budget import RunBudget
@@ -82,6 +83,19 @@ async def _task_end_evidence_hook(summary: dict[str, object]) -> HookDecision | 
     return None
 
 
+def _skills_root(
+    module_file: Path | None = None,
+    *,
+    frozen: bool | None = None,
+) -> Path:
+    """Locate project skills in both source and PyInstaller layouts."""
+    path = (module_file or Path(__file__)).resolve()
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if is_frozen:
+        return path.parent.parent / "skills"
+    return path.parents[2] / "skills"
+
+
 def create_runtime(
     *,
     config: AppConfig,
@@ -114,7 +128,10 @@ def create_runtime(
         event_bus.subscribe(event_listener)
 
     registry = ToolRegistry()
-    skill_library = SkillLibrary(Path(__file__).resolve().parents[2] / "skills")
+    skill_library = SkillLibrary(
+        _skills_root(),
+        enabled=set(config.enabled_skills) if config.enabled_skills is not None else None,
+    )
     memory_store = MemoryStore(
         workspace.root / ".code-helper" / "memory",
         workspace_root=workspace.root,
