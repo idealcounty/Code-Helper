@@ -64,6 +64,9 @@ def test_health_and_static_index() -> None:
     assert 'id="questionNavigatorList"' in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
+    assert "restrained-tech visual hierarchy enhancement" in modern_styles.text
+    assert ".thread-item.active .thread-copy strong" in modern_styles.text
+    assert ".activity-item.warning" in modern_styles.text
     assert ".layout-focus .assistant-pane { grid-column: 3; grid-row: 1;" in modern_styles.text
     assert "grid-template-rows: 64px 42px minmax(0, 1fr) 25px" in modern_styles.text
     assert rendering_script.status_code == 200
