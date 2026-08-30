@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/modern.css?v=20260830.3" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260830.4" />
   </head>
   <body>
     <div class="app-shell">
@@ -39,6 +39,8 @@
           <nav class="focus-utility-nav" aria-label="辅助界面">
             <button id="focusFilesButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z" /></svg><span>浏览文件</span><kbd>F</kbd></button>
             <button id="focusTraceButton" type="button"><svg viewBox="0 0 24 24"><path d="M5 5v14M9 8h10M9 12h7M9 16h9" /></svg><span>执行轨迹</span></button>
+            <button id="focusPlanButton" type="button"><svg viewBox="0 0 24 24"><path d="M6 5h12M6 12h12M6 19h8" /></svg><span>计划</span></button>
+            <button id="focusIntelligenceButton" type="button"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" /></svg><span>智能</span></button>
             <button id="focusTerminalButton" type="button"><svg viewBox="0 0 24 24"><path d="m5 7 4 5-4 5M11 17h8" /></svg><span>终端</span></button>
           </nav>
           <div class="account-dock focus-account-dock">
@@ -90,10 +92,10 @@
           <div class="assistant-header"><div><span class="eyebrow">AGENT THREAD</span><h2 id="assistantTitle">会话与执行</h2></div><button class="new-thread-button" id="newSessionButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>新对话</button></div>
           <div class="thread-strip" id="sessionList"><div class="thread-empty">打开工作区后显示历史对话</div></div>
           <div class="panel-resizer panel-resizer-row" id="threadResizer" data-resize="threads" role="separator" aria-label="调整会话列表高度" aria-orientation="horizontal" aria-valuemin="72" aria-valuemax="360" aria-valuenow="112" tabindex="0" title="拖动调整会话列表与对话区域高度，双击恢复默认"><span></span></div>
-          <nav class="assistant-tabs" aria-label="Agent 面板"><button class="active" data-view="chat" type="button">对话</button><button data-view="trace" type="button">轨迹</button><button data-view="plan" type="button">计划</button><button data-view="intelligence" type="button">智能</button><button data-view="diff" type="button">差异</button><button data-view="terminal" type="button">终端</button></nav>
+          <nav class="assistant-tabs" aria-label="Agent 面板"><button class="active" data-view="chat" type="button">对话</button><button data-view="trace" type="button">轨迹</button><button data-view="plan" type="button">计划</button><button data-view="intelligence" type="button">智能</button><button data-view="terminal" type="button">终端</button></nav>
           <div class="assistant-content">
             <section class="assistant-view chat-view active" id="chatView"><div class="message-list" id="messageList"><div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>和你的代码一起思考</h3><p>选择工作区后，描述你希望理解、修改或验证的任务。</p></div></div><div class="composer"><textarea id="messageInput" rows="3" placeholder="向 Agent 提问，使用 @path 引用文件…" disabled></textarea><div class="composer-footer"><span><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span><div><button class="stop-button" id="cancelButton" type="button" disabled>停止</button><button class="send-button" id="sendButton" type="button" disabled aria-label="发送任务"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5" /></svg></button></div></div></div></section>
-            <section class="assistant-view" id="traceView"><div class="view-toolbar"><span>LIVE TRACE</span><strong id="stepCounter">STEP 0</strong></div><div class="activity-list" id="activityList"><div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div></div></section>
+            <section class="assistant-view" id="traceView"><div class="view-toolbar"><span>LIVE TRACE</span><div><strong id="stepCounter">STEP 0</strong><button class="text-button danger" id="restoreButton" type="button" disabled>回滚本轮</button></div></div><div class="activity-list" id="activityList"><div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div></div></section>
             <section class="assistant-view" id="planView"><div class="view-toolbar"><span>EXECUTION PLAN</span><strong id="planProgress">0 / 0</strong></div><div class="plan-list" id="planList"><div class="view-empty">当前会话还没有执行计划。</div></div></section>
             <section class="assistant-view" id="intelligenceView">
               <div class="view-toolbar"><span>CONTEXT INTELLIGENCE</span><div><button class="text-button" id="exportTraceButton" type="button" disabled>导出 Trace</button><button class="text-button" id="refreshIntelligenceButton" type="button">刷新</button></div></div>
@@ -101,7 +103,6 @@
                 <div class="view-empty">打开工作区后查看上下文与工作流状态。</div>
               </div>
             </section>
-            <section class="assistant-view" id="diffViewPane"><div class="view-toolbar"><span>GIT DIFF</span><div><button class="text-button danger" id="restoreButton" type="button" disabled>回滚本轮</button><button class="text-button" id="refreshDiffButton" type="button" disabled>刷新</button></div></div><pre class="diff-view" id="diffView">暂无变更</pre></section>
             <section class="assistant-view" id="terminalView"><div class="view-toolbar"><span>AGENT TERMINAL</span><button class="text-button" id="copyTerminalButton" type="button">复制</button></div><div class="terminal-output" id="terminalOutput"><div class="terminal-line dim">Agent 执行的命令和输出将在这里镜像显示。</div></div></section>
           </div>
           <div class="assistant-status"><div class="run-status" id="runStatus"><i></i><span>未连接</span></div><span id="providerLabel">MODEL · CHECKING</span></div>
@@ -201,6 +202,6 @@
       <div class="restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restoreTitle"><header><div><span class="eyebrow">CHECKPOINT RESTORE</span><h2 id="restoreTitle">选择要恢复的文件</h2></div><button class="icon-button" id="closeRestoreButton" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header><div class="restore-body"><div class="restore-file-list" id="restoreFileList"></div><pre class="restore-preview" id="restorePreviewDiff">选择文件查看恢复差异。</pre></div><footer><span>外部修改会要求二次确认</span><div><button class="dialog-secondary" id="cancelRestoreButton" type="button">取消</button><button class="dialog-primary" id="confirmRestoreButton" type="button">恢复选中文件</button></div></footer></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260830.3" defer></script>
+    <script src="/assets/app.bundle.js?v=20260830.4" defer></script>
   </body>
 </html>

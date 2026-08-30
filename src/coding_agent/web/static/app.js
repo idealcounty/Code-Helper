@@ -1,6 +1,6 @@
 const PANEL_LAYOUT_KEY = "code-helper.panel-layout.v1";
 const WORKSPACE_STATE_KEY = "code-helper.workspace-state.v1";
-const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence", "diff", "terminal"]);
+const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence", "terminal"]);
 const RESTORABLE_MODES = new Set(["act", "plan", "ask"]);
 const RESTORABLE_REASONING = new Set(["auto", "fast", "balanced", "deep"]);
 const RESTORABLE_TASK_PROFILES = new Set(["auto", "project", "algorithm"]);
@@ -56,7 +56,7 @@ const state = {
 
 const elements = Object.fromEntries([
   "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect", "workbench",
-  "conversationsPane", "focusSessionList", "focusNewSessionButton", "focusFilesButton", "focusTraceButton", "focusTerminalButton",
+  "conversationsPane", "focusSessionList", "focusNewSessionButton", "focusFilesButton", "focusTraceButton", "focusPlanButton", "focusIntelligenceButton", "focusTerminalButton",
   "focusWorkspaceTitle", "focusUserMenuButton", "focusAccountStatus", "closeFilePanelButton", "assistantTitle",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
@@ -65,8 +65,7 @@ const elements = Object.fromEntries([
   "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
   "explorerResizer", "assistantResizer", "threadResizer",
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
-  "stepCounter", "activityList", "planProgress", "planList", "diffView",
-  "refreshDiffButton", "restoreButton", "terminalOutput", "copyTerminalButton",
+  "stepCounter", "activityList", "planProgress", "planList", "restoreButton", "terminalOutput", "copyTerminalButton",
   "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
@@ -365,6 +364,8 @@ function syncFocusLayoutState() {
   elements.closeFilePanelButton.classList.toggle("hidden", state.layoutMode !== "focus");
   elements.focusFilesButton.classList.toggle("active", elements.workbench.classList.contains("focus-explorer-open"));
   elements.focusTraceButton.classList.toggle("active", state.activeView === "trace");
+  elements.focusPlanButton.classList.toggle("active", state.activeView === "plan");
+  elements.focusIntelligenceButton.classList.toggle("active", state.activeView === "intelligence");
   elements.focusTerminalButton.classList.toggle("active", state.activeView === "terminal");
 }
 
@@ -656,7 +657,6 @@ function enableWorkspaceControls(enabled) {
   elements.messageInput.disabled = !enabled;
   elements.sendButton.disabled = !enabled;
   elements.refreshFilesButton.disabled = !enabled;
-  elements.refreshDiffButton.disabled = !enabled;
   elements.restoreButton.disabled = !enabled;
   elements.newSessionButton.disabled = !enabled;
   elements.focusNewSessionButton.disabled = !enabled;
@@ -670,7 +670,6 @@ function resetConversationSurface() {
   elements.planList.innerHTML = '<div class="view-empty">当前会话还没有执行计划。</div>';
   elements.planProgress.textContent = "0 / 0";
   elements.stepCounter.textContent = "STEP 0";
-  elements.diffView.textContent = "暂无变更";
   elements.terminalOutput.innerHTML = '<div class="terminal-line dim">Agent 执行的命令和输出将在这里镜像显示。</div>';
   streamingAgentMessage = null;
 }
@@ -972,10 +971,21 @@ function formatBytes(size) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function resizeMessageInput() {
+  const input = elements.messageInput;
+  if (!input) return;
+  input.style.height = "auto";
+  const maxHeight = Number.parseFloat(getComputedStyle(input).maxHeight) || 150;
+  const nextHeight = Math.min(maxHeight, input.scrollHeight);
+  input.style.height = `${nextHeight}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
 function insertSelectedFile() {
   if (!state.selectedFilePath) return;
   const existing = elements.messageInput.value.trim();
   elements.messageInput.value = `${existing}${existing ? " " : ""}@${state.selectedFilePath} `;
+  resizeMessageInput();
   elements.messageInput.focus();
   setAssistantView("chat");
 }
@@ -989,6 +999,7 @@ async function sendMessage() {
   const echo = { content, node: addMessage("user", content) };
   state.pendingUserEchoes.push(echo);
   elements.messageInput.value = "";
+  resizeMessageInput();
   try {
     await api(`/api/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content }) });
     if (state.sessionId !== sessionId) return;
@@ -1001,6 +1012,7 @@ async function sendMessage() {
       echo.node?.remove();
     }
     elements.messageInput.value = content;
+    resizeMessageInput();
     showToast(error.message);
   }
 }
@@ -1048,15 +1060,6 @@ async function reconcileRunState(sessionId, { quiet = false, attempt = 0, epoch 
   );
 }
 
-async function refreshDiff() {
-  if (!state.sessionId) return;
-  elements.diffView.textContent = "正在读取差异…";
-  try {
-    const result = await api(`/api/sessions/${state.sessionId}/diff`);
-    elements.diffView.textContent = result.diff || result.error || "暂无变更";
-  } catch (error) { elements.diffView.textContent = error.message; }
-}
-
 async function restoreCheckpoint() {
   if (!state.sessionId || state.running) return;
   try {
@@ -1101,7 +1104,7 @@ async function confirmRestoreSelection() {
     elements.restoreBackdrop.classList.add("hidden");
     state.fileCache.clear();
     showToast(`${result.forced ? "已强制恢复" : "已恢复"} ${result.restored.length} 个文件`);
-    await Promise.all([refreshDiff(), loadRootFiles()]);
+    await loadRootFiles();
     if (state.activeFilePath) await openFile(state.activeFilePath, true);
   } catch (error) { showToast(error.message); }
 }
@@ -1267,7 +1270,7 @@ function handleEvent(event) {
           "success",
         );
       }
-      if (result.metadata?.mutated_files?.length) { state.fileCache.clear(); refreshDiff(); loadRootFiles(); if (state.activeFilePath) openFile(state.activeFilePath, true); }
+      if (result.metadata?.mutated_files?.length) { state.fileCache.clear(); loadRootFiles(); if (state.activeFilePath) openFile(state.activeFilePath, true); }
       refreshIntelligenceIfVisible();
       break;
     }
@@ -1284,7 +1287,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); refreshDiff(); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }
@@ -1713,12 +1716,12 @@ function formatDuration(milliseconds) {
 }
 
 function setAssistantView(view) {
-  state.activeView = view;
-  document.querySelectorAll(".assistant-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  const ids = { chat: "chatView", trace: "traceView", plan: "planView", intelligence: "intelligenceView", diff: "diffViewPane", terminal: "terminalView" };
-  document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[view]));
-  if (view === "diff") refreshDiff();
-  if (view === "intelligence") loadIntelligence();
+  const visibleView = view === "diff" ? "chat" : view;
+  state.activeView = visibleView;
+  document.querySelectorAll(".assistant-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.view === visibleView));
+  const ids = { chat: "chatView", trace: "traceView", plan: "planView", intelligence: "intelligenceView", terminal: "terminalView" };
+  document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[visibleView]));
+  if (visibleView === "intelligence") loadIntelligence();
   syncFocusLayoutState();
   saveWorkspaceState();
 }
@@ -1862,6 +1865,8 @@ elements.newSessionButton.addEventListener("click", () => openWorkspace(state.wo
 elements.focusNewSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
 elements.focusFilesButton.addEventListener("click", () => toggleFocusExplorer());
 elements.focusTraceButton.addEventListener("click", () => setAssistantView("trace"));
+elements.focusPlanButton.addEventListener("click", () => setAssistantView("plan"));
+elements.focusIntelligenceButton.addEventListener("click", () => setAssistantView("intelligence"));
 elements.focusTerminalButton.addEventListener("click", () => setAssistantView("terminal"));
 elements.closeFilePanelButton.addEventListener("click", () => setFilePanelVisible(false));
 elements.sendButton.addEventListener("click", sendMessage);
@@ -1894,7 +1899,6 @@ elements.intelligenceContent.addEventListener("click", handleIntelligenceAction)
 elements.confirmRestoreButton.addEventListener("click", confirmRestoreSelection);
 elements.closeRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
 elements.cancelRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
-elements.refreshDiffButton.addEventListener("click", refreshDiff);
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
 elements.copyTerminalButton.addEventListener("click", () => copyTextToClipboard(elements.terminalOutput.innerText, "终端输出已复制"));
 elements.approveButton.addEventListener("click", () => resolveApproval(true));
@@ -1904,6 +1908,7 @@ elements.closeBrowserButton.addEventListener("click", closeBrowser);
 elements.cancelBrowserButton.addEventListener("click", closeBrowser);
 elements.browserBackdrop.addEventListener("click", (event) => { if (event.target === elements.browserBackdrop) closeBrowser(); });
 elements.browserUpButton.addEventListener("click", () => browseTo(state.browserParent || ""));
+elements.messageInput.addEventListener("input", resizeMessageInput);
 elements.chooseWorkspaceButton.addEventListener("click", async () => {
   const selected = state.browserSelection;
   if (!selected) return;
@@ -1986,6 +1991,7 @@ document.addEventListener("keydown", (event) => {
 async function initializeApplication() {
   initializePanelResizers();
   resetEditor();
+  resizeMessageInput();
   setAssistantView("chat");
   await checkHealth();
   const settings = await loadAppSettings();

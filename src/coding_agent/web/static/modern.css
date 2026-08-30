@@ -203,7 +203,7 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .thread-copy strong { font-size: 10.5px; font-weight: 640; }
 .thread-copy small { color: var(--muted); font-size: 9px; font-weight: 400; }
 .thread-item time { color: var(--faint); font-family: var(--mono); font-size: 8px; }
-.assistant-tabs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 4px 5px; border-bottom: 1px solid var(--line); }
+.assistant-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 4px 5px; border-bottom: 1px solid var(--line); }
 .assistant-tabs button { position: relative; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 9.5px; font-weight: 620; }
 .assistant-tabs button:hover { color: var(--ink); background: #edf0f0; }
 .assistant-tabs button.active { color: var(--ink); background: #e5e9e9; }
@@ -429,7 +429,7 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 /* Focus layout: conversations lead, code appears only as contextual evidence. */
 .workbench.layout-focus { grid-template-columns: var(--explorer-width) 8px minmax(520px, 1fr); }
 .layout-focus .conversations-pane { grid-column: 1; grid-row: 1; display: grid; grid-template-rows: 59px 54px minmax(0, 1fr) auto 58px; background: #f2f4f4; box-shadow: var(--shadow); }
-.layout-focus .assistant-pane { grid-column: 3; grid-row: 1; grid-template-rows: 64px 42px minmax(0, 1fr) 25px; background: #fafbfb; box-shadow: var(--shadow); }
+.layout-focus .assistant-pane { grid-column: 3; grid-row: 1; grid-template-rows: 64px minmax(0, 1fr) 25px; background: #fafbfb; box-shadow: var(--shadow); }
 .layout-focus .editor-pane, .layout-focus .explorer-pane, .layout-focus #assistantResizer { display: none; }
 .layout-focus #explorerResizer { grid-column: 2; grid-row: 1; }
 .layout-focus.has-file-panel { grid-template-columns: var(--explorer-width) 8px minmax(480px, 1fr) 8px minmax(340px, var(--assistant-width)); }
@@ -466,7 +466,7 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .layout-focus .assistant-header { padding-inline: clamp(16px, 3vw, 36px); background: rgba(250,251,251,.95); }
 .layout-focus .assistant-header h2 { font-size: 15px; }.layout-focus .assistant-header .new-thread-button { display: none; }
 .layout-focus .assistant-pane > .thread-strip, .layout-focus .assistant-pane > #threadResizer { display: none; }
-.layout-focus .assistant-tabs { display: flex; justify-content: center; gap: 3px; padding: 5px 12px; background: #f5f6f6; }
+.layout-focus .assistant-tabs { display: none; }
 .layout-focus .assistant-tabs button { min-width: 66px; padding-inline: 10px; }
 .layout-focus .message-list { padding: 28px clamp(24px, 8vw, 112px) 34px; }
 .layout-focus .message { width: min(880px, 100%); margin: 0 auto 22px; }
@@ -475,7 +475,7 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .layout-focus .message.user .message-body { margin-left: clamp(42px, 12%, 120px); }.layout-focus .message.agent .message-body { margin-right: clamp(24px, 8%, 80px); }
 .layout-focus .composer { padding: 12px clamp(24px, 8vw, 112px) 15px; background: linear-gradient(180deg, rgba(250,251,251,.3), #f1f3f3 25%); }
 .layout-focus .composer textarea, .layout-focus .composer-footer { width: min(880px, 100%); margin-inline: auto; }
-.layout-focus .composer textarea { min-height: 84px; padding: 15px 15px 6px; font-size: 12.5px; box-shadow: 0 -8px 28px rgba(30,38,40,.04); }
+.layout-focus .composer textarea { min-height: 44px; max-height: 150px; padding: 11px 15px 6px; font-size: 12.5px; resize: none; overflow-y: hidden; box-shadow: 0 -8px 28px rgba(30,38,40,.04); }
 .layout-focus .composer-footer { min-height: 39px; padding-inline: 12px 6px; }
 .layout-focus .close-file-panel { display: grid; }
 .layout-focus .editor-tabbar { background: #f1f3f3; }.layout-focus .editor-pane { border-color: var(--line-strong); }

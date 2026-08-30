@@ -47,10 +47,14 @@ def test_health_and_static_index() -> None:
     assert 'id="settingsLayoutMode"' in index.text
     assert 'id="focusSessionList"' in index.text
     assert 'id="focusFilesButton"' in index.text
+    assert 'id="focusPlanButton"' in index.text
+    assert 'id="focusIntelligenceButton"' in index.text
+    assert 'data-view="diff"' not in index.text
+    assert 'id="diffViewPane"' not in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
     assert ".layout-focus .assistant-pane { grid-column: 3; grid-row: 1;" in modern_styles.text
-    assert "grid-template-rows: 64px 42px minmax(0, 1fr) 25px" in modern_styles.text
+    assert "grid-template-rows: 64px minmax(0, 1fr) 25px" in modern_styles.text
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text
@@ -92,6 +96,7 @@ def test_health_and_static_index() -> None:
     assert 'return "focusSidebar"' in frontend_bundle.text
     assert 'return "focusFile"' in frontend_bundle.text
     assert "setPointerCapture" in frontend_bundle.text
+    assert "resizeMessageInput" in frontend_bundle.text
     assert "browseDefaultWorkspace" in frontend_bundle.text
     assert "approvalPolicy" not in frontend_bundle.text.split("function saveWorkspaceState()", 1)[1].split("function clearWorkspaceState()", 1)[0]
     assert "copyTextToClipboard" in frontend_bundle.text
