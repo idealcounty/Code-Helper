@@ -1,6 +1,6 @@
 const PANEL_LAYOUT_KEY = "code-helper.panel-layout.v1";
 const WORKSPACE_STATE_KEY = "code-helper.workspace-state.v1";
-const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence", "terminal"]);
+const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence"]);
 const RESTORABLE_MODES = new Set(["act", "plan", "ask"]);
 const RESTORABLE_REASONING = new Set(["auto", "fast", "balanced", "deep"]);
 const RESTORABLE_TASK_PROFILES = new Set(["auto", "project", "algorithm"]);
@@ -56,7 +56,7 @@ const state = {
 
 const elements = Object.fromEntries([
   "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect", "workbench",
-  "conversationsPane", "focusSessionList", "focusNewSessionButton", "focusFilesButton", "focusTraceButton", "focusPlanButton", "focusIntelligenceButton", "focusTerminalButton",
+  "conversationsPane", "focusSessionList", "focusNewSessionButton", "focusFilesButton",
   "focusWorkspaceTitle", "focusUserMenuButton", "focusAccountStatus", "closeFilePanelButton", "assistantTitle",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
@@ -65,7 +65,7 @@ const elements = Object.fromEntries([
   "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
   "explorerResizer", "assistantResizer", "threadResizer",
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
-  "stepCounter", "activityList", "planProgress", "planList", "restoreButton", "terminalOutput", "copyTerminalButton",
+  "stepCounter", "activityList", "planProgress", "planList", "restoreButton",
   "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
@@ -363,10 +363,6 @@ function syncFocusLayoutState() {
   elements.workbench.classList.toggle("has-file-panel", showFilePanel);
   elements.closeFilePanelButton.classList.toggle("hidden", state.layoutMode !== "focus");
   elements.focusFilesButton.classList.toggle("active", elements.workbench.classList.contains("focus-explorer-open"));
-  elements.focusTraceButton.classList.toggle("active", state.activeView === "trace");
-  elements.focusPlanButton.classList.toggle("active", state.activeView === "plan");
-  elements.focusIntelligenceButton.classList.toggle("active", state.activeView === "intelligence");
-  elements.focusTerminalButton.classList.toggle("active", state.activeView === "terminal");
 }
 
 function resizeLayoutKey(kind) {
@@ -670,7 +666,6 @@ function resetConversationSurface() {
   elements.planList.innerHTML = '<div class="view-empty">当前会话还没有执行计划。</div>';
   elements.planProgress.textContent = "0 / 0";
   elements.stepCounter.textContent = "STEP 0";
-  elements.terminalOutput.innerHTML = '<div class="terminal-line dim">Agent 执行的命令和输出将在这里镜像显示。</div>';
   streamingAgentMessage = null;
 }
 
@@ -1390,13 +1385,8 @@ function mirrorCommandResult(result) {
 }
 
 function appendTerminal(text, className = "") {
-  if (!text) return;
-  elements.terminalOutput.querySelector(".dim")?.remove();
-  const line = document.createElement("div");
-  line.className = `terminal-line ${className}`;
-  line.textContent = text;
-  elements.terminalOutput.append(line);
-  elements.terminalOutput.scrollTop = elements.terminalOutput.scrollHeight;
+  // Command output remains available in the trace activity; the dedicated
+  // terminal surface is intentionally not exposed in the compact workspace.
 }
 
 function setRunning(running) {
@@ -1716,10 +1706,10 @@ function formatDuration(milliseconds) {
 }
 
 function setAssistantView(view) {
-  const visibleView = view === "diff" ? "chat" : view;
+  const visibleView = RESTORABLE_VIEWS.has(view) ? view : "chat";
   state.activeView = visibleView;
   document.querySelectorAll(".assistant-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.view === visibleView));
-  const ids = { chat: "chatView", trace: "traceView", plan: "planView", intelligence: "intelligenceView", terminal: "terminalView" };
+  const ids = { chat: "chatView", trace: "traceView", plan: "planView", intelligence: "intelligenceView" };
   document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[visibleView]));
   if (visibleView === "intelligence") loadIntelligence();
   syncFocusLayoutState();
@@ -1864,10 +1854,6 @@ elements.copyFileButton.addEventListener("click", () => copyTextToClipboard(stat
 elements.newSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
 elements.focusNewSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
 elements.focusFilesButton.addEventListener("click", () => toggleFocusExplorer());
-elements.focusTraceButton.addEventListener("click", () => setAssistantView("trace"));
-elements.focusPlanButton.addEventListener("click", () => setAssistantView("plan"));
-elements.focusIntelligenceButton.addEventListener("click", () => setAssistantView("intelligence"));
-elements.focusTerminalButton.addEventListener("click", () => setAssistantView("terminal"));
 elements.closeFilePanelButton.addEventListener("click", () => setFilePanelVisible(false));
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
@@ -1900,7 +1886,6 @@ elements.confirmRestoreButton.addEventListener("click", confirmRestoreSelection)
 elements.closeRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
 elements.cancelRestoreButton.addEventListener("click", () => elements.restoreBackdrop.classList.add("hidden"));
 elements.restoreButton.addEventListener("click", restoreCheckpoint);
-elements.copyTerminalButton.addEventListener("click", () => copyTextToClipboard(elements.terminalOutput.innerText, "终端输出已复制"));
 elements.approveButton.addEventListener("click", () => resolveApproval(true));
 elements.grantButton.addEventListener("click", () => resolveApproval(true, "session"));
 elements.denyButton.addEventListener("click", () => resolveApproval(false));

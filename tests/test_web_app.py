@@ -47,14 +47,20 @@ def test_health_and_static_index() -> None:
     assert 'id="settingsLayoutMode"' in index.text
     assert 'id="focusSessionList"' in index.text
     assert 'id="focusFilesButton"' in index.text
-    assert 'id="focusPlanButton"' in index.text
-    assert 'id="focusIntelligenceButton"' in index.text
+    assert 'data-view="chat"' in index.text
+    assert 'data-view="trace"' in index.text
+    assert 'data-view="plan"' in index.text
+    assert 'data-view="intelligence"' in index.text
     assert 'data-view="diff"' not in index.text
+    assert 'data-view="terminal"' not in index.text
     assert 'id="diffViewPane"' not in index.text
+    assert 'id="terminalView"' not in index.text
+    assert 'id="focusTraceButton"' not in index.text
+    assert 'id="focusTerminalButton"' not in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
     assert ".layout-focus .assistant-pane { grid-column: 3; grid-row: 1;" in modern_styles.text
-    assert "grid-template-rows: 64px minmax(0, 1fr) 25px" in modern_styles.text
+    assert "grid-template-rows: 64px 42px minmax(0, 1fr) 25px" in modern_styles.text
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text
