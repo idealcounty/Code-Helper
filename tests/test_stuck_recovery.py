@@ -142,6 +142,86 @@ def test_repeated_patch_with_progress_is_not_marked_stuck(tmp_path: Path) -> Non
     assert StuckDetector().is_stuck(actions) is False
 
 
+def test_sequential_successful_patches_to_same_file_complete_normally(
+    tmp_path: Path,
+) -> None:
+    """Several edits to one file are progress, not an identical-action loop."""
+    path = tmp_path / "sample.py"
+    path.write_text("first = 0\nsecond = 0\nthird = 0\n", encoding="utf-8")
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("read-1", "read_file", {"path": "sample.py"})]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "edit-1",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "first = 0",
+                            "new_text": "first = 1",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "edit-2",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "second = 0",
+                            "new_text": "second = 2",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "edit-3",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "third = 0",
+                            "new_text": "third = 3",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "verify-1",
+                        "run_command",
+                        {
+                            "command": "python -c \"from pathlib import Path; assert 'third = 3' in Path('sample.py').read_text()\"",
+                            "purpose": "verify",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(content="All requested edits are complete."),
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    runner.project_verification_commands = (
+        "python -c \"from pathlib import Path; assert 'third = 3' in Path('sample.py').read_text()\"",
+    )
+    state = AgentState.create(session_id="session", max_steps=8, mode="act")
+
+    result = asyncio.run(runner.run_turn(state, "Update all three values"))
+
+    assert result.status is AgentStatus.COMPLETED
+    assert path.read_text(encoding="utf-8") == (
+        "first = 1\nsecond = 2\nthird = 3\n"
+    )
+    assert not any(event["type"] == "stuck_terminal" for event in store.load())
+
+
 def test_duplicate_successful_write_is_reported_without_reapplying(
     tmp_path: Path,
 ) -> None:
