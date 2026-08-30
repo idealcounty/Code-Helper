@@ -42,6 +42,7 @@ class AppConfig:
     default_reasoning_profile: str = "auto"
     default_task_profile: str = "auto"
     default_approval_policy: str = "ask"
+    default_layout_mode: str = "editor"
     enabled_skills: tuple[str, ...] | None = None
     server_workspace_root: Path | None = None
 
@@ -150,6 +151,9 @@ class AppConfig:
             ),
             default_approval_policy=_settings_choice(
                 settings, "default_approval_policy", {"ask", "auto", "full"}, "ask"
+            ),
+            default_layout_mode=_settings_choice(
+                settings, "default_layout_mode", {"editor", "focus"}, "editor"
             ),
             enabled_skills=normalized_skills,
             server_workspace_root=_optional_path("CODE_HELPER_WORKSPACE_ROOT"),

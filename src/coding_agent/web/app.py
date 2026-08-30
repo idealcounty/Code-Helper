@@ -311,6 +311,7 @@ class AppSettingsRequest(BaseModel):
     default_reasoning_profile: Literal["auto", "fast", "balanced", "deep"] = "auto"
     default_task_profile: Literal["auto", "project", "algorithm"] = "auto"
     default_approval_policy: Literal["ask", "auto", "full"] = "ask"
+    default_layout_mode: Literal["editor", "focus"] = "editor"
     enabled_skills: list[str] = Field(default_factory=list, max_length=100)
 
 
@@ -501,6 +502,7 @@ def create_app(
             "default_reasoning_profile": config_view.default_reasoning_profile,
             "default_task_profile": config_view.default_task_profile,
             "default_approval_policy": config_view.default_approval_policy,
+            "default_layout_mode": config_view.default_layout_mode,
             "skills": [
                 {**item.to_dict(), "enabled": item.name in enabled}
                 for item in available
@@ -554,6 +556,7 @@ def create_app(
             default_reasoning_profile=request.default_reasoning_profile,
             default_task_profile=request.default_task_profile,
             default_approval_policy=request.default_approval_policy,
+            default_layout_mode=request.default_layout_mode,
             enabled_skills=tuple(requested_skills),
         )
 
@@ -568,6 +571,7 @@ def create_app(
             "default_reasoning_profile": request.default_reasoning_profile,
             "default_task_profile": request.default_task_profile,
             "default_approval_policy": request.default_approval_policy,
+            "default_layout_mode": request.default_layout_mode,
             "enabled_skills": requested_skills,
         })
         try:

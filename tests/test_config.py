@@ -111,6 +111,7 @@ def test_persisted_ui_settings_override_defaults(tmp_path: Path, monkeypatch) ->
         '{"api_key":"saved-key","default_workspace":"%s",'
         '"default_mode":"plan","default_reasoning_profile":"balanced",'
         '"default_task_profile":"algorithm","default_approval_policy":"auto",'
+        '"default_layout_mode":"focus",'
         '"enabled_skills":["bug-fix"]}' % str(tmp_path).replace("\\", "\\\\"),
         encoding="utf-8",
     )
@@ -124,6 +125,7 @@ def test_persisted_ui_settings_override_defaults(tmp_path: Path, monkeypatch) ->
     assert config.reasoning_effort == "medium"
     assert config.default_task_profile == "algorithm"
     assert config.default_approval_policy == "auto"
+    assert config.default_layout_mode == "focus"
     assert config.enabled_skills == ("bug-fix",)
 
 

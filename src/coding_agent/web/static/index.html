@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/modern.css?v=20260830.1" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260830.2" />
   </head>
   <body>
     <div class="app-shell">
@@ -29,6 +29,27 @@
       </header>
 
       <main class="workbench" id="workbench">
+        <aside class="pane conversations-pane" id="conversationsPane" aria-label="会话导航">
+          <div class="conversation-rail-header">
+            <div><span class="eyebrow">THREADS</span><h1>对话</h1></div>
+            <button class="icon-button focus-new-thread" id="focusNewSessionButton" type="button" aria-label="新建对话" disabled><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></button>
+          </div>
+          <div class="focus-workspace-chip"><span class="workspace-dot"></span><div><strong id="focusWorkspaceTitle">尚未打开项目</strong><small>LOCAL WORKSPACE</small></div></div>
+          <div class="thread-strip focus-thread-strip" id="focusSessionList"><div class="thread-empty">打开工作区后显示历史对话</div></div>
+          <nav class="focus-utility-nav" aria-label="辅助界面">
+            <button id="focusFilesButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z" /></svg><span>浏览文件</span><kbd>F</kbd></button>
+            <button id="focusTraceButton" type="button"><svg viewBox="0 0 24 24"><path d="M5 5v14M9 8h10M9 12h7M9 16h9" /></svg><span>执行轨迹</span></button>
+            <button id="focusTerminalButton" type="button"><svg viewBox="0 0 24 24"><path d="m5 7 4 5-4 5M11 17h8" /></svg><span>终端</span></button>
+          </nav>
+          <div class="account-dock focus-account-dock">
+            <button class="account-button" id="focusUserMenuButton" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="account-avatar" aria-hidden="true">CH</span>
+              <span class="account-copy"><strong>Code Helper</strong><small id="focusAccountStatus">本地工作区</small></span>
+              <svg class="account-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 14 4-4 4 4" /></svg>
+            </button>
+          </div>
+        </aside>
+
         <aside class="pane explorer-pane" aria-label="资源管理器">
           <div class="pane-titlebar">
             <div><span class="eyebrow">WORKSPACE</span><h1 id="workspaceTitle">资源管理器</h1></div>
@@ -54,7 +75,7 @@
           <div class="editor-tabbar" id="editorTabs"><div class="editor-tab-placeholder">没有打开的文件</div></div>
           <div class="editor-toolbar">
             <div class="breadcrumbs" id="editorBreadcrumbs">选择左侧文件以预览代码</div>
-            <div class="editor-actions"><span class="language-badge" id="editorLanguage">—</span><button class="icon-button" id="copyFileButton" type="button" aria-label="复制文件内容" disabled><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V5H5v11h3" /></svg></button><button class="icon-button" id="reloadFileButton" type="button" aria-label="重新加载文件" disabled><svg viewBox="0 0 24 24"><path d="M19 8a7 7 0 1 0 1 6M19 4v4h-4" /></svg></button></div>
+            <div class="editor-actions"><span class="language-badge" id="editorLanguage">—</span><button class="icon-button" id="copyFileButton" type="button" aria-label="复制文件内容" disabled><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V5H5v11h3" /></svg></button><button class="icon-button" id="reloadFileButton" type="button" aria-label="重新加载文件" disabled><svg viewBox="0 0 24 24"><path d="M19 8a7 7 0 1 0 1 6M19 4v4h-4" /></svg></button><button class="icon-button close-file-panel" id="closeFilePanelButton" type="button" aria-label="关闭文件检查器"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
           </div>
           <div class="editor-stage" id="editorStage">
             <div class="editor-empty" id="editorEmpty"><div class="editor-symbol" aria-hidden="true"><span>&lt;</span><i>/</i><span>&gt;</span></div><h2>代码将在这里打开</h2><p>从左侧资源管理器选择文件。你可以同时打开多个文件，并通过标签页切换。</p><div class="editor-shortcuts"><kbd>Ctrl</kbd><span>+</span><kbd>P</kbd><em>快速打开（规划中）</em></div></div>
@@ -66,7 +87,7 @@
         <div class="panel-resizer panel-resizer-column" id="assistantResizer" data-resize="assistant" role="separator" aria-label="调整对话与执行栏宽度" aria-orientation="vertical" aria-valuemin="300" aria-valuemax="640" aria-valuenow="420" tabindex="0" title="拖动调整对话、轨迹与执行栏宽度，双击恢复默认"><span></span></div>
 
         <aside class="pane assistant-pane" aria-label="Agent 对话">
-          <div class="assistant-header"><div><span class="eyebrow">AGENT THREADS</span><h2>会话与执行</h2></div><button class="new-thread-button" id="newSessionButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>新对话</button></div>
+          <div class="assistant-header"><div><span class="eyebrow">AGENT THREAD</span><h2 id="assistantTitle">会话与执行</h2></div><button class="new-thread-button" id="newSessionButton" type="button" disabled><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>新对话</button></div>
           <div class="thread-strip" id="sessionList"><div class="thread-empty">打开工作区后显示历史对话</div></div>
           <div class="panel-resizer panel-resizer-row" id="threadResizer" data-resize="threads" role="separator" aria-label="调整会话列表高度" aria-orientation="horizontal" aria-valuemin="72" aria-valuemax="360" aria-valuenow="112" tabindex="0" title="拖动调整会话列表与对话区域高度，双击恢复默认"><span></span></div>
           <nav class="assistant-tabs" aria-label="Agent 面板"><button class="active" data-view="chat" type="button">对话</button><button data-view="trace" type="button">轨迹</button><button data-view="plan" type="button">计划</button><button data-view="intelligence" type="button">智能</button><button data-view="diff" type="button">差异</button><button data-view="terminal" type="button">终端</button></nav>
@@ -98,6 +119,7 @@
             <div><span class="eyebrow">LOCAL PROFILE</span><strong>Code Helper</strong></div>
           </div>
           <nav class="settings-nav" aria-label="设置分区">
+            <button type="button" data-settings-section="settingsLayoutSection"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16M9 10h11"/></svg><span>界面布局</span></button>
             <button class="active" type="button" data-settings-section="settingsModelSection"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5 5 18l2.4-1a7 7 0 0 0 1.7 1l.4 3h5l.4-3a7 7 0 0 0 1.7-1l2.4 1 2-3.5-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg><span>模型与密钥</span></button>
             <button type="button" data-settings-section="settingsWorkspaceSection"><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z"/></svg><span>默认工作区</span></button>
             <button type="button" data-settings-section="settingsAgentSection"><svg viewBox="0 0 24 24"><path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M18 12h3M18.4 5.6l-2.1 2.1"/><rect x="6" y="8" width="12" height="11" rx="3"/><path d="M9.5 13h.1M14.5 13h.1M9.5 16h5"/></svg><span>Agent 默认值</span></button>
@@ -113,8 +135,16 @@
           </header>
 
           <form class="settings-form" id="settingsForm">
+            <section class="settings-section" id="settingsLayoutSection">
+              <div class="settings-section-heading"><span class="settings-index">01</span><div><h2>界面布局</h2><p>在代码优先的编辑器工作台与对话优先的专注界面之间切换。</p></div></div>
+              <div class="settings-card layout-mode-picker" id="settingsLayoutMode">
+                <label class="layout-choice"><input type="radio" name="layout-mode" value="focus"/><span class="layout-preview focus-preview"><i></i><b></b><em></em></span><span><strong>专注对话模式</strong><small>左侧选择对话，中间专注沟通，文件按需从右侧展开。</small></span></label>
+                <label class="layout-choice"><input type="radio" name="layout-mode" value="editor"/><span class="layout-preview editor-preview"><i></i><b></b><em></em></span><span><strong>编辑器模式</strong><small>保留资源管理器、代码编辑器和 Agent 执行栏的三栏布局。</small></span></label>
+              </div>
+            </section>
+
             <section class="settings-section" id="settingsModelSection">
-              <div class="settings-section-heading"><span class="settings-index">01</span><div><h2>模型与 API Key</h2><p>连接 DeepSeek 兼容接口。保存后只显示密钥尾号，不回传完整内容。</p></div></div>
+              <div class="settings-section-heading"><span class="settings-index">02</span><div><h2>模型与 API Key</h2><p>连接 DeepSeek 兼容接口。保存后只显示密钥尾号，不回传完整内容。</p></div></div>
               <div class="settings-card">
                 <div class="setting-row api-key-row">
                   <div class="setting-copy"><label for="settingsApiKey">API Key</label><p id="settingsApiStatus">正在检查密钥状态…</p></div>
@@ -125,14 +155,14 @@
             </section>
 
             <section class="settings-section" id="settingsWorkspaceSection">
-              <div class="settings-section-heading"><span class="settings-index">02</span><div><h2>默认工作区</h2><p>没有可恢复的上次界面时，启动后自动打开此文件夹。</p></div></div>
+              <div class="settings-section-heading"><span class="settings-index">03</span><div><h2>默认工作区</h2><p>没有可恢复的上次界面时，启动后自动打开此文件夹。</p></div></div>
               <div class="settings-card">
                 <div class="setting-block"><label for="settingsDefaultWorkspace">文件夹路径</label><div class="folder-field"><input id="settingsDefaultWorkspace" type="text" placeholder="未设置默认文件夹" autocomplete="off"/><button class="field-action primary" id="browseDefaultWorkspaceButton" type="button">浏览</button></div><div class="setting-inline-actions"><button id="useCurrentWorkspaceButton" type="button">使用当前工作区</button><button id="clearDefaultWorkspaceButton" type="button">取消默认文件夹</button></div></div>
               </div>
             </section>
 
             <section class="settings-section" id="settingsAgentSection">
-              <div class="settings-section-heading"><span class="settings-index">03</span><div><h2>Agent 默认值</h2><p>用于创建新会话；权限、模式和推理强度也会同步到当前空闲会话。</p></div></div>
+              <div class="settings-section-heading"><span class="settings-index">04</span><div><h2>Agent 默认值</h2><p>用于创建新会话；权限、模式和推理强度也会同步到当前空闲会话。</p></div></div>
               <div class="settings-card setting-grid">
                 <label class="select-setting"><span>工作模式</span><small>控制 Agent 是回答、规划还是实际执行</small><select id="settingsMode"><option value="ask">Ask · 只分析回答</option><option value="plan">Plan · 先制定方案</option><option value="act">Act · 执行修改</option></select></label>
                 <label class="select-setting"><span>权限策略</span><small>决定工具操作何时需要人工确认</small><select id="settingsApprovalPolicy"><option value="ask">请求批准</option><option value="auto">帮我批准</option><option value="full">完全放开</option></select></label>
@@ -142,7 +172,7 @@
             </section>
 
             <section class="settings-section" id="settingsSkillsSection">
-              <div class="settings-section-heading"><span class="settings-index">04</span><div><h2>Skills</h2><p>选择 Agent 可以按需加载的工作流。关闭后不会进入新会话的能力目录。</p></div><div class="section-actions"><button id="enableAllSkillsButton" type="button">全选</button><button id="disableAllSkillsButton" type="button">清空</button></div></div>
+              <div class="settings-section-heading"><span class="settings-index">05</span><div><h2>Skills</h2><p>选择 Agent 可以按需加载的工作流。关闭后不会进入新会话的能力目录。</p></div><div class="section-actions"><button id="enableAllSkillsButton" type="button">全选</button><button id="disableAllSkillsButton" type="button">清空</button></div></div>
               <div class="settings-card skills-settings-list" id="settingsSkillsList"><div class="settings-loading">正在读取 Skills…</div></div>
             </section>
           </form>
@@ -171,6 +201,6 @@
       <div class="restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restoreTitle"><header><div><span class="eyebrow">CHECKPOINT RESTORE</span><h2 id="restoreTitle">选择要恢复的文件</h2></div><button class="icon-button" id="closeRestoreButton" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header><div class="restore-body"><div class="restore-file-list" id="restoreFileList"></div><pre class="restore-preview" id="restorePreviewDiff">选择文件查看恢复差异。</pre></div><footer><span>外部修改会要求二次确认</span><div><button class="dialog-secondary" id="cancelRestoreButton" type="button">取消</button><button class="dialog-primary" id="confirmRestoreButton" type="button">恢复选中文件</button></div></footer></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260830.1" defer></script>
+    <script src="/assets/app.bundle.js?v=20260830.2" defer></script>
   </body>
 </html>

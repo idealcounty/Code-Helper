@@ -44,6 +44,9 @@ def test_health_and_static_index() -> None:
     assert 'id="settingsPage"' in index.text
     assert 'id="settingsApiKey"' in index.text
     assert 'id="settingsSkillsList"' in index.text
+    assert 'id="settingsLayoutMode"' in index.text
+    assert 'id="focusSessionList"' in index.text
+    assert 'id="focusFilesButton"' in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
     assert rendering_script.status_code == 200
@@ -82,6 +85,8 @@ def test_health_and_static_index() -> None:
     assert "已恢复上次工作区" in frontend_bundle.text
     assert 'api("/api/settings")' in frontend_bundle.text
     assert "saveSettings" in frontend_bundle.text
+    assert "applyLayoutMode" in frontend_bundle.text
+    assert 'classList.toggle("layout-focus"' in frontend_bundle.text
     assert "browseDefaultWorkspace" in frontend_bundle.text
     assert "approvalPolicy" not in frontend_bundle.text.split("function saveWorkspaceState()", 1)[1].split("function clearWorkspaceState()", 1)[0]
     assert "copyTextToClipboard" in frontend_bundle.text
@@ -165,6 +170,7 @@ def test_settings_api_persists_defaults_without_returning_secret(tmp_path: Path)
                 "default_reasoning_profile": "balanced",
                 "default_task_profile": "algorithm",
                 "default_approval_policy": "auto",
+                "default_layout_mode": "focus",
                 "enabled_skills": selected,
             },
         )
@@ -173,6 +179,7 @@ def test_settings_api_persists_defaults_without_returning_secret(tmp_path: Path)
 
     assert updated.status_code == 200
     assert updated.json()["api_key_configured"] is True
+    assert updated.json()["default_layout_mode"] == "focus"
     assert updated.json()["api_key_hint"].endswith("-key")
     assert "new-private-key" not in updated.text
     assert created.json()["mode"] == "plan"
@@ -183,6 +190,7 @@ def test_settings_api_persists_defaults_without_returning_secret(tmp_path: Path)
     persisted = settings_path.read_text(encoding="utf-8")
     assert "new-private-key" in persisted
     assert '"enabled_skills"' in persisted
+    assert '"default_layout_mode": "focus"' in persisted
 
 
 def test_create_session_for_local_workspace(tmp_path: Path) -> None:

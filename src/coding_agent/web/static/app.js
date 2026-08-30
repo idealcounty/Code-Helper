@@ -4,6 +4,7 @@ const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence", "diff
 const RESTORABLE_MODES = new Set(["act", "plan", "ask"]);
 const RESTORABLE_REASONING = new Set(["auto", "fast", "balanced", "deep"]);
 const RESTORABLE_TASK_PROFILES = new Set(["auto", "project", "algorithm"]);
+const LAYOUT_MODES = new Set(["editor", "focus"]);
 const PANEL_DEFAULTS = Object.freeze({ explorer: 252, assistant: 420, threads: 112 });
 const PANEL_LIMITS = Object.freeze({
   explorer: { min: 180, max: 480 },
@@ -39,11 +40,16 @@ const state = {
   appSettings: null,
   clearApiKey: false,
   settingsOpen: false,
+  layoutMode: "editor",
+  filePanelVisible: false,
+  userMenuAnchor: null,
   panelLayout: loadPanelLayout(),
 };
 
 const elements = Object.fromEntries([
   "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect", "workbench",
+  "conversationsPane", "focusSessionList", "focusNewSessionButton", "focusFilesButton", "focusTraceButton", "focusTerminalButton",
+  "focusWorkspaceTitle", "focusUserMenuButton", "focusAccountStatus", "closeFilePanelButton", "assistantTitle",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
   "refreshFilesButton", "insertFileButton", "explorerPath", "explorerRoot",
   "editorTabs", "editorBreadcrumbs", "editorLanguage", "copyFileButton",
@@ -64,6 +70,7 @@ const elements = Object.fromEntries([
   "settingsApiKey", "settingsApiStatus", "settingsProviderModel", "toggleApiKeyButton", "clearApiKeyButton",
   "settingsDefaultWorkspace", "browseDefaultWorkspaceButton", "useCurrentWorkspaceButton", "clearDefaultWorkspaceButton",
   "settingsMode", "settingsReasoning", "settingsTaskProfile", "settingsApprovalPolicy",
+  "settingsLayoutMode",
   "settingsSkillsList", "enableAllSkillsButton", "disableAllSkillsButton",
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
@@ -104,6 +111,7 @@ function updateSettingsIdentity(settings) {
   elements.accountStatus.textContent = settings.api_key_configured
     ? `${settings.provider} · 已连接`
     : "需要配置 API Key";
+  elements.focusAccountStatus.textContent = elements.accountStatus.textContent;
 }
 
 function renderSettingsSkills(skills) {
@@ -138,6 +146,8 @@ function renderSettingsForm(settings) {
   elements.settingsReasoning.value = settings.default_reasoning_profile;
   elements.settingsTaskProfile.value = settings.default_task_profile;
   elements.settingsApprovalPolicy.value = settings.default_approval_policy;
+  const layoutInput = elements.settingsLayoutMode.querySelector(`input[value="${settings.default_layout_mode || "editor"}"]`);
+  if (layoutInput) layoutInput.checked = true;
   renderSettingsSkills(settings.skills || []);
   updateSettingsIdentity(settings);
 }
@@ -146,6 +156,7 @@ async function loadAppSettings() {
   try {
     const settings = await api("/api/settings");
     renderSettingsForm(settings);
+    applyLayoutMode(settings.default_layout_mode || "editor");
     if (!state.sessionId) {
       elements.modeSelect.value = settings.default_mode;
       elements.reasoningSelect.value = settings.default_reasoning_profile;
@@ -158,12 +169,14 @@ async function loadAppSettings() {
   } catch (error) {
     elements.settingsSkillsList.innerHTML = `<div class="settings-loading">${escapeHtml(error.message)}</div>`;
     elements.accountStatus.textContent = "设置不可用";
+    elements.focusAccountStatus.textContent = "设置不可用";
     return null;
   }
 }
 
 function positionUserMenu() {
-  const anchor = elements.userMenuButton.getBoundingClientRect();
+  const anchorElement = state.userMenuAnchor || elements.userMenuButton;
+  const anchor = anchorElement.getBoundingClientRect();
   const menuWidth = 260;
   const left = Math.min(window.innerWidth - menuWidth - 10, Math.max(10, anchor.left));
   const menuHeight = elements.userMenu.offsetHeight || 120;
@@ -175,13 +188,16 @@ function positionUserMenu() {
 function closeUserMenu() {
   elements.userMenu.classList.add("hidden");
   elements.userMenuButton.setAttribute("aria-expanded", "false");
+  elements.focusUserMenuButton.setAttribute("aria-expanded", "false");
+  state.userMenuAnchor = null;
 }
 
-function toggleUserMenu() {
+function toggleUserMenu(event) {
   const opening = elements.userMenu.classList.contains("hidden");
   if (!opening) return closeUserMenu();
+  state.userMenuAnchor = event?.currentTarget || elements.userMenuButton;
   elements.userMenu.classList.remove("hidden");
-  elements.userMenuButton.setAttribute("aria-expanded", "true");
+  state.userMenuAnchor.setAttribute("aria-expanded", "true");
   positionUserMenu();
   elements.openSettingsButton.focus();
 }
@@ -199,8 +215,9 @@ function closeSettingsPage() {
   state.settingsOpen = false;
   elements.settingsPage.classList.add("hidden");
   elements.workbench.classList.remove("hidden");
+  applyLayoutMode(state.layoutMode);
   applyPanelLayout();
-  elements.userMenuButton.focus();
+  (state.layoutMode === "focus" ? elements.focusUserMenuButton : elements.userMenuButton).focus();
 }
 
 async function syncCurrentSessionDefaults(settings) {
@@ -245,6 +262,7 @@ async function saveSettings(event) {
     default_reasoning_profile: elements.settingsReasoning.value,
     default_task_profile: elements.settingsTaskProfile.value,
     default_approval_policy: elements.settingsApprovalPolicy.value,
+    default_layout_mode: elements.settingsLayoutMode.querySelector('input[name="layout-mode"]:checked')?.value || "editor",
     enabled_skills: enabledSkills,
   };
   elements.saveSettingsButton.disabled = true;
@@ -252,6 +270,7 @@ async function saveSettings(event) {
   try {
     const settings = await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
     renderSettingsForm(settings);
+    applyLayoutMode(settings.default_layout_mode || "editor", { persist: true });
     const synced = await syncCurrentSessionDefaults(settings);
     await checkHealth();
     showToast(synced ? "设置已保存" : "设置已保存；当前任务结束后应用会话默认值");
@@ -332,6 +351,44 @@ function clampPanelValue(value, limits) {
   return Math.round(Math.min(limits.max, Math.max(limits.min, Number(value) || limits.min)));
 }
 
+function syncFocusLayoutState() {
+  const showFilePanel = state.layoutMode === "focus" && state.filePanelVisible && Boolean(state.activeFilePath);
+  elements.workbench.classList.toggle("has-file-panel", showFilePanel);
+  elements.closeFilePanelButton.classList.toggle("hidden", state.layoutMode !== "focus");
+  elements.focusFilesButton.classList.toggle("active", elements.workbench.classList.contains("focus-explorer-open"));
+  elements.focusTraceButton.classList.toggle("active", state.activeView === "trace");
+  elements.focusTerminalButton.classList.toggle("active", state.activeView === "terminal");
+}
+
+function applyLayoutMode(mode, { persist = false } = {}) {
+  const normalized = LAYOUT_MODES.has(mode) ? mode : "editor";
+  const changed = state.layoutMode !== normalized;
+  state.layoutMode = normalized;
+  elements.workbench.classList.toggle("layout-focus", normalized === "focus");
+  elements.workbench.classList.toggle("layout-editor", normalized === "editor");
+  elements.assistantTitle.textContent = normalized === "focus" ? "当前对话" : "会话与执行";
+  if (normalized === "focus" && changed && state.activeFilePath) state.filePanelVisible = true;
+  if (normalized === "editor") elements.workbench.classList.remove("focus-explorer-open");
+  syncFocusLayoutState();
+  applyPanelLayout({ persist });
+}
+
+function toggleFocusExplorer(force) {
+  if (state.layoutMode !== "focus" || !state.workspace) return;
+  const next = typeof force === "boolean"
+    ? force
+    : !elements.workbench.classList.contains("focus-explorer-open");
+  elements.workbench.classList.toggle("focus-explorer-open", next);
+  syncFocusLayoutState();
+  if (next) elements.refreshFilesButton.focus();
+}
+
+function setFilePanelVisible(visible) {
+  state.filePanelVisible = Boolean(visible) && Boolean(state.activeFilePath);
+  syncFocusLayoutState();
+  applyPanelLayout();
+}
+
 function assistantPane() {
   return elements.threadResizer.closest(".assistant-pane");
 }
@@ -355,6 +412,14 @@ function applyPanelLayout({ persist = false } = {}) {
 
   layout.explorer = clampPanelValue(layout.explorer, PANEL_LIMITS.explorer);
   layout.assistant = clampPanelValue(layout.assistant, PANEL_LIMITS.assistant);
+  if (state.layoutMode === "focus") {
+    elements.workbench.style.setProperty("--explorer-width", `${layout.explorer}px`);
+    elements.workbench.style.setProperty("--assistant-width", `${layout.assistant}px`);
+    elements.explorerResizer.setAttribute("aria-valuenow", String(layout.explorer));
+    elements.assistantResizer.setAttribute("aria-valuenow", String(layout.assistant));
+    if (persist) savePanelLayout();
+    return;
+  }
   if (viewportWidth > 930 && workbenchWidth) {
     const maximumSides = Math.max(
       PANEL_LIMITS.explorer.min + PANEL_LIMITS.assistant.min,
@@ -490,6 +555,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     state.pendingApproval = null;
     elements.workspaceInput.value = result.workspace;
     elements.workspaceTitle.textContent = workspaceName(result.workspace);
+    elements.focusWorkspaceTitle.textContent = workspaceName(result.workspace);
     elements.explorerPath.textContent = result.workspace;
     elements.reasoningSelect.value = result.reasoning_profile || elements.reasoningSelect.value;
     elements.taskProfileSelect.value = result.task_profile || elements.taskProfileSelect.value;
@@ -547,6 +613,8 @@ function enableWorkspaceControls(enabled) {
   elements.refreshDiffButton.disabled = !enabled;
   elements.restoreButton.disabled = !enabled;
   elements.newSessionButton.disabled = !enabled;
+  elements.focusNewSessionButton.disabled = !enabled;
+  elements.focusFilesButton.disabled = !enabled;
   elements.approvalPolicySelect.disabled = !enabled;
 }
 
@@ -589,27 +657,31 @@ async function loadWorkspaceSessions() {
     const result = await api(`/api/workspaces/sessions?${params}`);
     renderSessionList(result.sessions || []);
   } catch (error) {
-    elements.sessionList.innerHTML = `<div class="thread-empty">${escapeHtml(error.message)}</div>`;
+    [elements.sessionList, elements.focusSessionList].forEach((container) => {
+      container.innerHTML = `<div class="thread-empty">${escapeHtml(error.message)}</div>`;
+    });
   }
 }
 
 function renderSessionList(sessions) {
-  elements.sessionList.innerHTML = "";
-  if (!sessions.length) {
-    elements.sessionList.innerHTML = '<div class="thread-empty">还没有保存的对话</div>';
-    return;
-  }
-  sessions.forEach((session) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `thread-item ${session.session_id === state.sessionId ? "active" : ""}`;
-    button.innerHTML = `<span class="thread-state ${escapeHtml(session.status)}"></span><span class="thread-copy"><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.preview)}</small></span><time>${formatRelativeTime(session.updated_at)}</time>`;
-    button.addEventListener("click", () => {
-      if (session.session_id !== state.sessionId) {
-        openWorkspace(state.workspace, session.session_id, true);
-      }
+  [elements.sessionList, elements.focusSessionList].forEach((container) => {
+    container.innerHTML = "";
+    if (!sessions.length) {
+      container.innerHTML = '<div class="thread-empty">还没有保存的对话</div>';
+      return;
+    }
+    sessions.forEach((session) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `thread-item ${session.session_id === state.sessionId ? "active" : ""}`;
+      button.innerHTML = `<span class="thread-state ${escapeHtml(session.status)}"></span><span class="thread-copy"><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.preview)}</small></span><time>${formatRelativeTime(session.updated_at)}</time>`;
+      button.addEventListener("click", () => {
+        if (session.session_id !== state.sessionId) {
+          openWorkspace(state.workspace, session.session_id, true);
+        }
+      });
+      container.append(button);
     });
-    elements.sessionList.append(button);
   });
 }
 
@@ -659,6 +731,7 @@ function renderFileEntries(entries, container, depth) {
       if (entry.kind === "file") {
         selectFileRow(row, entry.path);
         await openFile(entry.path);
+        toggleFocusExplorer(false);
         return;
       }
       if (children) {
@@ -705,8 +778,11 @@ async function openFile(path, force = false) {
     }
     if (!state.openFiles.includes(path)) state.openFiles.push(path);
     state.activeFilePath = path;
+    state.filePanelVisible = true;
     renderEditorTabs();
     renderFile(file);
+    syncFocusLayoutState();
+    applyPanelLayout();
     saveWorkspaceState();
   } catch (error) {
     if (error.status === 415) {
@@ -724,8 +800,11 @@ async function openFile(path, force = false) {
       state.fileCache.set(path, file);
       if (!state.openFiles.includes(path)) state.openFiles.push(path);
       state.activeFilePath = path;
+      state.filePanelVisible = true;
       renderEditorTabs();
       renderFile(file);
+      syncFocusLayoutState();
+      applyPanelLayout();
       saveWorkspaceState();
       return;
     }
@@ -746,8 +825,11 @@ function renderEditorTabs() {
     tab.innerHTML = `${iconSvg("file")}<button class="tab-label" type="button">${escapeHtml(path.split("/").at(-1))}</button><button class="tab-close" type="button" aria-label="关闭 ${escapeHtml(path)}">×</button>`;
     tab.querySelector(".tab-label").addEventListener("click", () => {
       state.activeFilePath = path;
+      state.filePanelVisible = true;
       renderEditorTabs();
       renderFile(state.fileCache.get(path));
+      syncFocusLayoutState();
+      applyPanelLayout();
       saveWorkspaceState();
     });
     tab.querySelector(".tab-close").addEventListener("click", () => closeFile(path));
@@ -764,7 +846,12 @@ function closeFile(path) {
   }
   renderEditorTabs();
   if (state.activeFilePath) renderFile(state.fileCache.get(state.activeFilePath));
-  else showEditorEmpty();
+  else {
+    state.filePanelVisible = false;
+    showEditorEmpty();
+  }
+  syncFocusLayoutState();
+  applyPanelLayout();
   saveWorkspaceState();
 }
 
@@ -811,11 +898,13 @@ function resetEditor() {
   state.openFiles = [];
   state.fileCache.clear();
   state.activeFilePath = null;
+  state.filePanelVisible = false;
   state.selectedFilePath = null;
   state.selectedFileRow = null;
   elements.insertFileButton.disabled = true;
   renderEditorTabs();
   showEditorEmpty();
+  syncFocusLayoutState();
 }
 
 function showEditorEmpty() {
@@ -1584,6 +1673,7 @@ function setAssistantView(view) {
   document.querySelectorAll(".assistant-view").forEach((pane) => pane.classList.toggle("active", pane.id === ids[view]));
   if (view === "diff") refreshDiff();
   if (view === "intelligence") loadIntelligence();
+  syncFocusLayoutState();
   saveWorkspaceState();
 }
 
@@ -1723,6 +1813,11 @@ elements.insertFileButton.addEventListener("click", insertSelectedFile);
 elements.reloadFileButton.addEventListener("click", () => state.activeFilePath && openFile(state.activeFilePath, true));
 elements.copyFileButton.addEventListener("click", () => copyTextToClipboard(state.fileCache.get(state.activeFilePath)?.content || "", "文件内容已复制"));
 elements.newSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
+elements.focusNewSessionButton.addEventListener("click", () => openWorkspace(state.workspace, null, true));
+elements.focusFilesButton.addEventListener("click", () => toggleFocusExplorer());
+elements.focusTraceButton.addEventListener("click", () => setAssistantView("trace"));
+elements.focusTerminalButton.addEventListener("click", () => setAssistantView("terminal"));
+elements.closeFilePanelButton.addEventListener("click", () => setFilePanelVisible(false));
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
 elements.messageInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.ctrlKey) { event.preventDefault(); sendMessage(); } });
@@ -1776,6 +1871,7 @@ elements.chooseWorkspaceButton.addEventListener("click", async () => {
   await openWorkspace(selected);
 });
 elements.userMenuButton.addEventListener("click", toggleUserMenu);
+elements.focusUserMenuButton.addEventListener("click", toggleUserMenu);
 elements.openSettingsButton.addEventListener("click", openSettingsPage);
 elements.settingsBackButton.addEventListener("click", closeSettingsPage);
 elements.settingsForm.addEventListener("submit", saveSettings);
@@ -1816,13 +1912,20 @@ document.querySelectorAll("[data-settings-section]").forEach((button) => button.
   document.querySelector(`#${button.dataset.settingsSection}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }));
 document.addEventListener("click", (event) => {
-  if (!elements.userMenu.classList.contains("hidden") && !elements.userMenu.contains(event.target) && !elements.userMenuButton.contains(event.target)) closeUserMenu();
+  if (!elements.userMenu.classList.contains("hidden") && !elements.userMenu.contains(event.target) && !elements.userMenuButton.contains(event.target) && !elements.focusUserMenuButton.contains(event.target)) closeUserMenu();
+  const explorerPane = document.querySelector(".explorer-pane");
+  if (elements.workbench.classList.contains("focus-explorer-open") && !explorerPane.contains(event.target) && !elements.focusFilesButton.contains(event.target)) toggleFocusExplorer(false);
 });
 window.addEventListener("resize", () => { if (!elements.userMenu.classList.contains("hidden")) positionUserMenu(); });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     if (!elements.browserBackdrop.classList.contains("hidden")) closeBrowser();
     else if (!elements.userMenu.classList.contains("hidden")) closeUserMenu();
+    else if (elements.workbench.classList.contains("focus-explorer-open")) toggleFocusExplorer(false);
+  }
+  if (event.altKey && event.key.toLowerCase() === "f" && state.layoutMode === "focus" && !state.settingsOpen) {
+    event.preventDefault();
+    toggleFocusExplorer();
   }
   if (event.ctrlKey && event.key === ",") {
     event.preventDefault();
