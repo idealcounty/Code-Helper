@@ -220,14 +220,27 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .orbit-mark i:nth-child(1) { top: 5px; left: 16px; }.orbit-mark i:nth-child(2) { right: 5px; bottom: 9px; }.orbit-mark i:nth-child(3) { bottom: 8px; left: 6px; }
 .chat-empty h3 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 640; letter-spacing: -.02em; }
 .chat-empty p { max-width: 270px; margin: 7px 0 0; line-height: 1.55; font-size: 10.5px; }
-.message { margin-bottom: 14px; }
-.message-meta { display: flex; align-items: center; justify-content: space-between; margin: 0 5px 5px; color: var(--faint); font-family: var(--mono); font-size: 8px; letter-spacing: .06em; }
-.message-body { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink-soft); background: #fff; line-height: 1.58; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; }
+.message { margin-bottom: 18px; }
+.message-meta { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 6px; color: var(--faint); font-family: var(--mono); font-size: 8px; letter-spacing: .06em; }
+.message-meta span { display: inline-flex; align-items: center; gap: 5px; font-weight: 760; }
+.message-body { padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink-soft); background: #fff; line-height: 1.62; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; }
 .message-body.markdown-body { white-space: normal; overflow-wrap: anywhere; }
-.message.user .message-body { margin-left: 28px; border-color: #cbdde2; background: #edf5f7; }
-.message.agent .message-body { margin-right: 14px; }
+.message.user .message-meta { justify-content: flex-end; color: #28758a; }
+.message.user .message-meta span::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #4f9caf; box-shadow: 0 0 0 3px #e1f0f3; }
+.message.user .message-body { margin-left: 68px; border-color: #afd0d8; background: linear-gradient(145deg, #eef8fa, #e5f1f4); box-shadow: 0 4px 12px rgba(28,114,140,.08); }
+.message.agent .message-meta { justify-content: flex-start; color: #4d6268; }
+.message.agent .message-meta span::before { content: "✦"; width: 17px; height: 17px; display: inline-grid; place-items: center; border: 1px solid #9fc0c8; border-radius: 5px; color: #1c728c; background: #e8f2f4; font-family: var(--ui); font-size: 10px; letter-spacing: 0; }
+.message.agent .message-body { margin-right: 30px; border-color: #c7d5d8; background: #fff; box-shadow: 0 5px 16px rgba(30,45,49,.07); }
 .message.streaming .message-body::after { content: ""; display: inline-block; width: 5px; height: 12px; margin-left: 3px; background: var(--accent); animation: blink 1s steps(1) infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }
+.thinking-indicator { display: flex; align-items: center; gap: 11px; margin: 2px 30px 18px 6px; padding: 11px 14px; border: 1px solid #a9ccd4; border-radius: 11px; color: #315c66; background: linear-gradient(135deg, #f4fbfc, #e7f3f5); box-shadow: 0 5px 16px rgba(28,114,140,.08); }
+.thinking-mark { width: 25px; height: 25px; position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; border: 1px solid #8ebbc5; border-radius: 8px; background: #fff; }
+.thinking-mark i { width: 4px; height: 4px; margin: 0 2px; border-radius: 50%; background: var(--accent); animation: thinking-pulse 1.15s ease-in-out infinite; }
+.thinking-mark i:nth-child(2) { animation-delay: .16s; }.thinking-mark i:nth-child(3) { animation-delay: .32s; }
+.thinking-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.thinking-copy strong { color: #244f59; font-size: 10.5px; font-weight: 760; }
+.thinking-copy span { overflow: hidden; color: #5f7d84; font-family: var(--mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes thinking-pulse { 0%, 80%, 100% { transform: scale(.72); opacity: .42; } 40% { transform: scale(1.15); opacity: 1; } }
 
 .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6,
 .markdown-document h1, .markdown-document h2, .markdown-document h3, .markdown-document h4, .markdown-document h5, .markdown-document h6 { margin: 1.55em 0 .55em; color: #202627; line-height: 1.28; font-weight: 680; letter-spacing: -.025em; }
@@ -471,6 +484,7 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .layout-focus .message-meta { margin-bottom: 7px; }
 .layout-focus .message-body { padding: 14px 16px; border-radius: 12px; font-size: 12.5px; line-height: 1.68; box-shadow: 0 2px 10px rgba(27,34,36,.035); }
 .layout-focus .message.user .message-body { margin-left: clamp(42px, 12%, 120px); }.layout-focus .message.agent .message-body { margin-right: clamp(24px, 8%, 80px); }
+.layout-focus .thinking-indicator { margin-right: clamp(24px, 8%, 80px); }
 .layout-focus .composer { padding: 12px clamp(24px, 8vw, 112px) 15px; background: linear-gradient(180deg, rgba(250,251,251,.3), #f1f3f3 25%); }
 .layout-focus .composer textarea, .layout-focus .composer-footer { width: min(880px, 100%); margin-inline: auto; }
 .layout-focus .composer textarea { min-height: 44px; max-height: 150px; padding: 11px 15px 6px; font-size: 12.5px; resize: none; overflow-y: hidden; box-shadow: 0 -8px 28px rgba(30,38,40,.04); }
@@ -514,6 +528,7 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
   .layout-focus .conversations-pane { grid-column: 1; grid-row: 1; height: auto; }.layout-focus .assistant-pane { grid-column: 2; grid-row: 1; height: auto; min-height: 0; }
   .layout-focus #explorerResizer { display: none; }.layout-focus .assistant-header { padding-inline: 12px; }.layout-focus .assistant-tabs { justify-content: flex-start; overflow-x: auto; }.layout-focus .assistant-tabs button { min-width: 58px; }
   .layout-focus .message-list { padding: 20px 12px 26px; }.layout-focus .message-body { padding: 12px; font-size: 11.5px; }.layout-focus .message.user .message-body { margin-left: 18px; }.layout-focus .message.agent .message-body { margin-right: 8px; }
+  .layout-focus .thinking-indicator { margin-right: 8px; }
   .layout-focus .composer { padding: 10px 10px 12px; }.layout-focus .composer textarea { min-height: 44px; max-height: 150px; }
   .focus-workspace-chip { display: none; }.layout-focus .conversations-pane { grid-template-rows: 59px minmax(0,1fr) auto 58px; }.focus-utility-nav button { grid-template-columns: 20px minmax(0,1fr); }.focus-utility-nav kbd { display: none; }.focus-thread-strip .thread-copy small, .focus-thread-strip .thread-item time { display: none; }
   .layout-focus.focus-explorer-open .explorer-pane { position: fixed; z-index: 60; top: 112px; right: 8px; bottom: 8px; left: 8px; width: auto; height: auto; }

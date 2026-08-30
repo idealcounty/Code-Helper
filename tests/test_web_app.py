@@ -57,6 +57,8 @@ def test_health_and_static_index() -> None:
     assert 'id="terminalView"' not in index.text
     assert 'id="focusTraceButton"' not in index.text
     assert 'id="focusTerminalButton"' not in index.text
+    assert 'id="thinkingIndicator"' in index.text
+    assert 'id="thinkingStatus"' in index.text
     assert modern_styles.status_code == 200
     assert "silver-white engineering workspace" in modern_styles.text
     assert ".layout-focus .assistant-pane { grid-column: 3; grid-row: 1;" in modern_styles.text
@@ -103,6 +105,11 @@ def test_health_and_static_index() -> None:
     assert 'return "focusFile"' in frontend_bundle.text
     assert "setPointerCapture" in frontend_bundle.text
     assert "resizeMessageInput" in frontend_bundle.text
+    assert "showThinkingIndicator" in frontend_bundle.text
+    assert "hideThinkingIndicator" in frontend_bundle.text
+    assert "elements.thinkingIndicator = elements.messageList.querySelector" in frontend_bundle.text
+    assert "case \"assistant_delta\"" in frontend_bundle.text
+    assert ".thinking-indicator" in modern_styles.text
     assert "browseDefaultWorkspace" in frontend_bundle.text
     assert "approvalPolicy" not in frontend_bundle.text.split("function saveWorkspaceState()", 1)[1].split("function clearWorkspaceState()", 1)[0]
     assert "copyTextToClipboard" in frontend_bundle.text

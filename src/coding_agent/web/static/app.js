@@ -64,7 +64,7 @@ const elements = Object.fromEntries([
   "reloadFileButton", "editorEmpty", "codeScroll", "codeLines", "fileStatus",
   "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
   "explorerResizer", "assistantResizer", "threadResizer",
-  "messageList", "messageInput", "sendButton", "cancelButton", "runStatus",
+  "messageList", "messageInput", "sendButton", "cancelButton", "runStatus", "thinkingIndicator", "thinkingStatus",
   "stepCounter", "activityList", "planProgress", "planList", "restoreButton",
   "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
@@ -661,11 +661,14 @@ function enableWorkspaceControls(enabled) {
 }
 
 function resetConversationSurface() {
-  elements.messageList.innerHTML = '<div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>开始一段新的对话</h3><p>描述你希望理解、修改或验证的任务。</p></div>';
+  elements.messageList.innerHTML = '<div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>开始一段新的对话</h3><p>描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div>';
+  elements.thinkingIndicator = elements.messageList.querySelector("#thinkingIndicator");
+  elements.thinkingStatus = elements.messageList.querySelector("#thinkingStatus");
   elements.activityList.innerHTML = '<div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div>';
   elements.planList.innerHTML = '<div class="view-empty">当前会话还没有执行计划。</div>';
   elements.planProgress.textContent = "0 / 0";
   elements.stepCounter.textContent = "STEP 0";
+  hideThinkingIndicator();
   streamingAgentMessage = null;
 }
 
@@ -1191,6 +1194,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     case "run_cancelled":
+      hideThinkingIndicator();
       addActivity("任务已停止", cancellationReason(payload.reason), "failure");
       refreshIntelligenceIfVisible();
       break;
@@ -1199,6 +1203,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     case "run_failed":
+      hideThinkingIndicator();
       addActivity("任务执行失败", `${payload.code || "UNEXPECTED_AGENT_ERROR"} · ${payload.message || ""}`, "failure");
       break;
     case "approval_policy_changed":
@@ -1231,12 +1236,14 @@ function handleEvent(event) {
       break;
     case "model_started": {
       const outputLimit = Number(payload.max_output_tokens || 0);
+      showThinkingIndicator("正在分析你的请求并选择下一步操作…");
       addActivity("模型处理中", `正在选择下一步操作${outputLimit ? ` · 输出上限 ${formatNumber(outputLimit)} tokens` : ""}`);
       break;
     }
     case "model_progress": {
       const elapsed = Number(payload.elapsed_seconds || 0);
       const timeout = Number(payload.request_timeout_seconds || 0);
+      showThinkingIndicator(`已思考 ${elapsed.toFixed(0)} 秒${timeout ? ` · 请求上限 ${timeout} 秒` : ""}`);
       addActivity("模型仍在处理", `已等待 ${elapsed.toFixed(0)} 秒${timeout ? ` · 单次请求上限 ${timeout} 秒` : ""}`, "warning");
       break;
     }
@@ -1282,12 +1289,13 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": hideThinkingIndicator(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }
 
 function finishAssistantResponse(payload) {
+  hideThinkingIndicator();
   if (streamingAgentMessage) {
     const body = streamingAgentMessage.querySelector(".message-body");
     if (body) {
@@ -1315,8 +1323,20 @@ function addMessage(role, content) {
 }
 
 let streamingAgentMessage = null;
+function showThinkingIndicator(detail = "正在分析你的请求并选择下一步操作…") {
+  if (!elements.thinkingIndicator) return;
+  elements.thinkingStatus.textContent = detail;
+  elements.thinkingIndicator.classList.remove("hidden");
+  elements.messageList.scrollTop = elements.messageList.scrollHeight;
+}
+
+function hideThinkingIndicator() {
+  elements.thinkingIndicator?.classList.add("hidden");
+}
+
 function appendStreamingAgentText(content) {
   if (!content) return;
+  hideThinkingIndicator();
   if (!streamingAgentMessage) {
     streamingAgentMessage = addMessage("agent", "");
     if (!streamingAgentMessage) {
