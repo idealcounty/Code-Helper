@@ -1,7 +1,9 @@
 .env
 .env.*
 !.env.example
+!.env.server.example
 .venv/
+.venv-server/
 venv/
 __pycache__/
 *.py[cod]
@@ -16,6 +18,11 @@ build/
 *.egg-info/
 .code-helper/
 .eval-results/
+.eval-results-*/
+.eval-*-check/
+.retrieval-check/
+.server-logs/
+.app-test.*.log
 # Per-run local evaluation/build scratch directories.
 .tmp-*/
 tmp-repro*/
