@@ -107,6 +107,7 @@
 - 恢复时发现 `tool_started` 没有对应结果，会标记 `INTERRUPTED_UNKNOWN` 并生成恢复警告，绝不自动重放工具。
 - EventStore 只容忍尾部半写/损坏行并保留诊断；中间损坏仍拒绝静默恢复。Web Session/Report 会暴露待审批、未知中断和恢复警告。
 - 对缺少 `sequence`、`event_id` 或 `schema_version` 的早期事件，加载时会生成确定性的内存兼容字段；跨进程重启后新事件可继续编号并连接因果链，未来 schema 仍会显式拒绝。
+- 对早期缺少 `session_id`、`turn_id` 或 `payload` 的事件，加载时会补齐由当前 EventStore 唯一确定的字段并写入迁移诊断；非对象 payload 不会被猜测，直接拒绝恢复。
 
 **剩余差距**
 

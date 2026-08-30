@@ -232,6 +232,32 @@ class EventStore:
                 )
             if schema_version is None:
                 parsed["schema_version"] = MIN_SUPPORTED_EVENT_SCHEMA_VERSION
+            # Early writers occasionally omitted envelope fields while still
+            # recording a valid event type. Fill only fields whose safe value
+            # is implied by this EventStore; never infer a missing event type.
+            raw_session_id = parsed.get("session_id")
+            if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+                parsed["session_id"] = self.session_id
+                self.last_load_diagnostics.append(
+                    {"code": "LEGACY_EVENT_SESSION_ID_ASSUMED", "line": line_number}
+                )
+            raw_turn_id = parsed.get("turn_id")
+            if not isinstance(raw_turn_id, str) or not raw_turn_id.strip():
+                parsed["turn_id"] = "legacy-turn-" + _integrity_digest(
+                    {"session_id": self.session_id, "path": self.path.name}
+                )[:16]
+                self.last_load_diagnostics.append(
+                    {"code": "LEGACY_EVENT_TURN_ID_ASSUMED", "line": line_number}
+                )
+            if "payload" not in parsed:
+                parsed["payload"] = {}
+                self.last_load_diagnostics.append(
+                    {"code": "LEGACY_EVENT_PAYLOAD_ASSUMED", "line": line_number}
+                )
+            elif not isinstance(parsed["payload"], dict):
+                raise ValueError(
+                    f"Invalid session event payload at line {line_number}: expected object"
+                )
             events.append(self.redactor.redact(parsed))
         return events
 

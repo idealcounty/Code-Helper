@@ -164,6 +164,36 @@ def test_event_store_migrates_legacy_identity_for_restart(tmp_path: Path) -> Non
     assert resumed.causation_id == loaded[-1]["event_id"]
 
 
+def test_event_store_migrates_legacy_envelope_fields_deterministically(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session")
+    store.path.write_text(
+        json.dumps({"type": "turn_started"}) + "\n"
+        + json.dumps({"type": "context_built", "payload": {}}) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = store.load()
+
+    assert all(item["session_id"] == "session" for item in loaded)
+    assert len({item["turn_id"] for item in loaded}) == 1
+    assert all(item["payload"] == {} for item in loaded)
+    codes = {item["code"] for item in store.last_load_diagnostics}
+    assert "LEGACY_EVENT_SESSION_ID_ASSUMED" in codes
+    assert "LEGACY_EVENT_TURN_ID_ASSUMED" in codes
+    assert "LEGACY_EVENT_PAYLOAD_ASSUMED" in codes
+
+
+def test_event_store_rejects_non_object_legacy_payload(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session")
+    store.path.write_text(
+        json.dumps({"type": "turn_started", "payload": ["unsafe"]}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="payload"):
+        store.load()
+
+
 def test_event_store_rejects_future_schema_without_silent_recovery(tmp_path: Path) -> None:
     store = EventStore(tmp_path, "session")
     future = AgentEvent(type="turn_started", session_id="session", turn_id="turn").to_dict()
