@@ -29,12 +29,16 @@ from ..tools.base import ToolError
 
 
 def _budget_view(runtime: AgentRuntime) -> dict[str, Any]:
-    if runtime.state.run_budget:
-        return runtime.state.run_budget
-    return {
-        **runtime.run_budget.snapshot(),
-        "max_steps": runtime.state.max_steps,
-    }
+    view = dict(runtime.state.run_budget or runtime.run_budget.snapshot())
+    view.setdefault("max_steps", runtime.state.max_steps)
+    view["configured_max_output_tokens"] = runtime.config.max_output_tokens
+    effective = getattr(
+        runtime.runner.model_client, "effective_max_output_tokens", None
+    )
+    view["effective_max_output_tokens"] = (
+        effective if isinstance(effective, int) and not isinstance(effective, bool) else None
+    )
+    return view
 
 
 def _event_timestamp(event: dict[str, Any]) -> datetime | None:

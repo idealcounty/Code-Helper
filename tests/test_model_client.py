@@ -109,6 +109,46 @@ def test_thinking_switch_is_not_sent_to_other_compatible_providers() -> None:
     assert "thinking" not in captured_body
 
 
+def test_client_combines_configured_and_per_request_output_limits() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": "done"}}
+                ]
+            },
+        )
+
+    client = OpenAICompatibleModelClient(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="test",
+        max_output_tokens=120,
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.set_request_output_token_limit(40)
+    asyncio.run(client.complete(messages=[], tools=[]))
+    client.set_request_output_token_limit(None)
+    asyncio.run(client.complete(messages=[], tools=[]))
+
+    assert [body["max_tokens"] for body in bodies] == [40, 120]
+
+
+def test_client_rejects_invalid_output_token_limit() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        OpenAICompatibleModelClient(
+            api_key="test-key",
+            base_url="https://api.example/v1",
+            model="test",
+            max_output_tokens=0,
+        )
+
+
 def test_streaming_client_emits_text_deltas() -> None:
     captured: dict[str, Any] = {}
 
@@ -124,11 +164,13 @@ def test_streaming_client_emits_text_deltas() -> None:
 
     client = OpenAICompatibleModelClient(
         api_key="test-key", base_url="https://api.example/v1", model="test",
+        max_output_tokens=64,
         transport=httpx.MockTransport(handler),
     )
     deltas: list[str] = []
     response = asyncio.run(client.complete_stream(messages=[], tools=[], on_delta=deltas.append))
     assert captured["body"]["stream"] is True
+    assert captured["body"]["max_tokens"] == 64
     assert deltas == ["hel", "lo"]
     assert response.content == "hello"
 

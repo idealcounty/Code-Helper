@@ -159,6 +159,7 @@ def create_runtime(
         timeout=config.request_timeout,
         provider=config.provider,
         thinking_mode=config.thinking_mode,
+        max_output_tokens=config.max_output_tokens,
     )
     checkpoint_manager = CheckpointManager(workspace)
     context_manager = ContextManager(

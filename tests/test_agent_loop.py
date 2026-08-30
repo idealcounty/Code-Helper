@@ -849,6 +849,50 @@ def test_token_budget_stops_before_requested_tools_execute(tmp_path: Path) -> No
     assert "run_budget_exhausted" in event_types
 
 
+def test_remaining_token_budget_is_applied_to_each_model_request(
+    tmp_path: Path,
+) -> None:
+    class BudgetAwareModel(ScriptedModel):
+        def __init__(self, responses: list[ModelResponse]) -> None:
+            super().__init__(responses)
+            self.request_limits: list[int | None] = []
+            self._limit: int | None = None
+
+        def set_request_output_token_limit(self, limit: int | None) -> None:
+            self._limit = limit
+            self.request_limits.append(limit)
+
+        @property
+        def effective_max_output_tokens(self) -> int | None:
+            return self._limit
+
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    model = BudgetAwareModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("read", "read_file", {"path": "sample.py"})],
+                usage={"total_tokens": 30},
+            ),
+            ModelResponse(content="The file was inspected.", usage={"total_tokens": 10}),
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    runner.run_budget = RunBudget(token_limit=100, max_steps=5)
+    state = AgentState.create(session_id="session", max_steps=5)
+
+    result = asyncio.run(runner.run_turn(state, "Inspect sample.py"))
+
+    assert result.status is AgentStatus.COMPLETED
+    assert model.request_limits == [100, 70]
+    model_events = [
+        event for event in store.load() if event["type"] == "model_started"
+    ]
+    assert [event["payload"]["max_output_tokens"] for event in model_events] == [
+        100,
+        70,
+    ]
+
+
 def test_recovery_start_preserves_persisted_run_budget(tmp_path: Path) -> None:
     model = ScriptedModel([])
     runner, _ = _make_runner(tmp_path, model)
@@ -868,6 +912,31 @@ def test_recovery_start_preserves_persisted_run_budget(tmp_path: Path) -> None:
     assert runner.run_budget.active is True
     assert runner.run_budget.consumed_tokens == 120
     assert runner.run_budget.elapsed_seconds >= 7.5
+
+
+def test_recovered_exhausted_turn_budget_stops_before_model_request(
+    tmp_path: Path,
+) -> None:
+    model = ScriptedModel([])
+    runner, store = _make_runner(tmp_path, model)
+    runner.run_budget = RunBudget(token_limit=100, max_steps=5)
+    state = AgentState.create(session_id="session", max_steps=5)
+    state.run_budget = {
+        "started_at": "2026-08-30T10:00:00+00:00",
+        "elapsed_seconds": 1.0,
+        "consumed_tokens": 100,
+    }
+
+    result = asyncio.run(runner.run_turn(state))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert result.message.startswith("TOKEN_BUDGET_EXHAUSTED")
+    assert model.seen_messages == []
+    assert any(
+        event["type"] == "run_budget_exhausted"
+        and event["payload"]["code"] == "TOKEN_BUDGET_EXHAUSTED"
+        for event in store.load()
+    )
 
 
 def test_session_token_budget_stops_before_next_model_request(tmp_path: Path) -> None:

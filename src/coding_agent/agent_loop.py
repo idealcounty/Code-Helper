@@ -349,6 +349,7 @@ class AgentRunner:
                 self.cancellation.cancel("state_cancel_requested")
             self.cancellation.raise_if_cancelled()
             self.run_budget.check_time()
+            self.run_budget.check_tokens()
             self.run_budget.check_session_tokens()
             self.run_budget.check_step(state.step + 1)
 
@@ -390,10 +391,27 @@ class AgentRunner:
                     "summary_meta": state.context_summary_meta,
                 })
 
-            await self._emit(state, "model_started", {"step": state.step})
+            budget_output_ceiling = self.run_budget.output_token_ceiling
+            applied_output_limit = self._configure_model_output_limit(
+                budget_output_ceiling
+            )
+            await self._emit(
+                state,
+                "model_started",
+                {
+                    "step": state.step,
+                    "budget_output_token_ceiling": budget_output_ceiling,
+                    "max_output_tokens": applied_output_limit,
+                },
+            )
             model_span_started = perf_counter()
             model_span_id = await self._start_span(
-                state, "model_request", {"step": state.step}
+                state,
+                "model_request",
+                {
+                    "step": state.step,
+                    "max_output_tokens": applied_output_limit,
+                },
             )
             try:
                 try:
@@ -964,6 +982,15 @@ class AgentRunner:
     def _update_budget_state(self, state: AgentState) -> dict[str, Any]:
         state.run_budget = self.run_budget.snapshot()
         return state.run_budget
+
+    def _configure_model_output_limit(self, limit: int | None) -> int | None:
+        """Apply a budget ceiling when the concrete provider client supports it."""
+        setter = getattr(self.model_client, "set_request_output_token_limit", None)
+        if not callable(setter):
+            return None
+        setter(limit)
+        applied = getattr(self.model_client, "effective_max_output_tokens", None)
+        return applied if isinstance(applied, int) and not isinstance(applied, bool) else None
 
     async def _record_tool_result(
         self,

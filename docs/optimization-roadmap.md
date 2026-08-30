@@ -73,22 +73,23 @@
 - `RunBudget` 统一执行 wall-time、Step 和供应商回报 Token 预算，耗尽后以带原因的 `PARTIAL` 结束。
 - 审批或中断工具在进程重启后继续运行时，会从持久化快照恢复已消耗 Token 与已用时间；恢复不会通过重置预算绕过原有 Turn 上限。
 - 可通过 `CODE_HELPER_SESSION_TOKEN_BUDGET` 设置跨独立 Turn 的累计 Token 上限；达到上限后在下一次模型请求前以 `SESSION_TOKEN_BUDGET_EXHAUSTED` 结束。
+- 可通过 `CODE_HELPER_MAX_OUTPUT_TOKENS` 设置单次生成硬上限；OpenAI-compatible / DeepSeek Chat Completions 每次请求都会下传 `max_tokens`，实际值取配置上限、当前 Turn 剩余 Token 和 Session 剩余 Token 中的最小值。`model_started` 事件与模型 Span 会记录实际下传值。
 - shell 在 Windows 优先把命令加入带 `KILL_ON_JOB_CLOSE` 的 Job Object，取消时关闭作业并以 `taskkill /T /F` 兜底；POSIX 使用独立进程组终止子进程树。超时和取消返回不同结构化代码。
 - Web“智能”面板展示 Step、时间和 Token 遥测，“轨迹”面板展示停止与预算耗尽原因；停止后会用 Session API 校准 WebSocket 状态，避免遗漏终止事件后界面永久锁定。新建或切换对话不再被当前会话的运行状态禁用。
 - 同一 Session 支持连续多轮 `turn_started → turn_finished`；前端用运行版本号丢弃过期状态响应并乐观回显用户消息，终态之后的立即追问会等待上一任务收尾而不是误报 409。未预期的后台异常也会形成 `run_failed` 和最终失败事件，不再静默消失。
 - 已有普通及暂时拒绝取消的模型请求、Web 端到端停止、时间/Token 门禁和 Windows 子进程树清理测试。
 
-已知边界：供应商仅在响应结束后返回 usage 时，Token 是请求间硬门禁，不能在单次生成的任意 Token 点精确中断。Windows 本地与 Ubuntu CI 已通过同一子进程树测试。
+已知边界：`max_tokens` 只限制生成 Token；输入上下文的实际 Token 仍以供应商响应后的 usage 为准，因此总用量可能因本次输入成本越过剩余预算，随后以 `PARTIAL` 结束。它不能替代供应商侧任意 Token 点中断。Windows 本地与 Ubuntu CI 已通过同一子进程树测试。
 
 **当前差距**
 
 - 当前累计门禁按 Token 计量，尚未提供跨多个独立 Turn 的货币成本上限；恢复同一 Turn 会继续累计此前已记录的 Token 与耗时。
-- 模型流的 Token 硬上限仍受供应商协议和 `max_tokens` 能力约束。
+- 模型流已对支持 Chat Completions `max_tokens` 的客户端下传动态生成上限；其他自定义 ModelClient 若不实现该能力，仍保持请求间门禁并在事件中显示未应用。
 - Web 智能面板已记录取消请求到模型/进程退出的样本，并计算平均值、P50 和 P95；货币成本仍需供应商价格配置后再评估。
 
 **后续加固**
 
-- 对支持单次输出上限的供应商下传剩余生成预算。
+- 已对支持单次输出上限的供应商下传剩余生成预算；后续只需在新增供应商协议时实现同等能力。
 - 在真实长时间运行和跨进程场景中继续采集延迟分布，观察 P95 是否出现异常尖峰。
 
 **验收标准**

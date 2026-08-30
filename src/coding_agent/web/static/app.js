@@ -839,7 +839,11 @@ function handleEvent(event) {
       addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning");
       refreshIntelligenceIfVisible();
       break;
-    case "model_started": addActivity("模型处理中", "正在选择下一步操作"); break;
+    case "model_started": {
+      const outputLimit = Number(payload.max_output_tokens || 0);
+      addActivity("模型处理中", `正在选择下一步操作${outputLimit ? ` · 输出上限 ${formatNumber(outputLimit)} tokens` : ""}`);
+      break;
+    }
     case "model_progress": {
       const elapsed = Number(payload.elapsed_seconds || 0);
       const timeout = Number(payload.request_timeout_seconds || 0);
@@ -1090,6 +1094,8 @@ function renderIntelligence(data) {
   const sessionTokenLimit = Number(budget.session_token_limit || 0);
   const sessionConsumedTokens = Number(budget.session_consumed_tokens || 0);
   const sessionTokenPercent = sessionTokenLimit ? Math.min(100, Math.round((sessionConsumedTokens / sessionTokenLimit) * 100)) : 0;
+  const configuredOutputLimit = Number(budget.configured_max_output_tokens || 0);
+  const effectiveOutputLimit = Number(budget.effective_max_output_tokens || 0);
   const stepLimit = Number(budget.max_steps || 0);
   const currentStep = Number(data.step || 0);
   const runBudgetState = timePercent >= 100 || tokenPercent >= 100 || (stepLimit && currentStep >= stepLimit) ? "warning" : "ready";
@@ -1146,6 +1152,7 @@ function renderIntelligence(data) {
         <div><span>TIME</span><strong>${formatDuration(elapsedSeconds * 1000)}<em> / ${maxSeconds ? formatDuration(maxSeconds * 1000) : "∞"}</em></strong></div>
         <div><span>TOKENS</span><strong>${formatNumber(consumedTokens)}<em> / ${tokenLimit ? formatNumber(tokenLimit) : "∞"}</em></strong></div>
         ${sessionTokenLimit ? `<div><span>SESSION TOKENS</span><strong>${formatNumber(sessionConsumedTokens)}<em> / ${formatNumber(sessionTokenLimit)}</em></strong></div>` : ""}
+        ${(configuredOutputLimit || effectiveOutputLimit) ? `<div><span>OUTPUT CAP</span><strong>${formatNumber(effectiveOutputLimit || configuredOutputLimit)}<em>${configuredOutputLimit ? ` / 配置 ${formatNumber(configuredOutputLimit)}` : " · 剩余额度"}</em></strong></div>` : ""}
       </div>
       <div class="budget-meter-row"><span>时间</span><div class="budget-track"><i style="width:${timePercent}%"></i></div><b>${timePercent}%</b></div>
       ${tokenLimit ? `<div class="budget-meter-row"><span>Token</span><div class="budget-track token"><i style="width:${tokenPercent}%"></i></div><b>${tokenPercent}%</b></div>` : '<p class="intel-note">Token 预算未设上限；仍会记录供应商返回的用量。</p>'}

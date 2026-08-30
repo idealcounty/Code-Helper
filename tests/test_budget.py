@@ -55,3 +55,20 @@ def test_session_token_budget_is_independent_from_per_turn_budget() -> None:
     assert error.value.code == "SESSION_TOKEN_BUDGET_EXHAUSTED"
     assert budget.consumed_tokens == 0
     assert budget.session_consumed_tokens == 150
+
+
+def test_output_token_ceiling_tracks_smallest_remaining_budget() -> None:
+    budget = RunBudget(token_limit=100, session_token_limit=80)
+    budget.start()
+
+    assert budget.output_token_ceiling == 80
+
+    budget.record_usage({"total_tokens": 30})
+    budget.sync_session_usage(65)
+
+    assert budget.remaining_tokens == 70
+    assert budget.remaining_session_tokens == 15
+    assert budget.output_token_ceiling == 15
+    snapshot = budget.snapshot()
+    assert snapshot["remaining_tokens"] == 70
+    assert snapshot["remaining_session_tokens"] == 15

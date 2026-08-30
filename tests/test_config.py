@@ -14,6 +14,8 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_REASONING_EFFORT",
     "CODE_HELPER_RUN_TIMEOUT",
     "CODE_HELPER_TOKEN_BUDGET",
+    "CODE_HELPER_SESSION_TOKEN_BUDGET",
+    "CODE_HELPER_MAX_OUTPUT_TOKENS",
     "CODE_HELPER_RESULT_STORE_MAX_BYTES",
     "CODE_HELPER_RESULT_STORE_MAX_FILES",
     "CODE_HELPER_EVENT_STORE_MAX_BYTES",
@@ -95,12 +97,14 @@ def test_run_budget_settings_are_loaded(monkeypatch) -> None:
     monkeypatch.setenv("CODE_HELPER_RUN_TIMEOUT", "45.5")
     monkeypatch.setenv("CODE_HELPER_TOKEN_BUDGET", "12000")
     monkeypatch.setenv("CODE_HELPER_SESSION_TOKEN_BUDGET", "50000")
+    monkeypatch.setenv("CODE_HELPER_MAX_OUTPUT_TOKENS", "4096")
 
     config = AppConfig.from_env()
 
     assert config.run_timeout == 45.5
     assert config.token_budget == 12000
     assert config.session_token_budget == 50000
+    assert config.max_output_tokens == 4096
 
 
 def test_result_store_limits_are_loaded(monkeypatch) -> None:

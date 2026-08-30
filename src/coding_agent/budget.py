@@ -98,6 +98,28 @@ class RunBudget:
             return None
         return max(0.0, self.max_seconds - self.elapsed_seconds)
 
+    @property
+    def remaining_tokens(self) -> int | None:
+        if self.token_limit is None:
+            return None
+        return max(0, self.token_limit - self.consumed_tokens)
+
+    @property
+    def remaining_session_tokens(self) -> int | None:
+        if self.session_token_limit is None:
+            return None
+        return max(0, self.session_token_limit - self.session_consumed_tokens)
+
+    @property
+    def output_token_ceiling(self) -> int | None:
+        """Upper-bound one completion by the smallest remaining Token budget."""
+        limits = [
+            value
+            for value in (self.remaining_tokens, self.remaining_session_tokens)
+            if value is not None
+        ]
+        return min(limits) if limits else None
+
     def record_usage(self, usage: dict[str, Any]) -> int:
         total = usage.get("total_tokens")
         if not isinstance(total, int):
@@ -152,7 +174,9 @@ class RunBudget:
             ),
             "consumed_tokens": self.consumed_tokens,
             "token_limit": self.token_limit,
+            "remaining_tokens": self.remaining_tokens,
             "session_consumed_tokens": self.session_consumed_tokens,
             "session_token_limit": self.session_token_limit,
+            "remaining_session_tokens": self.remaining_session_tokens,
             "max_steps": self.max_steps,
         }

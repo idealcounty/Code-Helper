@@ -87,6 +87,7 @@ class OpenAICompatibleModelClient:
         timeout: float = 120.0,
         provider: str = "openai-compatible",
         thinking_mode: str | None = None,
+        max_output_tokens: int | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
@@ -97,7 +98,31 @@ class OpenAICompatibleModelClient:
         self.timeout = timeout
         self.provider = provider
         self.thinking_mode = thinking_mode
+        self.max_output_tokens = _positive_token_limit(
+            max_output_tokens, name="max_output_tokens"
+        )
+        self._request_output_token_limit: int | None = None
         self.transport = transport
+
+    @property
+    def effective_max_output_tokens(self) -> int | None:
+        limits = [
+            value
+            for value in (self.max_output_tokens, self._request_output_token_limit)
+            if value is not None
+        ]
+        return min(limits) if limits else None
+
+    def set_request_output_token_limit(self, limit: int | None) -> None:
+        """Apply a per-request ceiling while retaining the configured hard cap."""
+        self._request_output_token_limit = _positive_token_limit(
+            limit, name="request output token limit"
+        )
+
+    def _apply_output_limit(self, body: dict[str, Any]) -> None:
+        limit = self.effective_max_output_tokens
+        if limit is not None:
+            body["max_tokens"] = limit
 
     async def complete(
         self,
@@ -117,6 +142,7 @@ class OpenAICompatibleModelClient:
             body["reasoning_effort"] = reasoning_effort
         if self.provider == "deepseek" and self.thinking_mode:
             body["thinking"] = {"type": self.thinking_mode}
+        self._apply_output_limit(body)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -156,6 +182,7 @@ class OpenAICompatibleModelClient:
             body["reasoning_effort"] = reasoning_effort
         if self.provider == "deepseek" and self.thinking_mode:
             body["thinking"] = {"type": self.thinking_mode}
+        self._apply_output_limit(body)
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         content: list[str] = []
         reasoning: list[str] = []
@@ -353,3 +380,11 @@ def _safe_error_detail(response: httpx.Response) -> str:
         return str(error)[:500]
     except (ValueError, TypeError):
         return response.text[:500]
+
+
+def _positive_token_limit(value: int | None, *, name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
