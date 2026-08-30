@@ -65,6 +65,7 @@ const elements = Object.fromEntries([
   "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
   "explorerResizer", "assistantResizer", "threadResizer",
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus", "thinkingIndicator", "thinkingStatus",
+  "questionNavigator", "questionNavigatorToggle", "questionNavigatorCount", "questionNavigatorPanel", "questionNavigatorList", "closeQuestionNavigator",
   "stepCounter", "activityList", "planProgress", "planList", "restoreButton",
   "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
@@ -669,6 +670,7 @@ function resetConversationSurface() {
   elements.planProgress.textContent = "0 / 0";
   elements.stepCounter.textContent = "STEP 0";
   hideThinkingIndicator();
+  resetQuestionNavigator();
   streamingAgentMessage = null;
 }
 
@@ -1318,8 +1320,63 @@ function addMessage(role, content) {
   message.dataset.rawContent = content;
   renderMessageBody(message.querySelector(".message-body"), content, role);
   elements.messageList.append(message);
+  if (role === "user") registerUserQuestion(message, content);
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
   return message;
+}
+
+function questionPreview(content) {
+  const compact = String(content || "").replace(/\s+/g, " ").trim();
+  return compact.length > 72 ? `${compact.slice(0, 72)}…` : compact;
+}
+
+function resetQuestionNavigator() {
+  elements.questionNavigatorList.innerHTML = "";
+  elements.questionNavigatorCount.textContent = "0";
+  elements.questionNavigator.classList.add("hidden");
+  closeQuestionNavigator();
+}
+
+function closeQuestionNavigator() {
+  elements.questionNavigatorPanel.classList.add("hidden");
+  elements.questionNavigatorToggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleQuestionNavigator() {
+  const willOpen = elements.questionNavigatorPanel.classList.contains("hidden");
+  elements.questionNavigatorPanel.classList.toggle("hidden", !willOpen);
+  elements.questionNavigatorToggle.setAttribute("aria-expanded", String(willOpen));
+}
+
+function registerUserQuestion(message, content) {
+  const index = elements.questionNavigatorList.children.length + 1;
+  message.id = `user-question-${index}`;
+  message.tabIndex = -1;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "question-navigator-item";
+  button.setAttribute("aria-label", `定位到第 ${index} 次提问：${questionPreview(content)}`);
+  const number = document.createElement("span");
+  number.textContent = String(index).padStart(2, "0");
+  const copy = document.createElement("span");
+  const label = document.createElement("strong");
+  label.textContent = `第 ${index} 次提问`;
+  const preview = document.createElement("small");
+  preview.textContent = questionPreview(content) || "空白提问";
+  copy.append(label, preview);
+  button.append(number, copy);
+  button.addEventListener("click", () => {
+    closeQuestionNavigator();
+    message.scrollIntoView({ behavior: "smooth", block: "start" });
+    message.focus({ preventScroll: true });
+    message.classList.remove("message-located");
+    requestAnimationFrame(() => message.classList.add("message-located"));
+    window.setTimeout(() => message.classList.remove("message-located"), 1500);
+  });
+  elements.questionNavigatorList.append(button);
+  elements.questionNavigatorCount.textContent = String(index);
+  elements.questionNavigator.classList.remove("hidden");
 }
 
 let streamingAgentMessage = null;
@@ -1914,6 +1971,8 @@ elements.cancelBrowserButton.addEventListener("click", closeBrowser);
 elements.browserBackdrop.addEventListener("click", (event) => { if (event.target === elements.browserBackdrop) closeBrowser(); });
 elements.browserUpButton.addEventListener("click", () => browseTo(state.browserParent || ""));
 elements.messageInput.addEventListener("input", resizeMessageInput);
+elements.questionNavigatorToggle.addEventListener("click", toggleQuestionNavigator);
+elements.closeQuestionNavigator.addEventListener("click", closeQuestionNavigator);
 elements.chooseWorkspaceButton.addEventListener("click", async () => {
   const selected = state.browserSelection;
   if (!selected) return;
@@ -1971,12 +2030,14 @@ document.addEventListener("click", (event) => {
   if (!elements.userMenu.classList.contains("hidden") && !elements.userMenu.contains(event.target) && !elements.userMenuButton.contains(event.target) && !elements.focusUserMenuButton.contains(event.target)) closeUserMenu();
   const explorerPane = document.querySelector(".explorer-pane");
   if (elements.workbench.classList.contains("focus-explorer-open") && !explorerPane.contains(event.target) && !elements.focusFilesButton.contains(event.target)) toggleFocusExplorer(false);
+  if (!elements.questionNavigatorPanel.classList.contains("hidden") && !elements.questionNavigator.contains(event.target)) closeQuestionNavigator();
 });
 window.addEventListener("resize", () => { if (!elements.userMenu.classList.contains("hidden")) positionUserMenu(); });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     if (!elements.browserBackdrop.classList.contains("hidden")) closeBrowser();
     else if (!elements.userMenu.classList.contains("hidden")) closeUserMenu();
+    else if (!elements.questionNavigatorPanel.classList.contains("hidden")) closeQuestionNavigator();
     else if (elements.workbench.classList.contains("focus-explorer-open")) toggleFocusExplorer(false);
   }
   if (event.altKey && event.key.toLowerCase() === "f" && state.layoutMode === "focus" && !state.settingsOpen) {
