@@ -63,6 +63,7 @@ class EventStore:
         self._prune_session_store()
 
     def append(self, event: AgentEvent) -> None:
+        _validate_live_event(event, expected_session_id=self.session_id)
         safe_data = self.redactor.redact(event.to_dict())
         safe_data.pop("integrity_sha256", None)
         digest = _integrity_digest(safe_data)
@@ -196,6 +197,12 @@ class EventStore:
                 self.last_load_diagnostics.append(
                     {"code": "LEGACY_EVENT_UNSIGNED", "line": line_number}
                 )
+            raw_type = parsed.get("type")
+            if not isinstance(raw_type, str) or not raw_type.strip():
+                raise ValueError(
+                    f"Invalid session event type at line {line_number}: "
+                    "expected non-empty string"
+                )
             # Older JSONL writers did not always persist identity metadata.
             # Normalize those records in memory so a new process can continue
             # the same sequence and causation chain without rewriting history.
@@ -240,6 +247,11 @@ class EventStore:
                 parsed["session_id"] = self.session_id
                 self.last_load_diagnostics.append(
                     {"code": "LEGACY_EVENT_SESSION_ID_ASSUMED", "line": line_number}
+                )
+            elif raw_session_id != self.session_id:
+                raise ValueError(
+                    f"Invalid session event session_id at line {line_number}: "
+                    f"expected {self.session_id!r}, got {raw_session_id!r}"
                 )
             raw_turn_id = parsed.get("turn_id")
             if not isinstance(raw_turn_id, str) or not raw_turn_id.strip():
@@ -327,3 +339,18 @@ def _integrity_digest(data: dict[str, Any]) -> str:
     import hashlib
 
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _validate_live_event(event: AgentEvent, *, expected_session_id: str) -> None:
+    """Reject malformed current events before they can enter durable history."""
+    if not isinstance(event.type, str) or not event.type.strip():
+        raise ValueError("Event type must be a non-empty string")
+    if event.session_id != expected_session_id:
+        raise ValueError(
+            "Event session_id does not match its EventStore: "
+            f"expected {expected_session_id!r}, got {event.session_id!r}"
+        )
+    if not isinstance(event.turn_id, str) or not event.turn_id.strip():
+        raise ValueError("Event turn_id must be a non-empty string")
+    if not isinstance(event.payload, dict):
+        raise ValueError("Event payload must be an object")

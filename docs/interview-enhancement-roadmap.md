@@ -121,7 +121,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 - 取消请求到 `run_cancelled` 的墙钟延迟会从事件时间戳计算并在 Web“智能”面板展示，未完成取消不会伪造样本。
 - Windows 本地和 Ubuntu CI 已通过同一子进程树取消测试，形成双平台证据。
 - SessionReducer V1 已统一在线/离线归约，能够恢复待审批 Tool Call、最近 Action、修改序列和验证序列；四个关键断点已有恢复矩阵测试。
-- 未完成工具会标记 `INTERRUPTED_UNKNOWN` 且不会自动重放；Web 已提供逐调用人工重试/放弃 UI。EventStore 会为缺少序号或事件 ID 的旧 JSONL 记录做确定性的内存迁移，并在重启后继续序号和因果链；未来 schema 会显式拒绝，完整旧格式覆盖仍需持续补充。
+- 未完成工具会标记 `INTERRUPTED_UNKNOWN` 且不会自动重放；Web 已提供逐调用人工重试/放弃 UI。EventStore 会为缺少序号、事件 ID 或可安全推导 envelope 字段的旧 JSONL 记录做确定性的内存迁移，并在重启后继续序号和因果链；缺失/非法事件类型、跨 Session 混入和非对象 payload 会显式拒绝，不会进入 reducer。任意历史私有格式仍不承诺自动迁移。
 
 ### 4.2 验证与权限
 

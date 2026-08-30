@@ -194,6 +194,66 @@ def test_event_store_rejects_non_object_legacy_payload(tmp_path: Path) -> None:
         store.load()
 
 
+@pytest.mark.parametrize("event_type", [None, "", "   ", 42])
+def test_event_store_rejects_missing_or_invalid_event_type(
+    tmp_path: Path, event_type: object
+) -> None:
+    store = EventStore(tmp_path, "session")
+    store.path.write_text(
+        json.dumps(
+            {
+                "type": event_type,
+                "session_id": "session",
+                "turn_id": "turn",
+                "payload": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="event type"):
+        store.load()
+
+
+def test_event_store_rejects_event_from_another_session(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session-a")
+    store.path.write_text(
+        json.dumps(
+            {
+                "type": "turn_started",
+                "session_id": "session-b",
+                "turn_id": "turn",
+                "payload": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="session_id"):
+        store.load()
+
+
+def test_event_store_rejects_invalid_live_event_before_append(tmp_path: Path) -> None:
+    store = EventStore(tmp_path, "session")
+
+    with pytest.raises(ValueError, match="Event type"):
+        store.append(
+            AgentEvent(type="", session_id="session", turn_id="turn")
+        )
+    with pytest.raises(ValueError, match="session_id"):
+        store.append(
+            AgentEvent(
+                type="turn_started",
+                session_id="another-session",
+                turn_id="turn",
+            )
+        )
+
+    assert not store.path.exists()
+
+
 def test_event_store_rejects_future_schema_without_silent_recovery(tmp_path: Path) -> None:
     store = EventStore(tmp_path, "session")
     future = AgentEvent(type="turn_started", session_id="session", turn_id="turn").to_dict()
