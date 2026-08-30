@@ -74,6 +74,7 @@
 - 审批或中断工具在进程重启后继续运行时，会从持久化快照恢复已消耗 Token 与已用时间；恢复不会通过重置预算绕过原有 Turn 上限。
 - 可通过 `CODE_HELPER_SESSION_TOKEN_BUDGET` 设置跨独立 Turn 的累计 Token 上限；达到上限后在下一次模型请求前以 `SESSION_TOKEN_BUDGET_EXHAUSTED` 结束。
 - 可通过 `CODE_HELPER_MAX_OUTPUT_TOKENS` 设置单次生成硬上限；OpenAI-compatible / DeepSeek Chat Completions 每次请求都会下传 `max_tokens`，实际值取配置上限、当前 Turn 剩余 Token 和 Session 剩余 Token 中的最小值。`model_started` 事件与模型 Span 会记录实际下传值。
+- 可通过 `CODE_HELPER_INPUT_PRICE_PER_MILLION_USD`、`CODE_HELPER_OUTPUT_PRICE_PER_MILLION_USD` 配置供应商价格，并用 `CODE_HELPER_TURN_COST_BUDGET_USD`、`CODE_HELPER_SESSION_COST_BUDGET_USD` 设置单轮/会话货币成本门禁；缺少输入输出拆分时按较高费率保守估算，Web 会标注“估算”。
 - shell 在 Windows 优先把命令加入带 `KILL_ON_JOB_CLOSE` 的 Job Object，取消时关闭作业并以 `taskkill /T /F` 兜底；POSIX 使用独立进程组终止子进程树。超时和取消返回不同结构化代码。
 - Web“智能”面板展示 Step、时间和 Token 遥测，“轨迹”面板展示停止与预算耗尽原因；停止后会用 Session API 校准 WebSocket 状态，避免遗漏终止事件后界面永久锁定。新建或切换对话不再被当前会话的运行状态禁用。
 - 同一 Session 支持连续多轮 `turn_started → turn_finished`；前端用运行版本号丢弃过期状态响应并乐观回显用户消息，终态之后的立即追问会等待上一任务收尾而不是误报 409。未预期的后台异常也会形成 `run_failed` 和最终失败事件，不再静默消失。
@@ -83,9 +84,9 @@
 
 **当前差距**
 
-- 当前累计门禁按 Token 计量，尚未提供跨多个独立 Turn 的货币成本上限；恢复同一 Turn 会继续累计此前已记录的 Token 与耗时。
+- 货币成本门禁已支持跨独立 Turn 的会话累计；价格需要由部署者按当前供应商价目维护，项目不硬编码可能过期的价格。
 - 模型流已对支持 Chat Completions `max_tokens` 的客户端下传动态生成上限；其他自定义 ModelClient 若不实现该能力，仍保持请求间门禁并在事件中显示未应用。
-- Web 智能面板已记录取消请求到模型/进程退出的样本，并计算平均值、P50 和 P95；货币成本仍需供应商价格配置后再评估。
+- Web 智能面板已记录取消请求到模型/进程退出的样本，并计算平均值、P50 和 P95；预算卡片同时显示 Token、输出上限和货币成本消耗。
 
 **后续加固**
 

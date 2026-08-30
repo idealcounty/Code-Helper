@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from coding_agent.config import AppConfig
 
 
@@ -16,6 +18,10 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_TOKEN_BUDGET",
     "CODE_HELPER_SESSION_TOKEN_BUDGET",
     "CODE_HELPER_MAX_OUTPUT_TOKENS",
+    "CODE_HELPER_INPUT_PRICE_PER_MILLION_USD",
+    "CODE_HELPER_OUTPUT_PRICE_PER_MILLION_USD",
+    "CODE_HELPER_TURN_COST_BUDGET_USD",
+    "CODE_HELPER_SESSION_COST_BUDGET_USD",
     "CODE_HELPER_RESULT_STORE_MAX_BYTES",
     "CODE_HELPER_RESULT_STORE_MAX_FILES",
     "CODE_HELPER_EVENT_STORE_MAX_BYTES",
@@ -116,6 +122,32 @@ def test_result_store_limits_are_loaded(monkeypatch) -> None:
 
     assert config.result_store_max_bytes == 2048
     assert config.result_store_max_files == 3
+
+
+def test_cost_budget_settings_require_explicit_provider_prices(monkeypatch) -> None:
+    _clear_config_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
+    monkeypatch.setenv("CODE_HELPER_INPUT_PRICE_PER_MILLION_USD", "0.5")
+    monkeypatch.setenv("CODE_HELPER_OUTPUT_PRICE_PER_MILLION_USD", "2.0")
+    monkeypatch.setenv("CODE_HELPER_TURN_COST_BUDGET_USD", "0.25")
+    monkeypatch.setenv("CODE_HELPER_SESSION_COST_BUDGET_USD", "1.5")
+
+    config = AppConfig.from_env()
+
+    assert config.input_price_per_million_usd == 0.5
+    assert config.output_price_per_million_usd == 2.0
+    assert config.turn_cost_budget_usd == 0.25
+    assert config.session_cost_budget_usd == 1.5
+
+
+def test_cost_budget_without_complete_price_pair_is_rejected(monkeypatch) -> None:
+    _clear_config_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
+    monkeypatch.setenv("CODE_HELPER_INPUT_PRICE_PER_MILLION_USD", "0.5")
+    monkeypatch.setenv("CODE_HELPER_TURN_COST_BUDGET_USD", "0.25")
+
+    with pytest.raises(ValueError, match="configured together"):
+        AppConfig.from_env()
 
 
 def test_event_store_limits_are_loaded(monkeypatch) -> None:

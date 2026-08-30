@@ -893,6 +893,36 @@ def test_remaining_token_budget_is_applied_to_each_model_request(
     ]
 
 
+def test_cost_budget_stops_before_requested_tools_execute(tmp_path: Path) -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("read", "read_file", {"path": "missing.py"})],
+                usage={
+                    "prompt_tokens": 1_000,
+                    "completion_tokens": 2_000,
+                    "total_tokens": 3_000,
+                },
+            )
+        ]
+    )
+    runner, store = _make_runner(tmp_path, model)
+    runner.run_budget = RunBudget(
+        input_price_per_million_usd=1.0,
+        output_price_per_million_usd=2.0,
+        cost_limit_usd=0.005,
+        max_steps=5,
+    )
+    state = AgentState.create(session_id="session", max_steps=5)
+
+    result = asyncio.run(runner.run_turn(state, "Stay inside the cost budget"))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert result.message.startswith("COST_BUDGET_EXHAUSTED")
+    assert state.run_budget["consumed_cost_usd"] == pytest.approx(0.005)
+    assert not any(event["type"] == "tool_started" for event in store.load())
+
+
 def test_recovery_start_preserves_persisted_run_budget(tmp_path: Path) -> None:
     model = ScriptedModel([])
     runner, _ = _make_runner(tmp_path, model)

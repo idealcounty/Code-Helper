@@ -276,6 +276,7 @@ class AgentRunner:
         else:
             self.run_budget.start(max_steps=state.max_steps)
         self.run_budget.sync_session_usage(_token_usage_total(state.token_usage))
+        self.run_budget.sync_session_cost(state.token_usage)
         await self._emit(
             state,
             "run_budget_started",
@@ -351,6 +352,7 @@ class AgentRunner:
             self.run_budget.check_time()
             self.run_budget.check_tokens()
             self.run_budget.check_session_tokens()
+            self.run_budget.check_costs()
             self.run_budget.check_step(state.step + 1)
 
             schemas = self._allowed_tool_schemas(state.mode, state.task_profile)
@@ -468,7 +470,9 @@ class AgentRunner:
             )
             self._attach_private_model_state(state, response)
             self.run_budget.sync_session_usage(_token_usage_total(state.token_usage))
+            self.run_budget.sync_session_cost(state.token_usage)
             self.run_budget.check_tokens()
+            self.run_budget.check_costs()
 
             if response.tool_calls:
                 outcome = await self._handle_tool_calls(state, response.tool_calls)

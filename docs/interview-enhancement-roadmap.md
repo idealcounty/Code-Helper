@@ -118,6 +118,7 @@ Code Helper 不是一个大模型聊天界面，也不是现有 Agent 产品或 
 
 - 可靠取消与单轮 RunBudget V1 已完成：模型请求、审批等待和工具任务共享取消信号，shell 可终止完整子进程树；取消模型流时使用有界清理和 Web 强制取消看门狗，底层传输暂时不响应取消也不会永久卡住 Turn。审批或中断工具跨进程恢复时会沿用已消耗 Token/耗时，不会通过重置预算绕过上限。Web 在停止后主动校准 Session 状态，且允许立即新建或切换其他对话，避免单个异常 Turn 锁死整个界面。
 - 时间、Step 和供应商回报 Token 预算已有事件与 UI 遥测；除单 Turn 上限外，可通过 `CODE_HELPER_SESSION_TOKEN_BUDGET` 增加跨独立 Turn 的累计 Token 门禁，并可用 `CODE_HELPER_MAX_OUTPUT_TOKENS` 限制单次生成。DeepSeek / OpenAI-compatible 请求会将配置上限与 Turn、Session 剩余额度取最小值后下传 `max_tokens`；由于输入 Token 仍在响应结束后由供应商报告，总预算依然包含请求后校验边界。
+- 可选的货币成本门禁已接入：由部署者配置输入/输出单价及单 Turn、Session 成本上限，系统在模型请求前预留输出额度、响应后累计实际成本；只有供应商未拆分输入/输出用量时才使用较高费率保守估算，并在 Web 面板标记估算值。
 - 取消请求到 `run_cancelled` 的墙钟延迟会从事件时间戳计算并在 Web“智能”面板展示，未完成取消不会伪造样本。
 - Windows 本地和 Ubuntu CI 已通过同一子进程树取消测试，形成双平台证据。
 - SessionReducer V1 已统一在线/离线归约，能够恢复待审批 Tool Call、最近 Action、修改序列和验证序列；四个关键断点已有恢复矩阵测试。

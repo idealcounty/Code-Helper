@@ -25,12 +25,33 @@ class AppConfig:
     token_budget: int | None = None
     session_token_budget: int | None = None
     max_output_tokens: int | None = None
+    input_price_per_million_usd: float | None = None
+    output_price_per_million_usd: float | None = None
+    turn_cost_budget_usd: float | None = None
+    session_cost_budget_usd: float | None = None
     result_store_max_bytes: int = 50_000_000
     result_store_max_files: int = 512
     event_store_max_bytes: int = 100_000_000
     event_store_max_files: int = 256
     user_memory_enabled: bool = False
     user_memory_dir: Path | None = None
+
+    def __post_init__(self) -> None:
+        prices = (
+            self.input_price_per_million_usd,
+            self.output_price_per_million_usd,
+        )
+        if any(value is not None for value in prices) and not all(
+            value is not None for value in prices
+        ):
+            raise ValueError(
+                "Input and output prices must be configured together"
+            )
+        if (
+            self.turn_cost_budget_usd is not None
+            or self.session_cost_budget_usd is not None
+        ) and not all(value is not None for value in prices):
+            raise ValueError("Cost budgets require input and output prices")
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -66,6 +87,18 @@ class AppConfig:
             ),
             max_output_tokens=_optional_positive_int(
                 "CODE_HELPER_MAX_OUTPUT_TOKENS"
+            ),
+            input_price_per_million_usd=_optional_positive_float(
+                "CODE_HELPER_INPUT_PRICE_PER_MILLION_USD"
+            ),
+            output_price_per_million_usd=_optional_positive_float(
+                "CODE_HELPER_OUTPUT_PRICE_PER_MILLION_USD"
+            ),
+            turn_cost_budget_usd=_optional_positive_float(
+                "CODE_HELPER_TURN_COST_BUDGET_USD"
+            ),
+            session_cost_budget_usd=_optional_positive_float(
+                "CODE_HELPER_SESSION_COST_BUDGET_USD"
             ),
             result_store_max_bytes=_positive_int(
                 "CODE_HELPER_RESULT_STORE_MAX_BYTES", 50_000_000
@@ -128,6 +161,16 @@ def _optional_positive_int(name: str) -> int | None:
     if raw is None or not raw.strip():
         return None
     value = int(raw)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _optional_positive_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    value = float(raw)
     if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value

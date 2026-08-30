@@ -1096,9 +1096,15 @@ function renderIntelligence(data) {
   const sessionTokenPercent = sessionTokenLimit ? Math.min(100, Math.round((sessionConsumedTokens / sessionTokenLimit) * 100)) : 0;
   const configuredOutputLimit = Number(budget.configured_max_output_tokens || 0);
   const effectiveOutputLimit = Number(budget.effective_max_output_tokens || 0);
+  const consumedCost = Number(budget.consumed_cost_usd || 0);
+  const costLimit = Number(budget.cost_limit_usd || 0);
+  const costPercent = costLimit ? Math.min(100, Math.round((consumedCost / costLimit) * 100)) : 0;
+  const sessionConsumedCost = Number(budget.session_consumed_cost_usd || 0);
+  const sessionCostLimit = Number(budget.session_cost_limit_usd || 0);
+  const sessionCostPercent = sessionCostLimit ? Math.min(100, Math.round((sessionConsumedCost / sessionCostLimit) * 100)) : 0;
   const stepLimit = Number(budget.max_steps || 0);
   const currentStep = Number(data.step || 0);
-  const runBudgetState = timePercent >= 100 || tokenPercent >= 100 || (stepLimit && currentStep >= stepLimit) ? "warning" : "ready";
+  const runBudgetState = timePercent >= 100 || tokenPercent >= 100 || costPercent >= 100 || sessionCostPercent >= 100 || (stepLimit && currentStep >= stepLimit) ? "warning" : "ready";
   const skillBadges = (skills.available || []).map((skill) => `<span class="skill-badge ${loaded.has(skill.name) ? "loaded" : ""}" title="${escapeHtml(skill.description || "")}"><i></i>${escapeHtml(skill.name)}</span>`).join("");
   const topFiles = (repo.top_files || []).slice(0, 5).map((file) => `<li><span>${escapeHtml(file.path)}</span><b>${file.score}</b></li>`).join("");
   const toolRows = Object.entries(data.tool_stats || {}).sort((a, b) => (b[1].calls || 0) - (a[1].calls || 0)).slice(0, 5).map(([name, stat]) => `<div class="metric-row"><span>${escapeHtml(name)}</span><b>${stat.successes || 0}/${stat.calls || 0}</b><em>${formatDuration(stat.duration_ms || 0)}</em></div>`).join("");
@@ -1153,10 +1159,14 @@ function renderIntelligence(data) {
         <div><span>TOKENS</span><strong>${formatNumber(consumedTokens)}<em> / ${tokenLimit ? formatNumber(tokenLimit) : "∞"}</em></strong></div>
         ${sessionTokenLimit ? `<div><span>SESSION TOKENS</span><strong>${formatNumber(sessionConsumedTokens)}<em> / ${formatNumber(sessionTokenLimit)}</em></strong></div>` : ""}
         ${(configuredOutputLimit || effectiveOutputLimit) ? `<div><span>OUTPUT CAP</span><strong>${formatNumber(effectiveOutputLimit || configuredOutputLimit)}<em>${configuredOutputLimit ? ` / 配置 ${formatNumber(configuredOutputLimit)}` : " · 剩余额度"}</em></strong></div>` : ""}
+        ${costLimit ? `<div><span>TURN COST</span><strong>${formatUsd(consumedCost)}<em> / ${formatUsd(costLimit)}${budget.cost_estimated ? " · 估算" : ""}</em></strong></div>` : ""}
+        ${sessionCostLimit ? `<div><span>SESSION COST</span><strong>${formatUsd(sessionConsumedCost)}<em> / ${formatUsd(sessionCostLimit)}${budget.session_cost_estimated ? " · 估算" : ""}</em></strong></div>` : ""}
       </div>
       <div class="budget-meter-row"><span>时间</span><div class="budget-track"><i style="width:${timePercent}%"></i></div><b>${timePercent}%</b></div>
       ${tokenLimit ? `<div class="budget-meter-row"><span>Token</span><div class="budget-track token"><i style="width:${tokenPercent}%"></i></div><b>${tokenPercent}%</b></div>` : '<p class="intel-note">Token 预算未设上限；仍会记录供应商返回的用量。</p>'}
       ${sessionTokenLimit ? `<div class="budget-meter-row"><span>会话</span><div class="budget-track session-token"><i style="width:${sessionTokenPercent}%"></i></div><b>${sessionTokenPercent}%</b></div>` : ""}
+      ${costLimit ? `<div class="budget-meter-row"><span>本轮费用</span><div class="budget-track token"><i style="width:${costPercent}%"></i></div><b>${costPercent}%</b></div>` : ""}
+      ${sessionCostLimit ? `<div class="budget-meter-row"><span>会话费用</span><div class="budget-track session-token"><i style="width:${sessionCostPercent}%"></i></div><b>${sessionCostPercent}%</b></div>` : ""}
     </section>
     <section class="intelligence-section verification-section">
       <div class="intelligence-heading"><div><span class="intel-icon">VER</span><strong>验证证据</strong></div><b class="${verification.fresh ? "status-on" : "status-off"}">${verification.fresh ? "FRESH" : "STALE"}</b></div>
@@ -1298,6 +1308,11 @@ async function handleIntelligenceAction(event) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN", { notation: value >= 10000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value || 0);
+}
+
+function formatUsd(value) {
+  const amount = Number(value || 0);
+  return `$${amount.toFixed(amount > 0 && amount < 0.01 ? 6 : 4)}`;
 }
 
 function formatDuration(milliseconds) {

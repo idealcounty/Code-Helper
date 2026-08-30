@@ -136,6 +136,10 @@ def create_runtime(
         max_seconds=config.run_timeout,
         token_limit=config.token_budget,
         session_token_limit=config.session_token_budget,
+        input_price_per_million_usd=config.input_price_per_million_usd,
+        output_price_per_million_usd=config.output_price_per_million_usd,
+        cost_limit_usd=config.turn_cost_budget_usd,
+        session_cost_limit_usd=config.session_cost_budget_usd,
         max_steps=config.max_steps,
     )
     register_filesystem_tools(registry, workspace)

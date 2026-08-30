@@ -72,3 +72,49 @@ def test_output_token_ceiling_tracks_smallest_remaining_budget() -> None:
     snapshot = budget.snapshot()
     assert snapshot["remaining_tokens"] == 70
     assert snapshot["remaining_session_tokens"] == 15
+
+
+def test_cost_budget_uses_configured_input_and_output_prices() -> None:
+    budget = RunBudget(
+        input_price_per_million_usd=1.0,
+        output_price_per_million_usd=2.0,
+        cost_limit_usd=0.005,
+    )
+    budget.start()
+
+    budget.record_usage({"prompt_tokens": 1_000, "completion_tokens": 2_000})
+
+    assert budget.consumed_cost_usd == pytest.approx(0.005)
+    assert budget.cost_estimated is False
+    with pytest.raises(BudgetExceeded) as error:
+        budget.check_costs()
+    assert error.value.code == "COST_BUDGET_EXHAUSTED"
+
+
+def test_cost_budget_conservatively_prices_usage_without_token_split() -> None:
+    budget = RunBudget(
+        input_price_per_million_usd=1.0,
+        output_price_per_million_usd=3.0,
+        session_cost_limit_usd=0.01,
+    )
+
+    budget.record_usage({"total_tokens": 1_000})
+
+    assert budget.consumed_cost_usd == pytest.approx(0.003)
+    assert budget.cost_estimated is True
+
+
+def test_remaining_cost_constrains_provider_output_ceiling() -> None:
+    budget = RunBudget(
+        input_price_per_million_usd=1.0,
+        output_price_per_million_usd=2.0,
+        cost_limit_usd=0.004,
+    )
+    budget.start()
+
+    assert budget.output_token_ceiling == 2_000
+
+    budget.record_usage({"prompt_tokens": 1_000, "completion_tokens": 500})
+
+    assert budget.consumed_cost_usd == pytest.approx(0.002)
+    assert budget.output_token_ceiling == 1_000
