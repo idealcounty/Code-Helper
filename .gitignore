@@ -16,4 +16,9 @@ build/
 *.egg-info/
 .code-helper/
 .eval-results/
+# Per-run local evaluation/build scratch directories.
+.tmp-*/
+tmp-repro*/
+build-*/
+dist-*/
 *.spec.bak
