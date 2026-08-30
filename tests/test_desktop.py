@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from coding_agent import desktop
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_desktop_bridge_uses_native_clipboard(monkeypatch: Any) -> None:
@@ -52,3 +56,12 @@ def test_desktop_listener_can_use_an_ephemeral_port() -> None:
         if fallback is not None:
             fallback.close()
         listener.close()
+
+
+def test_windows_package_collects_tiktoken_extensions() -> None:
+    spec = (PROJECT_ROOT / "packaging" / "coding-agent.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'collect_submodules("tiktoken_ext")' in spec
+    assert '*tiktoken_extensions' in spec
