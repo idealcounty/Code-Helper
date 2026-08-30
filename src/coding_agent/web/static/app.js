@@ -1087,6 +1087,9 @@ function renderIntelligence(data) {
   const tokenLimit = Number(budget.token_limit || 0);
   const consumedTokens = Number(budget.consumed_tokens || 0);
   const tokenPercent = tokenLimit ? Math.min(100, Math.round((consumedTokens / tokenLimit) * 100)) : 0;
+  const sessionTokenLimit = Number(budget.session_token_limit || 0);
+  const sessionConsumedTokens = Number(budget.session_consumed_tokens || 0);
+  const sessionTokenPercent = sessionTokenLimit ? Math.min(100, Math.round((sessionConsumedTokens / sessionTokenLimit) * 100)) : 0;
   const stepLimit = Number(budget.max_steps || 0);
   const currentStep = Number(data.step || 0);
   const runBudgetState = timePercent >= 100 || tokenPercent >= 100 || (stepLimit && currentStep >= stepLimit) ? "warning" : "ready";
@@ -1135,9 +1138,11 @@ function renderIntelligence(data) {
         <div><span>STEP</span><strong>${currentStep}<em> / ${stepLimit || "∞"}</em></strong></div>
         <div><span>TIME</span><strong>${formatDuration(elapsedSeconds * 1000)}<em> / ${maxSeconds ? formatDuration(maxSeconds * 1000) : "∞"}</em></strong></div>
         <div><span>TOKENS</span><strong>${formatNumber(consumedTokens)}<em> / ${tokenLimit ? formatNumber(tokenLimit) : "∞"}</em></strong></div>
+        ${sessionTokenLimit ? `<div><span>SESSION TOKENS</span><strong>${formatNumber(sessionConsumedTokens)}<em> / ${formatNumber(sessionTokenLimit)}</em></strong></div>` : ""}
       </div>
       <div class="budget-meter-row"><span>时间</span><div class="budget-track"><i style="width:${timePercent}%"></i></div><b>${timePercent}%</b></div>
       ${tokenLimit ? `<div class="budget-meter-row"><span>Token</span><div class="budget-track token"><i style="width:${tokenPercent}%"></i></div><b>${tokenPercent}%</b></div>` : '<p class="intel-note">Token 预算未设上限；仍会记录供应商返回的用量。</p>'}
+      ${sessionTokenLimit ? `<div class="budget-meter-row"><span>会话</span><div class="budget-track session-token"><i style="width:${sessionTokenPercent}%"></i></div><b>${sessionTokenPercent}%</b></div>` : ""}
     </section>
     <section class="intelligence-section verification-section">
       <div class="intelligence-heading"><div><span class="intel-icon">VER</span><strong>验证证据</strong></div><b class="${verification.fresh ? "status-on" : "status-off"}">${verification.fresh ? "FRESH" : "STALE"}</b></div>

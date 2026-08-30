@@ -52,6 +52,8 @@ def test_health_and_static_index() -> None:
     assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text
     assert "阶段耗时" in frontend_bundle.text
     assert "exportTraceButton" in index.text
+    assert "SESSION TOKENS" in frontend_bundle.text
+    assert "session-token" in modern_styles.text
     assert "runEpoch" in frontend_bundle.text
     assert "pendingUserEchoes" in frontend_bundle.text
     assert "approvalPolicySelect" in frontend_bundle.text
