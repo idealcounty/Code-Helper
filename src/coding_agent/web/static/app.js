@@ -5,11 +5,19 @@ const RESTORABLE_MODES = new Set(["act", "plan", "ask"]);
 const RESTORABLE_REASONING = new Set(["auto", "fast", "balanced", "deep"]);
 const RESTORABLE_TASK_PROFILES = new Set(["auto", "project", "algorithm"]);
 const LAYOUT_MODES = new Set(["editor", "focus"]);
-const PANEL_DEFAULTS = Object.freeze({ explorer: 252, assistant: 420, threads: 112 });
+const PANEL_DEFAULTS = Object.freeze({
+  explorer: 252,
+  assistant: 420,
+  threads: 112,
+  focusSidebar: 264,
+  focusFile: 460,
+});
 const PANEL_LIMITS = Object.freeze({
   explorer: { min: 180, max: 480 },
   assistant: { min: 300, max: 640 },
   threads: { min: 72, max: 360 },
+  focusSidebar: { min: 220, max: 420 },
+  focusFile: { min: 320, max: 720 },
   editorMin: 360,
   assistantContentMin: 220,
 });
@@ -360,6 +368,23 @@ function syncFocusLayoutState() {
   elements.focusTerminalButton.classList.toggle("active", state.activeView === "terminal");
 }
 
+function resizeLayoutKey(kind) {
+  if (state.layoutMode !== "focus") return kind;
+  if (kind === "explorer") return "focusSidebar";
+  if (kind === "assistant") return "focusFile";
+  return kind;
+}
+
+function syncPanelResizerLabels() {
+  const focusMode = state.layoutMode === "focus";
+  const explorerLabel = focusMode ? "调整对话栏宽度" : "调整文件栏宽度";
+  const assistantLabel = focusMode ? "调整文件预览栏宽度" : "调整对话与执行栏宽度";
+  elements.explorerResizer.setAttribute("aria-label", explorerLabel);
+  elements.explorerResizer.title = `${explorerLabel}，双击恢复默认`;
+  elements.assistantResizer.setAttribute("aria-label", assistantLabel);
+  elements.assistantResizer.title = `${assistantLabel}，双击恢复默认`;
+}
+
 function applyLayoutMode(mode, { persist = false } = {}) {
   const normalized = LAYOUT_MODES.has(mode) ? mode : "editor";
   const changed = state.layoutMode !== normalized;
@@ -369,6 +394,7 @@ function applyLayoutMode(mode, { persist = false } = {}) {
   elements.assistantTitle.textContent = normalized === "focus" ? "当前对话" : "会话与执行";
   if (normalized === "focus" && changed && state.activeFilePath) state.filePanelVisible = true;
   if (normalized === "editor") elements.workbench.classList.remove("focus-explorer-open");
+  syncPanelResizerLabels();
   syncFocusLayoutState();
   applyPanelLayout({ persist });
 }
@@ -413,10 +439,16 @@ function applyPanelLayout({ persist = false } = {}) {
   layout.explorer = clampPanelValue(layout.explorer, PANEL_LIMITS.explorer);
   layout.assistant = clampPanelValue(layout.assistant, PANEL_LIMITS.assistant);
   if (state.layoutMode === "focus") {
-    elements.workbench.style.setProperty("--explorer-width", `${layout.explorer}px`);
-    elements.workbench.style.setProperty("--assistant-width", `${layout.assistant}px`);
-    elements.explorerResizer.setAttribute("aria-valuenow", String(layout.explorer));
-    elements.assistantResizer.setAttribute("aria-valuenow", String(layout.assistant));
+    layout.focusSidebar = clampPanelValue(layout.focusSidebar, PANEL_LIMITS.focusSidebar);
+    layout.focusFile = clampPanelValue(layout.focusFile, PANEL_LIMITS.focusFile);
+    elements.workbench.style.setProperty("--explorer-width", `${layout.focusSidebar}px`);
+    elements.workbench.style.setProperty("--assistant-width", `${layout.focusFile}px`);
+    elements.explorerResizer.setAttribute("aria-valuemin", String(PANEL_LIMITS.focusSidebar.min));
+    elements.explorerResizer.setAttribute("aria-valuemax", String(PANEL_LIMITS.focusSidebar.max));
+    elements.explorerResizer.setAttribute("aria-valuenow", String(layout.focusSidebar));
+    elements.assistantResizer.setAttribute("aria-valuemin", String(PANEL_LIMITS.focusFile.min));
+    elements.assistantResizer.setAttribute("aria-valuemax", String(PANEL_LIMITS.focusFile.max));
+    elements.assistantResizer.setAttribute("aria-valuenow", String(layout.focusFile));
     if (persist) savePanelLayout();
     return;
   }
@@ -444,7 +476,11 @@ function applyPanelLayout({ persist = false } = {}) {
   elements.workbench.style.setProperty("--explorer-width", `${layout.explorer}px`);
   elements.workbench.style.setProperty("--assistant-width", `${layout.assistant}px`);
   assistantPane().style.setProperty("--thread-strip-height", `${layout.threads}px`);
+  elements.explorerResizer.setAttribute("aria-valuemin", String(PANEL_LIMITS.explorer.min));
+  elements.explorerResizer.setAttribute("aria-valuemax", String(PANEL_LIMITS.explorer.max));
   elements.explorerResizer.setAttribute("aria-valuenow", String(layout.explorer));
+  elements.assistantResizer.setAttribute("aria-valuemin", String(PANEL_LIMITS.assistant.min));
+  elements.assistantResizer.setAttribute("aria-valuemax", String(PANEL_LIMITS.assistant.max));
   elements.assistantResizer.setAttribute("aria-valuenow", String(layout.assistant));
   elements.threadResizer.setAttribute("aria-valuenow", String(layout.threads));
   elements.threadResizer.setAttribute("aria-valuemax", String(threadLimits.max));
@@ -453,10 +489,11 @@ function applyPanelLayout({ persist = false } = {}) {
 
 function resizePanelFromPointer(kind, event) {
   const workbenchRect = elements.workbench.getBoundingClientRect();
+  const layoutKey = resizeLayoutKey(kind);
   if (kind === "explorer") {
-    state.panelLayout.explorer = event.clientX - workbenchRect.left - 8;
+    state.panelLayout[layoutKey] = event.clientX - workbenchRect.left - 8;
   } else if (kind === "assistant") {
-    state.panelLayout.assistant = workbenchRect.right - 8 - event.clientX;
+    state.panelLayout[layoutKey] = workbenchRect.right - 8 - event.clientX;
   } else if (kind === "threads") {
     const pane = assistantPane();
     const headerHeight = pane.querySelector(".assistant-header")?.offsetHeight || 59;
@@ -472,6 +509,7 @@ function beginPanelResize(event) {
   if (resizer.classList.contains("panel-resizer-column") && window.innerWidth <= 650) return;
   event.preventDefault();
   resizer.classList.add("active");
+  if (typeof resizer.setPointerCapture === "function") resizer.setPointerCapture(event.pointerId);
   document.body.classList.add("is-resizing", resizer.classList.contains("panel-resizer-row") ? "is-resizing-row" : "is-resizing-column");
   const move = (moveEvent) => resizePanelFromPointer(kind, moveEvent);
   const finish = () => {
@@ -480,6 +518,9 @@ function beginPanelResize(event) {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", finish);
     window.removeEventListener("pointercancel", finish);
+    if (typeof resizer.hasPointerCapture === "function" && resizer.hasPointerCapture(event.pointerId)) {
+      resizer.releasePointerCapture(event.pointerId);
+    }
     applyPanelLayout({ persist: true });
   };
   window.addEventListener("pointermove", move);
@@ -489,6 +530,7 @@ function beginPanelResize(event) {
 
 function adjustPanelWithKeyboard(event) {
   const kind = event.currentTarget.dataset.resize;
+  const layoutKey = resizeLayoutKey(kind);
   const step = event.shiftKey ? 40 : 16;
   let delta = 0;
   if (kind === "threads") {
@@ -501,15 +543,19 @@ function adjustPanelWithKeyboard(event) {
   }
   if (!delta) return;
   event.preventDefault();
-  state.panelLayout[kind] += delta;
+  state.panelLayout[layoutKey] += delta;
   applyPanelLayout({ persist: true });
 }
 
 function resetPanelSize(event) {
   const kind = event.currentTarget.dataset.resize;
-  state.panelLayout[kind] = PANEL_DEFAULTS[kind];
+  const layoutKey = resizeLayoutKey(kind);
+  state.panelLayout[layoutKey] = PANEL_DEFAULTS[layoutKey];
   applyPanelLayout({ persist: true });
-  showToast(`${kind === "explorer" ? "文件栏" : kind === "assistant" ? "对话与执行栏" : "会话列表"}已恢复默认大小`);
+  const panelName = state.layoutMode === "focus"
+    ? (kind === "explorer" ? "对话栏" : kind === "assistant" ? "文件预览栏" : "会话列表")
+    : (kind === "explorer" ? "文件栏" : kind === "assistant" ? "对话与执行栏" : "会话列表");
+  showToast(`${panelName}已恢复默认大小`);
 }
 
 function initializePanelResizers() {

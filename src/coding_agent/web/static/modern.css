@@ -428,14 +428,17 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 
 /* Focus layout: conversations lead, code appears only as contextual evidence. */
 .workbench.layout-focus { grid-template-columns: var(--explorer-width) 8px minmax(520px, 1fr); }
-.layout-focus .conversations-pane { grid-column: 1; display: grid; grid-template-rows: 59px 54px minmax(0, 1fr) auto 58px; background: #f2f4f4; box-shadow: var(--shadow); }
-.layout-focus .assistant-pane { grid-column: 3; --thread-strip-height: 0px; grid-template-rows: 64px 0 0 42px minmax(0, 1fr) 25px; background: #fafbfb; box-shadow: var(--shadow); }
+.layout-focus .conversations-pane { grid-column: 1; grid-row: 1; display: grid; grid-template-rows: 59px 54px minmax(0, 1fr) auto 58px; background: #f2f4f4; box-shadow: var(--shadow); }
+.layout-focus .assistant-pane { grid-column: 3; grid-row: 1; grid-template-rows: 64px 42px minmax(0, 1fr) 25px; background: #fafbfb; box-shadow: var(--shadow); }
 .layout-focus .editor-pane, .layout-focus .explorer-pane, .layout-focus #assistantResizer { display: none; }
-.layout-focus #explorerResizer { grid-column: 2; }
+.layout-focus #explorerResizer { grid-column: 2; grid-row: 1; }
 .layout-focus.has-file-panel { grid-template-columns: var(--explorer-width) 8px minmax(480px, 1fr) 8px minmax(340px, var(--assistant-width)); }
 .layout-focus.has-file-panel .assistant-pane { grid-column: 3; }
-.layout-focus.has-file-panel #assistantResizer { grid-column: 4; display: grid; }
-.layout-focus.has-file-panel .editor-pane { grid-column: 5; display: grid; animation: file-inspector-in .18s ease both; }
+.layout-focus.has-file-panel #assistantResizer { grid-column: 4; grid-row: 1; display: grid; }
+.layout-focus.has-file-panel .editor-pane { grid-column: 5; grid-row: 1; display: grid; animation: file-inspector-in .18s ease both; }
+.layout-focus .panel-resizer-column { z-index: 38; }
+.layout-focus .panel-resizer-column::before { inset: 0 2px; }
+.layout-focus .panel-resizer-column span { height: 42px; opacity: .58; }
 @keyframes file-inspector-in { from { opacity: 0; transform: translateX(8px); } }
 .layout-focus.focus-explorer-open .explorer-pane { position: absolute; z-index: 35; top: 8px; bottom: 8px; left: calc(var(--explorer-width) + 16px); width: min(330px, calc(100% - var(--explorer-width) - 32px)); display: grid; border-color: var(--line-strong); box-shadow: 0 22px 64px rgba(21,28,30,.2); animation: file-drawer-in .16s ease both; }
 .layout-focus .explorer-pane > .account-dock { display: none; }
