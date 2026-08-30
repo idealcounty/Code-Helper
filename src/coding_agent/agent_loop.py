@@ -25,6 +25,7 @@ from .tools.base import ToolError, ToolResult, ToolRisk
 from .tools.registry import ToolRegistry
 from .tools.workspace import Workspace
 from .verifier import CompletionStatus, Verifier
+from .verification_config import VerificationConfig
 from .verification_evidence import build_verification_evidence
 
 
@@ -62,6 +63,7 @@ class AgentRunner:
         cancellation: CancellationToken | None = None,
         run_budget: RunBudget | None = None,
         project_verification_commands: Collection[str] | None = None,
+        verification_config: VerificationConfig | None = None,
         workspace: Workspace | None = None,
     ) -> None:
         self.model_client = model_client
@@ -78,6 +80,7 @@ class AgentRunner:
         self.cancellation = cancellation or CancellationToken()
         self.run_budget = run_budget or RunBudget()
         self.project_verification_commands = tuple(project_verification_commands or ())
+        self.verification_config = verification_config
         self.workspace = workspace
         self._stuck_recovery_attempts = 0
         self._stuck_signature: tuple[str, str, str] | None = None
@@ -1028,7 +1031,11 @@ class AgentRunner:
                 changed_files=state.changed_files,
                 started_sequence=started_sequence,
                 finished_sequence=event.sequence,
-                project_commands=self.project_verification_commands,
+                project_commands=(
+                    self.verification_config.commands_for_state(state)
+                    if self.verification_config is not None
+                    else self.project_verification_commands
+                ),
                 dependency_graph=self._verification_dependency_graph(),
             )
             evidence_payload = evidence.to_dict()

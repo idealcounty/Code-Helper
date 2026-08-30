@@ -14,6 +14,7 @@ from .tokenizer import TokenEstimator
 from .user_memory import UserMemoryService
 from .profiles import get_profile
 from .tools.workspace import Workspace
+from .verification_config import VerificationConfig
 
 
 BASE_SYSTEM_PROMPT = """You are Code Helper, a local coding agent.
@@ -136,6 +137,7 @@ class ContextManager:
         max_repo_map_chars: int = 12_000,
         repo_map_enabled: bool = True,
         project_verification_commands: Collection[str] | None = None,
+        verification_config: VerificationConfig | None = None,
         model_name: str | None = None,
     ) -> None:
         self.system_prompt = system_prompt.strip()
@@ -150,6 +152,7 @@ class ContextManager:
         self.max_repo_map_chars = max_repo_map_chars
         self.repo_map_enabled = repo_map_enabled
         self.project_verification_commands = tuple(project_verification_commands or ())
+        self.verification_config = verification_config
         self.token_estimator = TokenEstimator(model_name)
 
     def build(
@@ -164,9 +167,14 @@ class ContextManager:
         }.get(state.mode, f"Current mode: {state.mode}")
 
         system = f"{self.system_prompt}\n\n{mode_rule}"
-        if self.project_verification_commands:
+        verification_commands = (
+            self.verification_config.commands_for_state(state)
+            if self.verification_config is not None
+            else self.project_verification_commands
+        )
+        if verification_commands:
             commands = "\n".join(
-                f"- {command}" for command in self.project_verification_commands
+                f"- {command}" for command in verification_commands
             )
             system += (
                 "\n\nConfigured project verification commands "

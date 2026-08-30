@@ -24,6 +24,7 @@ from coding_agent.tools import (
     register_shell_tools,
 )
 from coding_agent.tools.base import ToolResult, ToolRisk, ToolSpec
+from coding_agent.verification_config import VerificationConfig, VerificationRule
 
 
 class ScriptedModel:
@@ -208,6 +209,63 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
     }
     assert {"Pre/PostToolUse", "OnVerification"} <= hook_lifecycles
     assert all(event["payload"]["duration_ms"] >= 0 for event in spans)
+
+
+def test_agent_accepts_only_scope_selected_custom_verification(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    verify_command = (
+        "python -c \"from pathlib import Path; "
+        "assert Path('sample.py').read_text() == 'value = 2\\n'\""
+    )
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall("read", "read_file", {"path": "sample.py"})]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "edit",
+                        "apply_patch",
+                        {
+                            "path": "sample.py",
+                            "old_text": "value = 1",
+                            "new_text": "value = 2",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        "verify",
+                        "run_command",
+                        {"command": verify_command, "purpose": "verify"},
+                    )
+                ]
+            ),
+            ModelResponse(content="Changed and verified the value."),
+        ]
+    )
+    runner, _ = _make_runner(tmp_path, model)
+    config = VerificationConfig(
+        rules=(
+            VerificationRule(
+                commands=(verify_command,),
+                task_profiles=("project",),
+                paths=("sample.py",),
+            ),
+        )
+    )
+    runner.verification_config = config
+    runner.context_manager = ContextManager(verification_config=config)
+    state = AgentState.create(session_id="session", max_steps=8, mode="act")
+
+    result = asyncio.run(runner.run_turn(state, "Change sample.py to value 2"))
+
+    assert result.status is AgentStatus.COMPLETED
+    assert state.verification_evidence[-1]["accepted"] is True
+    assert state.verification_evidence[-1]["source"] == "project_inferred"
 
 
 def test_agent_rejects_noop_patch_before_checkpoint_or_mutation(

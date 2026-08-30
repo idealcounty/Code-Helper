@@ -167,6 +167,7 @@ def create_runtime(
         memory_store=memory_store,
         user_memory=user_memory,
         project_verification_commands=verification_config.commands,
+        verification_config=verification_config,
     )
     hooks = HookManager(
         verification=[_verification_context_hook],
@@ -196,6 +197,7 @@ def create_runtime(
         cancellation=cancellation,
         run_budget=run_budget,
         project_verification_commands=verification_config.commands,
+        verification_config=verification_config,
     )
     return AgentRuntime(
         config=config,

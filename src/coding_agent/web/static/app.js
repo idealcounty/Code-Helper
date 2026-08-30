@@ -1068,7 +1068,7 @@ function renderIntelligence(data) {
   const contextSummaryMeta = context.summary_meta || {};
   const budget = data.budget || {};
   const verification = data.verification || { evidence: [] };
-  const verificationConfig = data.verification_config || { commands: [], diagnostics: [] };
+  const verificationConfig = data.verification_config || { commands: [], rules: [], active_commands: [], diagnostics: [] };
   const repo = data.repo_map || {};
   const totals = repo.totals || {};
   const skills = data.skills || { available: [], loaded: [] };
@@ -1118,7 +1118,14 @@ function renderIntelligence(data) {
   const candidateRows = (summaryMemory.candidates || []).map((item) => `<li class="memory-candidate"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">保留</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
   const userRows = (userMemory.recent || []).map((item) => `<li><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   const evidenceRows = (verification.evidence || []).slice(-5).reverse().map((item) => `<li class="evidence-row ${item.accepted ? "accepted" : "rejected"}"><div><span><b>${escapeHtml(String(item.kind || "unknown").toUpperCase())}</b><em>${escapeHtml(item.source || "untrusted")}</em></span><code>${escapeHtml(item.command || "")}</code><small>${escapeHtml(item.reason || "")}</small></div><i title="${item.accepted ? "满足完成契约" : "不满足完成契约"}">${item.accepted ? "✓" : "!"}</i></li>`).join("");
-  const verificationConfigRows = (verificationConfig.commands || []).map((command) => `<li><code>${escapeHtml(command)}</code></li>`).join("");
+  const verificationConfigRows = (verificationConfig.commands || []).map((command) => `<li><span>全局</span><code>${escapeHtml(command)}</code></li>`).join("");
+  const verificationRuleRows = (verificationConfig.rules || []).map((rule) => {
+    const profiles = (rule.task_profiles || []).length ? rule.task_profiles.join(" · ") : "全部任务";
+    const paths = (rule.paths || []).length ? rule.paths.join(" · ") : "全部路径";
+    const commands = (rule.commands || []).map((command) => `<code>${escapeHtml(command)}</code>`).join("<br>");
+    return `<li><span>${escapeHtml(profiles)} · ${escapeHtml(paths)}</span><div>${commands}</div></li>`;
+  }).join("");
+  const verificationConfigCount = (verificationConfig.commands || []).length + (verificationConfig.rules || []).length;
   const permissionRows = (permissions.grants || []).map((grant) => {
     const scope = grant.path_prefix || grant.command_prefix || "当前工作区";
     const expiry = grant.expires_at ? new Date(grant.expires_at * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "未知";
@@ -1147,7 +1154,7 @@ function renderIntelligence(data) {
     <section class="intelligence-section verification-section">
       <div class="intelligence-heading"><div><span class="intel-icon">VER</span><strong>验证证据</strong></div><b class="${verification.fresh ? "status-on" : "status-off"}">${verification.fresh ? "FRESH" : "STALE"}</b></div>
       <ul class="evidence-list">${evidenceRows || '<li class="empty-evidence">尚无验证证据；普通成功命令不会被当作测试。</li>'}</ul>
-      ${verificationConfig.commands?.length ? `<details><summary>项目验证配置（${verificationConfig.commands.length}）</summary><ul class="context-source-list">${verificationConfigRows}</ul></details>` : ""}
+      ${verificationConfigCount ? `<details><summary>项目验证配置（${verificationConfigCount}）</summary><ul class="context-source-list">${verificationConfigRows}${verificationRuleRows}</ul><p class="intel-note">当前作用域已选择 ${(verificationConfig.active_commands || []).length} 条命令。</p></details>` : ""}
       ${verificationConfig.diagnostics?.length ? `<p class="intel-note">验证配置诊断：${verificationConfig.diagnostics.map(escapeHtml).join("；")}</p>` : ""}
       <p class="intel-note">仅用户明确指定，或可识别的测试、构建、Lint、类型检查命令能满足完成契约。</p>
     </section>

@@ -7,6 +7,7 @@ from typing import Any
 from coding_agent.context import ContextManager, _natural_language_paths
 from coding_agent.session import AgentState
 from coding_agent.tools import Workspace
+from coding_agent.verification_config import VerificationConfig, VerificationRule
 
 
 def _assistant(*call_ids: str) -> dict[str, Any]:
@@ -202,3 +203,40 @@ def test_project_rules_report_conflicting_same_heading_sections(tmp_path: Path) 
     assert conflict["other_source"] == "src/AGENTS.md"
     assert conflict["target"] == "src"
     assert context.rule_sources[0]["conflicts"]
+
+
+def test_context_only_injects_verification_commands_for_observed_scope() -> None:
+    config = VerificationConfig(
+        commands=("python -m pytest -q",),
+        rules=(
+            VerificationRule(
+                commands=("python scripts/check_api.py",),
+                task_profiles=("project",),
+                paths=("src/api/**",),
+            ),
+            VerificationRule(
+                commands=("python scripts/check_ui.py",),
+                task_profiles=("project",),
+                paths=("src/web/**",),
+            ),
+        ),
+    )
+    state = AgentState.create(session_id="session", task_profile="project")
+    state.recent_actions.append(
+        {
+            "result_code": "OK",
+            "signature": json.dumps(
+                {
+                    "name": "read_file",
+                    "arguments": {"path": "src/api/users.py"},
+                }
+            )
+        }
+    )
+
+    context = ContextManager(verification_config=config).build(state, [])
+
+    system = context.messages[0]["content"]
+    assert "python -m pytest -q" in system
+    assert "python scripts/check_api.py" in system
+    assert "python scripts/check_ui.py" not in system

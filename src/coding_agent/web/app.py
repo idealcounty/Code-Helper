@@ -660,6 +660,12 @@ def create_app(
             },
             "verification_config": {
                 "commands": list(runtime.verification_config.commands),
+                "rules": [
+                    rule.to_dict() for rule in runtime.verification_config.rules
+                ],
+                "active_commands": list(
+                    runtime.verification_config.commands_for_state(runtime.state)
+                ),
                 "diagnostics": list(runtime.verification_config.diagnostics),
             },
             "observability": {

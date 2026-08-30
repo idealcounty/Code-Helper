@@ -300,6 +300,8 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert intelligence.json()["observability"]["spans"] == []
     assert intelligence.json()["verification_config"] == {
         "commands": [],
+        "rules": [],
+        "active_commands": [],
         "diagnostics": [],
     }
     assert intelligence.json()["storage"]["events"]["max_files"] == 256
