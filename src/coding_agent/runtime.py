@@ -135,6 +135,7 @@ def create_runtime(
     run_budget = RunBudget(
         max_seconds=config.run_timeout,
         token_limit=config.token_budget,
+        session_token_limit=config.session_token_budget,
         max_steps=config.max_steps,
     )
     register_filesystem_tools(registry, workspace)

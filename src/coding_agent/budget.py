@@ -19,11 +19,13 @@ class RunBudget:
 
     max_seconds: float | None = None
     token_limit: int | None = None
+    session_token_limit: int | None = None
     max_steps: int | None = None
     clock: Callable[[], float] = monotonic
     started_at: str = ""
     started_tick: float | None = None
     consumed_tokens: int = 0
+    session_consumed_tokens: int = 0
     # Time already spent before a process restart or approval recovery.  It is
     # deliberately kept out of the public snapshot; ``elapsed_seconds`` is
     # still the stable persisted fact used to restore it.
@@ -63,6 +65,19 @@ class RunBudget:
         except (TypeError, ValueError):
             consumed_value = 0
         self.consumed_tokens = max(0, consumed_value)
+        session_consumed = snapshot.get("session_consumed_tokens", 0)
+        try:
+            session_value = int(session_consumed)
+        except (TypeError, ValueError):
+            session_value = 0
+        self.session_consumed_tokens = max(0, session_value)
+
+    def sync_session_usage(self, total_tokens: int) -> int:
+        """Record the monotonic total usage observed for the current session."""
+        self.session_consumed_tokens = max(
+            self.session_consumed_tokens, max(0, int(total_tokens))
+        )
+        return self.session_consumed_tokens
 
     @property
     def active(self) -> bool:
@@ -108,6 +123,16 @@ class RunBudget:
                 f"Run used {self.consumed_tokens} of {self.token_limit} allowed tokens",
             )
 
+    def check_session_tokens(self) -> None:
+        if (
+            self.session_token_limit is not None
+            and self.session_consumed_tokens >= self.session_token_limit
+        ):
+            raise BudgetExceeded(
+                "SESSION_TOKEN_BUDGET_EXHAUSTED",
+                f"Session used {self.session_consumed_tokens} of {self.session_token_limit} allowed tokens",
+            )
+
     def check_step(self, next_step: int) -> None:
         if self.max_steps is not None and next_step > self.max_steps:
             raise BudgetExceeded(
@@ -127,5 +152,7 @@ class RunBudget:
             ),
             "consumed_tokens": self.consumed_tokens,
             "token_limit": self.token_limit,
+            "session_consumed_tokens": self.session_consumed_tokens,
+            "session_token_limit": self.session_token_limit,
             "max_steps": self.max_steps,
         }

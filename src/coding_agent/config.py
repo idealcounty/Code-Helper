@@ -23,6 +23,7 @@ class AppConfig:
     command_timeout: float = 60.0
     run_timeout: float = 600.0
     token_budget: int | None = None
+    session_token_budget: int | None = None
     result_store_max_bytes: int = 50_000_000
     result_store_max_files: int = 512
     event_store_max_bytes: int = 100_000_000
@@ -59,6 +60,9 @@ class AppConfig:
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
             run_timeout=_positive_float("CODE_HELPER_RUN_TIMEOUT", 600.0),
             token_budget=_optional_positive_int("CODE_HELPER_TOKEN_BUDGET"),
+            session_token_budget=_optional_positive_int(
+                "CODE_HELPER_SESSION_TOKEN_BUDGET"
+            ),
             result_store_max_bytes=_positive_int(
                 "CODE_HELPER_RESULT_STORE_MAX_BYTES", 50_000_000
             ),

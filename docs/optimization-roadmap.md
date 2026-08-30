@@ -72,6 +72,7 @@
 - 共享 `CancellationToken` 可中断模型请求、审批等待和 Tool Task；底层协程若暂时不响应取消，受控等待只给予 1 秒清理窗口，Web 再以 2 秒看门狗强制取消 Turn，避免界面永久停在“正在停止”。
 - `RunBudget` 统一执行 wall-time、Step 和供应商回报 Token 预算，耗尽后以带原因的 `PARTIAL` 结束。
 - 审批或中断工具在进程重启后继续运行时，会从持久化快照恢复已消耗 Token 与已用时间；恢复不会通过重置预算绕过原有 Turn 上限。
+- 可通过 `CODE_HELPER_SESSION_TOKEN_BUDGET` 设置跨独立 Turn 的累计 Token 上限；达到上限后在下一次模型请求前以 `SESSION_TOKEN_BUDGET_EXHAUSTED` 结束。
 - shell 在 Windows 优先把命令加入带 `KILL_ON_JOB_CLOSE` 的 Job Object，取消时关闭作业并以 `taskkill /T /F` 兜底；POSIX 使用独立进程组终止子进程树。超时和取消返回不同结构化代码。
 - Web“智能”面板展示 Step、时间和 Token 遥测，“轨迹”面板展示停止与预算耗尽原因；停止后会用 Session API 校准 WebSocket 状态，避免遗漏终止事件后界面永久锁定。新建或切换对话不再被当前会话的运行状态禁用。
 - 同一 Session 支持连续多轮 `turn_started → turn_finished`；前端用运行版本号丢弃过期状态响应并乐观回显用户消息，终态之后的立即追问会等待上一任务收尾而不是误报 409。未预期的后台异常也会形成 `run_failed` 和最终失败事件，不再静默消失。
@@ -81,9 +82,9 @@
 
 **当前差距**
 
-- 当前预算仍以单 Turn 为边界；恢复同一 Turn 会累计此前已记录的 Token 与耗时，但尚未提供跨多个独立 Turn 的累计费用上限。
+- 当前累计门禁按 Token 计量，尚未提供跨多个独立 Turn 的货币成本上限；恢复同一 Turn 会继续累计此前已记录的 Token 与耗时。
 - 模型流的 Token 硬上限仍受供应商协议和 `max_tokens` 能力约束。
-- Web 智能面板已记录取消请求到模型/进程退出的样本，并计算平均值、P50 和 P95；跨多个独立 Turn 的累计费用上限仍未实现。
+- Web 智能面板已记录取消请求到模型/进程退出的样本，并计算平均值、P50 和 P95；货币成本仍需供应商价格配置后再评估。
 
 **后续加固**
 

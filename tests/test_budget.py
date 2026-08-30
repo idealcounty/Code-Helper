@@ -43,3 +43,15 @@ def test_resume_elapsed_budget_expires_before_new_model_request() -> None:
     with pytest.raises(BudgetExceeded) as error:
         budget.check_time()
     assert error.value.code == "TIME_BUDGET_EXHAUSTED"
+
+
+def test_session_token_budget_is_independent_from_per_turn_budget() -> None:
+    budget = RunBudget(token_limit=100, session_token_limit=150)
+    budget.start()
+    budget.sync_session_usage(150)
+
+    with pytest.raises(BudgetExceeded) as error:
+        budget.check_session_tokens()
+    assert error.value.code == "SESSION_TOKEN_BUDGET_EXHAUSTED"
+    assert budget.consumed_tokens == 0
+    assert budget.session_consumed_tokens == 150

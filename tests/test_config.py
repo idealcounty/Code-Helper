@@ -94,11 +94,13 @@ def test_run_budget_settings_are_loaded(monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "key")
     monkeypatch.setenv("CODE_HELPER_RUN_TIMEOUT", "45.5")
     monkeypatch.setenv("CODE_HELPER_TOKEN_BUDGET", "12000")
+    monkeypatch.setenv("CODE_HELPER_SESSION_TOKEN_BUDGET", "50000")
 
     config = AppConfig.from_env()
 
     assert config.run_timeout == 45.5
     assert config.token_budget == 12000
+    assert config.session_token_budget == 50000
 
 
 def test_result_store_limits_are_loaded(monkeypatch) -> None:

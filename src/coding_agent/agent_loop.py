@@ -272,6 +272,7 @@ class AgentRunner:
             self.run_budget.resume(state.run_budget)
         else:
             self.run_budget.start(max_steps=state.max_steps)
+        self.run_budget.sync_session_usage(_token_usage_total(state.token_usage))
         await self._emit(
             state,
             "run_budget_started",
@@ -345,6 +346,7 @@ class AgentRunner:
                 self.cancellation.cancel("state_cancel_requested")
             self.cancellation.raise_if_cancelled()
             self.run_budget.check_time()
+            self.run_budget.check_session_tokens()
             self.run_budget.check_step(state.step + 1)
 
             schemas = self._allowed_tool_schemas(state.mode, state.task_profile)
@@ -444,6 +446,7 @@ class AgentRunner:
                 },
             )
             self._attach_private_model_state(state, response)
+            self.run_budget.sync_session_usage(_token_usage_total(state.token_usage))
             self.run_budget.check_tokens()
 
             if response.tool_calls:
@@ -1279,6 +1282,19 @@ def _contains_redacted(value: Any) -> bool:
     if isinstance(value, (list, tuple, set)):
         return any(_contains_redacted(item) for item in value)
     return False
+
+
+def _token_usage_total(usage: dict[str, Any]) -> int:
+    total = usage.get("total_tokens")
+    if isinstance(total, int):
+        return max(0, total)
+    prompt = usage.get("prompt_tokens", 0)
+    completion = usage.get("completion_tokens", 0)
+    return max(
+        0,
+        (prompt if isinstance(prompt, int) else 0)
+        + (completion if isinstance(completion, int) else 0),
+    )
 
 
 async def _cancel_operation_task(task: asyncio.Future[Any]) -> None:

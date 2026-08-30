@@ -812,6 +812,25 @@ def test_recovery_start_preserves_persisted_run_budget(tmp_path: Path) -> None:
     assert runner.run_budget.elapsed_seconds >= 7.5
 
 
+def test_session_token_budget_stops_before_next_model_request(tmp_path: Path) -> None:
+    model = ScriptedModel([])
+    runner, store = _make_runner(tmp_path, model)
+    runner.run_budget = RunBudget(session_token_limit=10, max_steps=5)
+    state = AgentState.create(session_id="session", max_steps=5)
+    state.token_usage = {"total_tokens": 10}
+
+    result = asyncio.run(runner.run_turn(state, "continue within session"))
+
+    assert result.status is AgentStatus.PARTIAL
+    assert result.message.startswith("SESSION_TOKEN_BUDGET_EXHAUSTED")
+    assert len(model.seen_messages) == 0
+    assert any(
+        event["type"] == "run_budget_exhausted"
+        and event["payload"]["code"] == "SESSION_TOKEN_BUDGET_EXHAUSTED"
+        for event in store.load()
+    )
+
+
 def test_independent_read_calls_run_in_parallel_and_results_keep_call_order(tmp_path: Path) -> None:
     async def scenario() -> tuple[float, list[dict[str, Any]]]:
         registry = ToolRegistry()
