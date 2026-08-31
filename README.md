@@ -37,8 +37,11 @@ DEEPSEEK_API_KEY=你的 DeepSeek API Key
 CODE_HELPER_BASE_URL=https://api.deepseek.com
 CODE_HELPER_MODEL=deepseek-v4-flash
 
+# 单轮最多 160 个 Agent Step；适合包含多文件生成和验证的复杂任务
+CODE_HELPER_MAX_STEPS=160
+
 # 单轮硬性运行时间（秒）；达到后以 PARTIAL 结束
-CODE_HELPER_RUN_TIMEOUT=600
+CODE_HELPER_RUN_TIMEOUT=4800
 
 # 可选：供应商返回 usage 后，在下一动作前执行 Token 预算门禁
 # CODE_HELPER_TOKEN_BUDGET=50000

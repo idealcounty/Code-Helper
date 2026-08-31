@@ -31,7 +31,7 @@ class AgentState:
     task_profile: str = "project"
     status: AgentStatus = AgentStatus.READY
     step: int = 0
-    max_steps: int = 20
+    max_steps: int = 160
     messages: list[dict[str, Any]] = field(default_factory=list)
     plan: list[dict[str, Any]] = field(default_factory=list)
     changed_files: set[str] = field(default_factory=set)
@@ -67,7 +67,7 @@ class AgentState:
     def create(
         cls,
         *,
-        max_steps: int = 20,
+        max_steps: int = 160,
         mode: str = "act",
         reasoning_mode: str | None = None,
         task_profile: str = "auto",

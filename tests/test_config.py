@@ -14,6 +14,7 @@ CONFIG_ENV_NAMES = {
     "CODE_HELPER_MODEL",
     "CODE_HELPER_THINKING_MODE",
     "CODE_HELPER_REASONING_EFFORT",
+    "CODE_HELPER_MAX_STEPS",
     "CODE_HELPER_RUN_TIMEOUT",
     "CODE_HELPER_TOKEN_BUDGET",
     "CODE_HELPER_SESSION_TOKEN_BUDGET",
@@ -68,6 +69,19 @@ def test_real_environment_overrides_local_file(tmp_path: Path, monkeypatch) -> N
     )
 
     assert AppConfig.from_env().api_key == "from-environment"
+
+
+def test_complex_task_budget_defaults_to_160_steps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _clear_config_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+
+    config = AppConfig.from_env()
+
+    assert config.max_steps == 160
+    assert config.run_timeout == 4800.0
 
 
 def test_deepseek_is_the_default_provider_and_accepts_native_key_name(

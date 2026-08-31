@@ -511,8 +511,8 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert intelligence.json()["repo_map"]["totals"]["files_seen"] == 2
     assert len(intelligence.json()["skills"]["available"]) == 3
     assert intelligence.json()["hooks"]["pipeline_enabled"] is True
-    assert intelligence.json()["budget"]["max_seconds"] == 600.0
-    assert intelligence.json()["budget"]["max_steps"] == 20
+    assert intelligence.json()["budget"]["max_seconds"] == 4800.0
+    assert intelligence.json()["budget"]["max_steps"] == 160
     assert intelligence.json()["observability"]["spans"] == []
     assert intelligence.json()["verification_config"] == {
         "commands": [],

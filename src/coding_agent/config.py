@@ -20,10 +20,10 @@ class AppConfig:
     model: str = DEEPSEEK_DEFAULT_MODEL
     thinking_mode: str | None = None
     reasoning_effort: str | None = None
-    max_steps: int = 20
+    max_steps: int = 160
     request_timeout: float = 120.0
     command_timeout: float = 60.0
-    run_timeout: float = 600.0
+    run_timeout: float = 4800.0
     token_budget: int | None = None
     session_token_budget: int | None = None
     max_output_tokens: int | None = None
@@ -106,10 +106,10 @@ class AppConfig:
                 "CODE_HELPER_THINKING_MODE", {"enabled", "disabled"}
             ),
             reasoning_effort=reasoning_effort,
-            max_steps=_positive_int("CODE_HELPER_MAX_STEPS", 20),
+            max_steps=_positive_int("CODE_HELPER_MAX_STEPS", 160),
             request_timeout=_positive_float("CODE_HELPER_REQUEST_TIMEOUT", 120.0),
             command_timeout=_positive_float("CODE_HELPER_COMMAND_TIMEOUT", 60.0),
-            run_timeout=_positive_float("CODE_HELPER_RUN_TIMEOUT", 600.0),
+            run_timeout=_positive_float("CODE_HELPER_RUN_TIMEOUT", 4800.0),
             token_budget=_optional_positive_int("CODE_HELPER_TOKEN_BUDGET"),
             session_token_budget=_optional_positive_int(
                 "CODE_HELPER_SESSION_TOKEN_BUDGET"
