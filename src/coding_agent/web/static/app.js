@@ -37,6 +37,9 @@ const state = {
   approvalPolicy: "ask",
   pendingApproval: null,
   seenSequences: new Set(),
+  restoringHistory: false,
+  historyBuffer: null,
+  historyMetadata: null,
   selectedFilePath: null,
   selectedFileRow: null,
   openFiles: [],
@@ -626,7 +629,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     if (!preserveEditor) resetEditor();
     setRunning(false);
     connectSocket();
-    await Promise.all([loadRootFiles(), loadWorkspaceSessions(), loadIntelligence()]);
+    await Promise.all([loadRootFiles(), loadWorkspaceSessions()]);
     saveWorkspaceState();
     if (!restoring) showToast(sessionId ? "已切换对话" : "工作区已打开");
     return true;
@@ -677,6 +680,9 @@ function enableWorkspaceControls(enabled) {
 }
 
 function resetConversationSurface() {
+  state.restoringHistory = false;
+  state.historyBuffer = null;
+  state.historyMetadata = null;
   elements.messageList.innerHTML = '<div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>开始一段新的对话</h3><p>描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div>';
   elements.thinkingIndicator = elements.messageList.querySelector("#thinkingIndicator");
   elements.thinkingStatus = elements.messageList.querySelector("#thinkingStatus");
@@ -696,7 +702,24 @@ function connectSocket() {
   state.socket = socket;
   socket.onopen = () => reconcileRunState(sessionId, { quiet: true, epoch: state.runEpoch });
   socket.onmessage = (message) => {
-    if (state.sessionId === sessionId) handleEvent(JSON.parse(message.data));
+    if (state.sessionId !== sessionId) return;
+    const event = JSON.parse(message.data);
+    if (event.type === "history_start") {
+      state.historyBuffer = [];
+      state.historyMetadata = event.payload || {};
+      return;
+    }
+    if (event.type === "history_chunk") {
+      if (state.historyBuffer) state.historyBuffer.push(...(event.payload?.events || []));
+      return;
+    }
+    if (event.type === "history_end") {
+      restoreEventHistory(state.historyBuffer || [], state.historyMetadata || {});
+      state.historyBuffer = null;
+      state.historyMetadata = null;
+      return;
+    }
+    handleEvent(event);
   };
   socket.onclose = () => {
     if (state.socket === socket && state.sessionId === sessionId) setTimeout(connectSocket, 1200);
@@ -1295,9 +1318,100 @@ async function changeApprovalPolicy() {
   }
 }
 
-function handleEvent(event) {
+function restoreHistoricalEvent(event) {
+  const payload = event.payload || {};
+  switch (event.type) {
+    case "turn_started": addMessage("user", payload.message); break;
+    case "run_cancel_requested": addActivity("请求停止任务", "等待当前操作安全退出", "warning"); break;
+    case "run_cancelled": addActivity("任务已停止", cancellationReason(payload.reason), "failure"); break;
+    case "run_budget_exhausted": addActivity("运行预算已耗尽", `${payload.code || "BUDGET_EXHAUSTED"} · ${payload.message || ""}`, "warning"); break;
+    case "run_failed": addActivity("任务执行失败", `${payload.code || "UNEXPECTED_AGENT_ERROR"} · ${payload.message || ""}`, "failure"); break;
+    case "approval_policy_changed": addActivity("审批策略已更改", approvalPolicyLabel(payload.policy || "ask"), payload.policy === "full" ? "warning" : "success"); break;
+    case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
+    case "context_built": {
+      const selectedCount = Number(payload.repo_map_selected_count || 0);
+      addActivity("上下文已构建", `Repo Map ${selectedCount} 个文件 · ${formatNumber(payload.estimated_chars || 0)} 字符`, "success");
+      break;
+    }
+    case "task_profile_selected": addActivity("任务类型已确定", `${payload.profile || "project"} · ${payload.reason || ""}`, "success"); break;
+    case "context_compacted": addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning"); break;
+    case "model_started": addActivity("模型处理", "已请求模型选择下一步操作"); break;
+    case "stuck_recovery": addActivity("检测到重复编辑，正在恢复", payload.message || "请重新读取文件后选择下一步", "warning"); break;
+    case "duplicate_write_satisfied": addActivity("已阻止重复写入", payload.message || "目标内容已经存在", "warning"); break;
+    case "stuck_terminal": addActivity("已停止重复写入", payload.message || "已保留当前修改", "warning"); break;
+    case "assistant_response":
+      if (payload.content) addMessage("agent", payload.content);
+      if (payload.tool_calls?.length) addActivity("模型选择工具", payload.tool_calls.map((call) => call.name).join(", "));
+      break;
+    case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); break;
+    case "tool_result": {
+      const result = payload.result || {};
+      addActivity(`${result.ok ? "完成" : "失败"} ${payload.name}`, `${result.code || ""} · ${result.message || ""}`, result.ok ? "success" : "failure");
+      break;
+    }
+    case "plan_updated": renderPlan(payload.plan || []); addActivity("计划已更新", payload.reason || "执行步骤发生变化", "success"); break;
+    case "approval_requested": addActivity(`等待批准 ${payload.name}`, payload.reason, "warning"); break;
+    case "verification_required": addActivity("需要验证", payload.reason, "failure"); break;
+    case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
+    case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
+    case "checkpoint_tracking_failed": addActivity("检查点跟踪失败", `${payload.code || ""} · ${payload.message || ""}`, "failure"); break;
+    case "checkpoint_restored": addActivity(payload.forced ? "已强制回滚本轮修改" : "已回滚本轮修改", (payload.files || []).join(", "), payload.forced ? "warning" : "success"); break;
+    case "verification_recorded": {
+      const evidence = payload.evidence || {};
+      addActivity(evidence.accepted ? "验证证据已接受" : "验证证据不足", `${String(evidence.kind || "unknown").toUpperCase()} · ${evidence.reason || ""}`, evidence.accepted ? "success" : "warning");
+      break;
+    }
+    case "turn_finished": addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); break;
+    default: break;
+  }
+}
+
+function restoreEventHistory(events, metadata = {}) {
+  state.restoringHistory = true;
+  let assistantParts = [];
+  const flushAssistantParts = () => {
+    if (!assistantParts.length) return;
+    addMessage("agent", assistantParts.join("\n\n"));
+    assistantParts = [];
+  };
+  try {
+    for (const event of events) {
+      if (event.sequence && state.seenSequences.has(event.sequence)) continue;
+      if (event.sequence) state.seenSequences.add(event.sequence);
+      if (event.type === "turn_started") flushAssistantParts();
+      if (event.type === "assistant_response") {
+        const payload = event.payload || {};
+        if (payload.content) assistantParts.push(payload.content);
+        if (payload.tool_calls?.length) addActivity("模型选择工具", payload.tool_calls.map((call) => call.name).join(", "));
+        continue;
+      }
+      if (event.type === "turn_finished") flushAssistantParts();
+      restoreHistoricalEvent(event);
+    }
+    flushAssistantParts();
+  } finally {
+    state.restoringHistory = false;
+    streamingAgentMessage = null;
+    hideThinkingIndicator();
+    hideRunProgress();
+    finishLiveActivity();
+  }
+  if (metadata.status === "waiting_approval" && metadata.pending_approval) {
+    showApproval(metadata.pending_approval);
+  } else {
+    elements.approvalBackdrop.classList.add("hidden");
+  }
+  setRunning(Boolean(metadata.running));
+  requestAnimationFrame(() => {
+    elements.messageList.scrollTop = elements.messageList.scrollHeight;
+    elements.activityList.scrollTop = elements.activityList.scrollHeight;
+  });
+}
+
+function handleEvent(event, { historical = false } = {}) {
   if (event.sequence && state.seenSequences.has(event.sequence)) return;
   if (event.sequence) state.seenSequences.add(event.sequence);
+  if (historical) return restoreHistoricalEvent(event);
   const payload = event.payload || {};
   switch (event.type) {
     case "turn_started": {
@@ -1429,7 +1543,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": hideThinkingIndicator(); hideRunProgress(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); schedulePendingModeSync(); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": hideThinkingIndicator(); hideRunProgress(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); schedulePendingModeSync(); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); refreshIntelligenceIfVisible(); break;
     default: break;
   }
 }
@@ -1461,7 +1575,7 @@ function addMessage(role, content) {
   renderMessageBody(message.querySelector(".message-body"), content, role);
   elements.messageList.append(message);
   if (role === "user") registerUserQuestion(message, content);
-  elements.messageList.scrollTop = elements.messageList.scrollHeight;
+  if (!state.restoringHistory) elements.messageList.scrollTop = elements.messageList.scrollHeight;
   return message;
 }
 
@@ -1603,7 +1717,7 @@ function addActivity(title, detail, className = "") {
   item.className = `activity-item ${className}`;
   item.innerHTML = `<i></i><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail || "")}</span></div>`;
   elements.activityList.append(item);
-  elements.activityList.scrollTop = elements.activityList.scrollHeight;
+  if (!state.restoringHistory) elements.activityList.scrollTop = elements.activityList.scrollHeight;
   return item;
 }
 

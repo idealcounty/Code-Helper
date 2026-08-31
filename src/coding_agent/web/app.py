@@ -9,6 +9,7 @@ import os
 import secrets
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Literal
@@ -167,16 +168,137 @@ def _directory_entries(directory: Path) -> list[Path]:
     )
 
 
-def _load_event_file(path: Path) -> list[dict[str, Any]]:
+_UI_HISTORY_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
+    "turn_started": ("message",),
+    "run_cancel_requested": ("reason",),
+    "run_cancelled": ("reason",),
+    "run_budget_exhausted": ("code", "message"),
+    "run_failed": ("code", "message"),
+    "approval_policy_changed": ("policy",),
+    "step_started": ("step",),
+    "task_profile_selected": ("profile", "reason"),
+    "context_compacted": ("estimated_chars",),
+    "model_started": (),
+    "stuck_recovery": ("message",),
+    "duplicate_write_satisfied": ("message",),
+    "stuck_terminal": ("message",),
+    "plan_updated": ("plan", "reason"),
+    "approval_requested": ("name", "reason"),
+    "verification_required": ("reason",),
+    "repair_attempt": ("attempt", "max_attempts", "reason"),
+    "checkpoint_created": ("path",),
+    "checkpoint_tracking_failed": ("code", "message"),
+    "checkpoint_restored": ("files", "forced"),
+    "turn_finished": ("status", "message"),
+}
+
+
+def _compact_ui_history_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep only stable, bounded data required to restore the visible UI."""
+
+    event_type = str(event.get("type") or "")
+    payload = event.get("payload")
+    source = payload if isinstance(payload, dict) else {}
+    if event_type == "assistant_response":
+        compact_payload = {
+            "content": str(source.get("content") or ""),
+            "tool_calls": [
+                {"name": str(call.get("name") or "")}
+                for call in source.get("tool_calls") or []
+                if isinstance(call, dict) and call.get("name")
+            ],
+        }
+    elif event_type == "tool_started":
+        arguments = source.get("arguments")
+        argument_source = arguments if isinstance(arguments, dict) else {}
+        compact_payload = {
+            "name": str(source.get("name") or ""),
+            "arguments": {
+                key: argument_source[key]
+                for key in ("path", "command", "query", "pattern")
+                if key in argument_source
+            },
+        }
+    elif event_type == "tool_result":
+        result = source.get("result")
+        result_source = result if isinstance(result, dict) else {}
+        compact_payload = {
+            "name": str(source.get("name") or ""),
+            "result": {
+                "ok": bool(result_source.get("ok")),
+                "code": str(result_source.get("code") or ""),
+                "message": str(result_source.get("message") or "")[:1000],
+            },
+        }
+    elif event_type == "context_built":
+        repo_map = source.get("repo_map")
+        repo_source = repo_map if isinstance(repo_map, dict) else {}
+        compact_payload = {
+            "estimated_chars": source.get("estimated_chars", 0),
+            "repo_map_selected_count": len(repo_source.get("selected") or []),
+        }
+    elif event_type == "verification_recorded":
+        evidence = source.get("evidence")
+        evidence_source = evidence if isinstance(evidence, dict) else {}
+        compact_payload = {
+            "evidence": {
+                key: evidence_source.get(key)
+                for key in ("accepted", "kind", "reason")
+            }
+        }
+    elif event_type in _UI_HISTORY_PAYLOAD_KEYS:
+        compact_payload = {
+            key: source.get(key) for key in _UI_HISTORY_PAYLOAD_KEYS[event_type]
+        }
+    else:
+        return None
+    compact_event = {
+        key: event.get(key)
+        for key in ("event_id", "session_id", "turn_id", "sequence", "timestamp", "type")
+        if key in event
+    }
+    compact_event["type"] = event_type
+    compact_event["payload"] = compact_payload
+    return compact_event
+
+
+_UI_HISTORY_TYPE_MARKERS = tuple(
+    f'"type": "{event_type}"'.encode("utf-8")
+    for event_type in (
+        *_UI_HISTORY_PAYLOAD_KEYS,
+        "assistant_response",
+        "tool_started",
+        "tool_result",
+        "context_built",
+        "verification_recorded",
+    )
+)
+
+
+@lru_cache(maxsize=128)
+def _compact_ui_history_from_file(
+    path_string: str, mtime_ns: int, size: int
+) -> tuple[dict[str, Any], ...]:
+    del mtime_ns, size  # These values intentionally invalidate the cache key.
     events: list[dict[str, Any]] = []
     try:
-        with path.open("r", encoding="utf-8") as handle:
+        with Path(path_string).open("rb") as handle:
             for line in handle:
-                if line.strip():
-                    events.append(json.loads(line))
-    except (OSError, json.JSONDecodeError):
-        return []
-    return events
+                prefix = line[:256]
+                if not any(marker in prefix for marker in _UI_HISTORY_TYPE_MARKERS):
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                compact = _compact_ui_history_event(parsed)
+                if compact is not None:
+                    events.append(compact)
+    except OSError:
+        return ()
+    return tuple(events)
 
 
 def _load_session_archive(root: Path) -> dict[str, str]:
@@ -240,6 +362,58 @@ def _session_summary(
         if event.get("type") == "turn_finished":
             status = str((event.get("payload") or {}).get("status", "ready"))
             break
+    return {
+        "session_id": session_id,
+        "title": first_message,
+        "preview": preview,
+        "status": status,
+        "updated_at": updated_at,
+    }
+
+
+@lru_cache(maxsize=512)
+def _session_summary_from_file(
+    session_id: str,
+    path_string: str,
+    updated_at: str,
+    mtime_ns: int,
+    size: int,
+) -> dict[str, Any]:
+    del mtime_ns, size  # These values intentionally invalidate the cache key.
+    path = Path(path_string)
+    first_message = "新对话"
+    preview = "尚未发送消息"
+    status = "ready"
+    try:
+        with path.open("rb") as handle:
+            for line in handle:
+                prefix = line[:256]
+                if not any(
+                    marker in prefix
+                    for marker in (
+                        b'"type": "turn_started"',
+                        b'"type": "assistant_response"',
+                        b'"type": "turn_finished"',
+                    )
+                ):
+                    continue
+                event = json.loads(line)
+                payload = event.get("payload") or {}
+                event_type = event.get("type")
+                if (
+                    event_type == "turn_started"
+                    and first_message == "新对话"
+                    and payload.get("message")
+                ):
+                    message = str(payload["message"]).strip()
+                    first_message = message[:42]
+                    preview = message[:72]
+                elif event_type == "assistant_response" and payload.get("content"):
+                    preview = str(payload["content"]).strip()[:72]
+                elif event_type == "turn_finished":
+                    status = str(payload.get("status", "ready"))
+    except (OSError, json.JSONDecodeError):
+        pass
     return {
         "session_id": session_id,
         "title": first_message,
@@ -681,8 +855,12 @@ def create_app(
             for event_path in session_root.glob("*.jsonl"):
                 stat = event_path.stat()
                 updated = datetime.fromtimestamp(stat.st_mtime, UTC).isoformat()
-                summaries[event_path.stem] = _session_summary(
-                    event_path.stem, _load_event_file(event_path), updated
+                summaries[event_path.stem] = _session_summary_from_file(
+                    event_path.stem,
+                    str(event_path),
+                    updated,
+                    stat.st_mtime_ns,
+                    stat.st_size,
                 )
         for session_id, session in manager.sessions.items():
             if session.runtime.workspace.root != root or session_id in summaries:
@@ -1619,11 +1797,36 @@ def create_app(
         await websocket.accept()
         queue, unsubscribe = session.runtime.event_bus.create_queue()
         try:
-            history = session.runtime.event_store.load()
-            last_sequence = 0
-            for event in history:
-                last_sequence = max(last_sequence, int(event.get("sequence", 0)))
-                await websocket.send_json(event)
+            event_path = session.runtime.event_store.path
+            if event_path.exists():
+                event_stat = event_path.stat()
+                ui_history = list(
+                    _compact_ui_history_from_file(
+                        str(event_path), event_stat.st_mtime_ns, event_stat.st_size
+                    )
+                )
+            else:
+                ui_history = []
+            last_sequence = session.runtime.event_bus.sequence
+            await websocket.send_json(
+                {
+                    "type": "history_start",
+                    "payload": {
+                        "event_count": len(ui_history),
+                        "running": session.running,
+                        "status": session.runtime.state.status.value,
+                        "pending_approval": session.runtime.state.pending_approval,
+                    },
+                }
+            )
+            for offset in range(0, len(ui_history), 200):
+                await websocket.send_json(
+                    {
+                        "type": "history_chunk",
+                        "payload": {"events": ui_history[offset : offset + 200]},
+                    }
+                )
+            await websocket.send_json({"type": "history_end", "payload": {}})
             while True:
                 event = await queue.get()
                 if event.sequence > last_sequence:

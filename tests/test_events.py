@@ -81,6 +81,31 @@ def test_event_bus_links_events_and_resumes_chain_after_restart(tmp_path: Path) 
     assert resumed.causation_id == explicit.event_id
 
 
+def test_event_bus_reads_current_tail_without_loading_full_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = EventStore(tmp_path, "session")
+    bus = EventBus(store)
+    last = asyncio.run(
+        bus.publish(AgentEvent(type="turn_started", session_id="session", turn_id="turn"))
+    )
+
+    def fail_full_load():
+        raise AssertionError("current event stores should use tail metadata")
+
+    monkeypatch.setattr(store, "load", fail_full_load)
+    restarted = EventBus(store)
+
+    assert restarted.sequence == 1
+    resumed = asyncio.run(
+        restarted.publish(
+            AgentEvent(type="turn_finished", session_id="session", turn_id="turn")
+        )
+    )
+    assert resumed.sequence == 2
+    assert resumed.causation_id == last.event_id
+
+
 def test_event_store_discards_only_corrupt_trailing_line(tmp_path: Path) -> None:
     store = EventStore(tmp_path, "session")
     valid = AgentEvent(type="turn_started", session_id="session", turn_id="turn").to_dict()

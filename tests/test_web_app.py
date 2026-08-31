@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import threading
 import time
 from pathlib import Path
@@ -14,12 +15,70 @@ from starlette.websockets import WebSocketDisconnect
 from coding_agent.config import AppConfig
 from coding_agent.events import AgentEvent
 from coding_agent.model import ModelResponse, ToolCall
-from coding_agent.web.app import create_app
+from coding_agent.web.app import (
+    _compact_ui_history_event,
+    _session_summary_from_file,
+    create_app,
+)
 from coding_agent.session import AgentStatus
 
 
 def _config() -> AppConfig:
     return AppConfig(api_key="test-key", base_url="https://example.invalid/v1")
+
+
+def test_ui_history_compaction_drops_stream_chunks_and_large_tool_data() -> None:
+    assert _compact_ui_history_event(
+        {"type": "assistant_delta", "payload": {"content": "partial"}}
+    ) is None
+
+    compact = _compact_ui_history_event(
+        {
+            "type": "tool_result",
+            "sequence": 7,
+            "payload": {
+                "name": "read_file",
+                "result": {
+                    "ok": True,
+                    "code": "OK",
+                    "message": "done",
+                    "data": {"content": "x" * 100_000},
+                },
+            },
+        }
+    )
+
+    assert compact == {
+        "sequence": 7,
+        "type": "tool_result",
+        "payload": {
+            "name": "read_file",
+            "result": {"ok": True, "code": "OK", "message": "done"},
+        },
+    }
+
+
+def test_session_summary_reads_only_stable_events_from_file(tmp_path: Path) -> None:
+    event_path = tmp_path / "session.jsonl"
+    events = [
+        {"type": "turn_started", "payload": {"message": "Build a website"}},
+        {"type": "tool_output_delta", "payload": {"content": "x" * 100_000}},
+        {"type": "assistant_response", "payload": {"content": "## Finished"}},
+        {"type": "turn_finished", "payload": {"status": "completed"}},
+    ]
+    event_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    stat = event_path.stat()
+
+    summary = _session_summary_from_file(
+        "session", str(event_path), "2026-08-31T00:00:00Z", stat.st_mtime_ns, stat.st_size
+    )
+
+    assert summary["title"] == "Build a website"
+    assert summary["preview"] == "## Finished"
+    assert summary["status"] == "completed"
 
 
 def test_health_and_static_index() -> None:
@@ -132,6 +191,11 @@ def test_health_and_static_index() -> None:
     assert "function updateLiveActivity(" in frontend_bundle.text
     assert 'data-live-activity="model"' in frontend_bundle.text
     assert "case \"assistant_delta\"" in frontend_bundle.text
+    assert 'event.type === "history_start"' in frontend_bundle.text
+    assert 'event.type === "history_chunk"' in frontend_bundle.text
+    assert 'event.type === "history_end"' in frontend_bundle.text
+    assert "restoreEventHistory" in frontend_bundle.text
+    assert "restoreHistoricalEvent" in frontend_bundle.text
     assert ".thinking-indicator" in modern_styles.text
     assert ".run-progress" in modern_styles.text
     assert ".layout-focus .composer {" in modern_styles.text
@@ -999,6 +1063,42 @@ def test_websocket_receives_agent_events(tmp_path: Path) -> None:
     assert "assistant_response" in event_types
     assert "turn_finished" in event_types
     assert assistant_content == "Hello from the self-written agent loop."
+
+
+def test_websocket_batches_completed_history_before_live_events(tmp_path: Path) -> None:
+    application = create_app(_config(), model_client_factory=FinalAnswerModel)
+    with TestClient(application) as client:
+        response = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = response.json()["session_id"]
+        sent = client.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"content": "Restore this conversation"},
+        )
+        assert sent.status_code == 202
+
+        deadline = time.monotonic() + 2
+        details = client.get(f"/api/sessions/{session_id}").json()
+        while details["running"] and time.monotonic() < deadline:
+            time.sleep(0.02)
+            details = client.get(f"/api/sessions/{session_id}").json()
+
+        with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
+            start = websocket.receive_json()
+            chunk = websocket.receive_json()
+            end = websocket.receive_json()
+
+    assert details["running"] is False
+    assert start["type"] == "history_start"
+    assert start["payload"]["running"] is False
+    assert start["payload"]["event_count"] > 0
+    assert chunk["type"] == "history_chunk"
+    history_types = [event["type"] for event in chunk["payload"]["events"]]
+    assert "turn_started" in history_types
+    assert "assistant_response" in history_types
+    assert "turn_finished" in history_types
+    assert end["type"] == "history_end"
 
 
 def test_websocket_supports_multiple_turns_in_same_session(tmp_path: Path) -> None:

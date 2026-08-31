@@ -304,6 +304,10 @@ class EventBus:
 
         return queue, self.subscribe(enqueue)
 
+    @property
+    def sequence(self) -> int:
+        return self._sequence
+
     async def publish(self, event: AgentEvent) -> AgentEvent:
         async with self._lock:
             self._sequence += 1
@@ -325,6 +329,35 @@ class EventBus:
         return event
 
     def _load_tail_metadata(self) -> tuple[int, str | None]:
+        path = self.store.path
+        if not path.exists():
+            return 0, None
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                end = handle.tell()
+                window = min(end, 64 * 1024)
+                handle.seek(end - window)
+                data = handle.read(window)
+            lines = data.splitlines()
+            if end > window and lines:
+                lines = lines[1:]  # The first line may start in the middle.
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                try:
+                    tail = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(tail, dict):
+                    continue
+                sequence = tail.get("sequence")
+                if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > 0:
+                    return sequence, str(tail.get("event_id") or "") or None
+        except OSError:
+            return 0, None
+
+        # Legacy stores without sequence metadata need the normalizer in load().
         events = self.store.load()
         if not events:
             return 0, None
