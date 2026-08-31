@@ -490,7 +490,11 @@ class MessageRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    tool_call_id: str
+    # ``tool_call_id`` is required for new clients.  Keep it optional at the
+    # transport boundary so a cached older UI can still resolve the single
+    # pending approval from the server-side session state instead of getting a
+    # validation-only 422 response.
+    tool_call_id: str | None = Field(default=None, min_length=1)
     approved: bool
     scope: Literal["once", "session"] = "once"
     ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
@@ -1424,12 +1428,17 @@ def create_app(
         session_id: str, request: ApprovalRequest
     ) -> dict[str, Any]:
         session = manager.get(session_id)
+        pending = session.runtime.state.pending_approval or {}
+        pending_call = pending.get("call") or {}
+        tool_call_id = str(request.tool_call_id or pending_call.get("id") or "").strip()
+        if not tool_call_id:
+            raise HTTPException(status_code=409, detail="Approval is no longer pending")
         grant_details: dict[str, Any] | None = None
         if request.approved and request.scope == "session":
             state = session.runtime.state
             pending = state.pending_approval or {}
             call = pending.get("call") or {}
-            if str(call.get("id") or "") != request.tool_call_id:
+            if str(call.get("id") or "") != tool_call_id:
                 raise HTTPException(status_code=409, detail="Approval is no longer pending")
             if pending.get("redacted"):
                 raise HTTPException(
@@ -1479,7 +1488,7 @@ def create_app(
                 )
             )
         try:
-            session.approval_broker.resolve(request.tool_call_id, request.approved)
+            session.approval_broker.resolve(tool_call_id, request.approved)
         except KeyError as exc:
             raise HTTPException(status_code=409, detail="Approval is no longer pending") from exc
         return {

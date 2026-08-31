@@ -143,6 +143,9 @@ def test_health_and_static_index() -> None:
     assert frontend_bundle.text.index("CodeHelperRendering") < frontend_bundle.text.index("const state")
     assert "file-preview-notice" in frontend_bundle.text
     assert "grantButton" in frontend_bundle.text
+    assert "function normalizeApprovalPayload(payload = {})" in frontend_bundle.text
+    assert "tool_call_id: toolCallId" in frontend_bundle.text
+    assert 'source.tool_call_id || source.toolCallId || source.id || nestedCall.id' in frontend_bundle.text
     assert 'case "model_progress"' in frontend_bundle.text
     assert "reconcileRunState(sessionId," in frontend_bundle.text
     assert "archived_sessions" in frontend_bundle.text
@@ -744,6 +747,30 @@ def test_session_scoped_approval_grant_is_limited_and_revocable(tmp_path: Path) 
     assert grants.status_code == 200
     assert len(grants.json()["grants"]) == 1
     assert revoked.json() == {"revoked": True, "grant_id": grant_id}
+
+
+def test_approval_endpoint_accepts_legacy_missing_id_when_one_is_pending(tmp_path: Path) -> None:
+    app = create_app(_config())
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        session = app.state.session_manager.get(session_id)
+        session.runtime.state.pending_approval = {
+            "call": {"id": "legacy-call", "name": "write_file", "arguments": {}},
+            "remaining": [],
+            "reason": "File changes require approval",
+        }
+
+        resolved = client.post(
+            f"/api/sessions/{session_id}/approval",
+            json={"approved": False},
+        )
+
+    assert resolved.status_code == 200
+    assert resolved.json()["resolved"] is True
+    assert resolved.json()["approved"] is False
 
 
 def test_session_approval_policy_is_configurable_and_observable(tmp_path: Path) -> None:

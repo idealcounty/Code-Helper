@@ -1265,8 +1265,15 @@ function requestCheckpointRestore(force, confirmedHashes = null, paths = null) {
 
 async function resolveApproval(approved, scope = "once") {
   if (!state.pendingApproval) return;
+  const toolCallId = String(state.pendingApproval.tool_call_id || state.pendingApproval.id || "").trim();
+  if (!toolCallId) {
+    elements.approvalBackdrop.classList.add("hidden");
+    state.pendingApproval = null;
+    showToast("审批请求已失效，请重新发送任务");
+    return;
+  }
   try {
-    const result = await api(`/api/sessions/${state.sessionId}/approval`, { method: "POST", body: JSON.stringify({ tool_call_id: state.pendingApproval.id, approved, scope }) });
+    const result = await api(`/api/sessions/${state.sessionId}/approval`, { method: "POST", body: JSON.stringify({ tool_call_id: toolCallId, approved, scope }) });
     elements.approvalBackdrop.classList.add("hidden");
     state.pendingApproval = null;
     if (result.grant) {
@@ -1274,7 +1281,15 @@ async function resolveApproval(approved, scope = "once") {
       showToast(`已授予本会话权限（${scopeText}）`);
       loadIntelligence();
     }
-  } catch (error) { showToast(error.message); }
+  } catch (error) {
+    if (error.status === 409 || error.status === 422) {
+      elements.approvalBackdrop.classList.add("hidden");
+      state.pendingApproval = null;
+      showToast(error.status === 422 ? "审批请求格式已失效，请重新发送任务" : "审批请求已过期，请重新发送任务");
+      return;
+    }
+    showToast(error.message);
+  }
 }
 
 function updateApprovalPolicyVisual() {
@@ -1747,11 +1762,32 @@ function renderPlan(plan) {
   elements.planList.innerHTML = items.length ? items.map((item, index) => `<div class="plan-item ${escapeHtml(item.status || "pending")}"><span>${item.status === "completed" ? "✓" : index + 1}</span><p>${escapeHtml(item.step || "")}</p></div>`).join("") : '<div class="view-empty">当前会话还没有执行计划。</div>';
 }
 
+function normalizeApprovalPayload(payload = {}) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const nestedCall = source.call && typeof source.call === "object" ? source.call : {};
+  const request = source.request && typeof source.request === "object" ? source.request : {};
+  const call = {
+    id: String(source.tool_call_id || source.toolCallId || source.id || nestedCall.id || request.tool_call_id || request.id || "").trim(),
+    name: String(source.name || nestedCall.name || request.name || "").trim(),
+    arguments: source.arguments ?? nestedCall.arguments ?? request.arguments ?? {},
+  };
+  return {
+    ...source,
+    id: call.id,
+    tool_call_id: call.id,
+    name: call.name || "未知操作",
+    arguments: call.arguments,
+    call,
+    reason: String(source.reason || "此操作需要你的明确批准"),
+  };
+}
+
 function showApproval(payload) {
-  state.pendingApproval = payload;
-  elements.approvalTitle.textContent = `允许 ${payload.name}？`;
-  elements.approvalReason.textContent = payload.reason;
-  elements.approvalArguments.textContent = JSON.stringify(payload.arguments, null, 2);
+  const normalized = normalizeApprovalPayload(payload);
+  state.pendingApproval = normalized;
+  elements.approvalTitle.textContent = `允许 ${normalized.name}？`;
+  elements.approvalReason.textContent = normalized.reason;
+  elements.approvalArguments.textContent = JSON.stringify(normalized.arguments, null, 2);
   elements.approvalBackdrop.classList.remove("hidden");
   elements.denyButton.focus();
 }
