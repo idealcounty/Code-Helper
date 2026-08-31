@@ -261,6 +261,27 @@ def test_create_session_for_local_workspace(tmp_path: Path) -> None:
     assert details.json()["running"] is False
 
 
+def test_switching_mode_in_same_session_updates_runtime_and_history(tmp_path: Path) -> None:
+    with TestClient(create_app(_config())) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"}
+        )
+        session_id = created.json()["session_id"]
+        changed = client.post(
+            f"/api/sessions/{session_id}/mode", json={"mode": "act"}
+        )
+        details = client.get(f"/api/sessions/{session_id}")
+        events = client.get(f"/api/sessions/{session_id}/events")
+
+    assert changed.status_code == 200
+    assert changed.json() == {"mode": "act"}
+    assert details.json()["mode"] == "act"
+    assert any(
+        event["type"] == "mode_changed" and event["payload"]["mode"] == "act"
+        for event in events.json()
+    )
+
+
 def test_trace_export_endpoint_returns_redacted_span_document(tmp_path: Path) -> None:
     with TestClient(create_app(_config())) as client:
         created = client.post("/api/sessions", json={"workspace": str(tmp_path), "mode": "ask"})

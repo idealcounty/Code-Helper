@@ -53,6 +53,9 @@ const state = {
   settingsOpen: false,
   layoutMode: "editor",
   filePanelVisible: false,
+  sessionMode: "act",
+  modeSyncPromise: null,
+  pendingMode: null,
   sessionListView: "active",
   workspaceSessions: [],
   archivedSessions: [],
@@ -258,6 +261,7 @@ async function syncCurrentSessionDefaults(settings) {
         body: JSON.stringify({ policy: settings.default_approval_policy }),
       }),
     ]);
+    state.sessionMode = settings.default_mode;
     saveWorkspaceState();
     return true;
   } catch {
@@ -601,6 +605,9 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     state.pendingUserEchoes = [];
     state.sessionId = result.session_id;
     state.workspace = result.workspace;
+    state.sessionMode = result.mode || "act";
+    state.pendingMode = null;
+    state.modeSyncPromise = null;
     state.running = false;
     state.seenSequences.clear();
     state.pendingApproval = null;
@@ -609,6 +616,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     elements.focusWorkspaceTitle.textContent = workspaceName(result.workspace);
     elements.explorerPath.textContent = result.workspace;
     elements.reasoningSelect.value = result.reasoning_profile || elements.reasoningSelect.value;
+    elements.modeSelect.value = state.sessionMode;
     elements.taskProfileSelect.value = result.task_profile || elements.taskProfileSelect.value;
     state.approvalPolicy = result.approval_policy || "ask";
     elements.approvalPolicySelect.value = state.approvalPolicy;
@@ -1069,6 +1077,15 @@ function insertSelectedFile() {
 
 async function sendMessage() {
   if (!state.sessionId || state.running) return;
+  if (state.modeSyncPromise) {
+    const synced = await state.modeSyncPromise;
+    if (synced === false) return;
+  }
+  if (state.pendingMode) {
+    const synced = await synchronizeMode(state.pendingMode);
+    if (synced === false) return;
+  }
+  if (state.pendingMode || state.running) return;
   const content = elements.messageInput.value.trim();
   if (!content) return;
   const sessionId = state.sessionId;
@@ -1092,6 +1109,36 @@ async function sendMessage() {
     resizeMessageInput();
     showToast(error.message);
   }
+}
+
+async function synchronizeMode(mode) {
+  if (!state.sessionId || state.running) return false;
+  const requested = ["ask", "plan", "act"].includes(mode) ? mode : "act";
+  try {
+    const result = await api(`/api/sessions/${state.sessionId}/mode`, {
+      method: "POST",
+      body: JSON.stringify({ mode: requested }),
+    });
+    state.sessionMode = result.mode || requested;
+    elements.modeSelect.value = state.sessionMode;
+    state.pendingMode = null;
+    saveWorkspaceState();
+    return true;
+  } catch (error) {
+    elements.modeSelect.value = state.sessionMode;
+    state.pendingMode = null;
+    showToast(error.message);
+    return false;
+  }
+}
+
+function schedulePendingModeSync() {
+  if (!state.pendingMode || state.running || state.modeSyncPromise) return;
+  const promise = synchronizeMode(state.pendingMode);
+  state.modeSyncPromise = promise;
+  promise.finally(() => {
+    if (state.modeSyncPromise === promise) state.modeSyncPromise = null;
+  });
 }
 
 async function cancelRun() {
@@ -1314,6 +1361,12 @@ function handleEvent(event) {
       if (elements.taskProfileSelect) elements.taskProfileSelect.value = payload.profile || "project";
       addActivity("任务类型已确定", `${payload.profile || "project"} · ${payload.reason || ""}`, "success");
       break;
+    case "mode_changed":
+      if (["ask", "plan", "act"].includes(payload.mode)) {
+        state.sessionMode = payload.mode;
+        if (!state.pendingMode) elements.modeSelect.value = payload.mode;
+      }
+      break;
     case "context_compacted":
       addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning");
       refreshIntelligenceIfVisible();
@@ -1376,7 +1429,7 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": hideThinkingIndicator(); hideRunProgress(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": hideThinkingIndicator(); hideRunProgress(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); schedulePendingModeSync(); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }
@@ -2082,7 +2135,24 @@ elements.closeFilePanelButton.addEventListener("click", () => setFilePanelVisibl
 elements.sendButton.addEventListener("click", sendMessage);
 elements.cancelButton.addEventListener("click", cancelRun);
 elements.messageInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.ctrlKey) { event.preventDefault(); sendMessage(); } });
-elements.modeSelect.addEventListener("change", async () => { if (!state.sessionId || state.running) return; try { await api(`/api/sessions/${state.sessionId}/mode`, { method: "POST", body: JSON.stringify({ mode: elements.modeSelect.value }) }); saveWorkspaceState(); showToast(`已切换为 ${elements.modeSelect.value.toUpperCase()} 模式`); } catch (error) { showToast(error.message); } });
+elements.modeSelect.addEventListener("change", async () => {
+  const requested = elements.modeSelect.value;
+  if (!state.sessionId) {
+    state.sessionMode = requested;
+    saveWorkspaceState();
+    return;
+  }
+  if (state.running) {
+    state.pendingMode = requested;
+    showToast(`本轮结束后将切换为 ${requested.toUpperCase()} 模式`);
+    return;
+  }
+  const promise = synchronizeMode(requested);
+  state.modeSyncPromise = promise;
+  await promise;
+  if (state.modeSyncPromise === promise) state.modeSyncPromise = null;
+  if (state.sessionMode === requested) showToast(`已切换为 ${requested.toUpperCase()} 模式`);
+});
 elements.reasoningSelect.addEventListener("change", async () => {
   if (!state.sessionId) return;
   if (state.running) {

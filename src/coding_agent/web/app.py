@@ -1169,8 +1169,27 @@ def create_app(
     async def set_mode(session_id: str, request: ModeRequest) -> dict[str, Any]:
         session = manager.get(session_id)
         if session.running:
-            raise HTTPException(status_code=409, detail="Cannot change mode while running")
-        session.runtime.state.mode = request.mode
+            terminal_statuses = {
+                AgentStatus.COMPLETED,
+                AgentStatus.PARTIAL,
+                AgentStatus.FAILED,
+                AgentStatus.CANCELLED,
+            }
+            if session.runtime.state.status in terminal_statuses and session.task:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.shield(session.task)
+            if session.running:
+                raise HTTPException(status_code=409, detail="Cannot change mode while running")
+        state = session.runtime.state
+        state.mode = request.mode
+        await session.runtime.event_bus.publish(
+            AgentEvent(
+                type="mode_changed",
+                session_id=state.session_id,
+                turn_id=state.turn_id,
+                payload={"mode": request.mode},
+            )
+        )
         return {"mode": request.mode}
 
     @app.post("/api/sessions/{session_id}/reasoning")
