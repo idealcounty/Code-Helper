@@ -86,6 +86,7 @@ def test_health_and_static_index() -> None:
         health = client.get("/api/health")
         index = client.get("/")
         modern_styles = client.get("/static/modern.css")
+        logo = client.get("/static/code-helper-logo.png")
         rendering_script = client.get("/static/rendering.js")
         frontend_bundle = client.get("/assets/app.bundle.js")
 
@@ -95,7 +96,11 @@ def test_health_and_static_index() -> None:
     assert index.status_code == 200
     assert "Code Helper" in index.text
     assert 'href="/static/modern.css?v=' in index.text
+    assert 'rel="icon" type="image/png" href="/static/code-helper-logo.png?v=' in index.text
     assert 'src="/assets/app.bundle.js?v=' in index.text
+    assert 'class="brand-copy"' in index.text
+    assert 'class="editor-brand-mark"' in index.text
+    assert 'class="chat-brand-mark"' in index.text
     assert index.headers["cache-control"] == "no-store, max-age=0"
     assert "浏览文件夹" in index.text
     assert "代码编辑区" in index.text
@@ -135,6 +140,11 @@ def test_health_and_static_index() -> None:
     assert ".layout-focus .assistant-pane > .assistant-content { grid-row: 4; }" in modern_styles.text
     assert ".thread-list-toolbar" in modern_styles.text
     assert ".thread-row-action" in modern_styles.text
+    assert ".brand-mark img" in modern_styles.text
+    assert ".chat-brand-mark" in modern_styles.text
+    assert logo.status_code == 200
+    assert logo.headers["content-type"] == "image/png"
+    assert len(logo.content) > 100_000
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text
@@ -149,6 +159,7 @@ def test_health_and_static_index() -> None:
     assert 'case "model_progress"' in frontend_bundle.text
     assert "reconcileRunState(sessionId," in frontend_bundle.text
     assert "archived_sessions" in frontend_bundle.text
+    assert "chat-brand-mark" in frontend_bundle.text
     assert "archiveSession(session, action)" in frontend_bundle.text
     assert "restoreSession(session, action)" in frontend_bundle.text
     assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text

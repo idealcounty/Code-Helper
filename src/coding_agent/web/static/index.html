@@ -5,14 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="stylesheet" href="/static/modern.css?v=20260831.6" />
+    <link rel="icon" type="image/png" href="/static/code-helper-logo.png?v=20260831.7" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260831.7" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand" aria-label="Code Helper">
-          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6.5 3.5 12 8 17.5M16 6.5l4.5 5.5-4.5 5.5M14 4l-4 16" /></svg></span>
-          <span class="brand-name">Code Helper</span>
+          <span class="brand-mark" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span>
+          <span class="brand-copy"><span class="brand-name">Code Helper</span><small>LOCAL CODING AGENT</small></span>
         </div>
         <div class="workspace-switcher">
           <button class="folder-trigger" id="browseWorkspaceButton" type="button"><svg viewBox="0 0 24 24"><path d="M3.5 6h6l2 2h9v10.5h-17z" /></svg><span>浏览文件夹</span></button>
@@ -41,7 +42,7 @@
           </nav>
           <div class="account-dock focus-account-dock">
             <button class="account-button" id="focusUserMenuButton" type="button" aria-haspopup="menu" aria-expanded="false">
-              <span class="account-avatar" aria-hidden="true">CH</span>
+              <span class="account-avatar" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span>
               <span class="account-copy"><strong>Code Helper</strong><small id="focusAccountStatus">本地工作区</small></span>
               <svg class="account-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 14 4-4 4 4" /></svg>
             </button>
@@ -60,7 +61,7 @@
           <div class="pane-footer"><span>受保护文件自动隐藏</span><span>LOCAL</span></div>
           <div class="account-dock">
             <button class="account-button" id="userMenuButton" type="button" aria-haspopup="menu" aria-expanded="false">
-              <span class="account-avatar" aria-hidden="true">CH</span>
+              <span class="account-avatar" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span>
               <span class="account-copy"><strong>Code Helper</strong><small id="accountStatus">本地工作区</small></span>
               <svg class="account-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 14 4-4 4 4" /></svg>
             </button>
@@ -76,7 +77,7 @@
             <div class="editor-actions"><span class="language-badge" id="editorLanguage">—</span><button class="icon-button" id="copyFileButton" type="button" aria-label="复制文件内容" disabled><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V5H5v11h3" /></svg></button><button class="icon-button" id="reloadFileButton" type="button" aria-label="重新加载文件" disabled><svg viewBox="0 0 24 24"><path d="M19 8a7 7 0 1 0 1 6M19 4v4h-4" /></svg></button><button class="icon-button close-file-panel" id="closeFilePanelButton" type="button" aria-label="关闭文件检查器"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
           </div>
           <div class="editor-stage" id="editorStage">
-            <div class="editor-empty" id="editorEmpty"><div class="editor-symbol" aria-hidden="true"><span>&lt;</span><i>/</i><span>&gt;</span></div><h2>代码将在这里打开</h2><p>从左侧资源管理器选择文件。你可以同时打开多个文件，并通过标签页切换。</p></div>
+            <div class="editor-empty" id="editorEmpty"><div class="editor-brand-mark" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></div><span class="empty-kicker">LOCAL CODE INTELLIGENCE</span><h2>代码将在这里打开</h2><p>从左侧资源管理器选择文件。你可以同时打开多个文件，并通过标签页切换。</p></div>
             <div class="code-scroll hidden" id="codeScroll"><div class="code-lines" id="codeLines"></div></div>
           </div>
           <div class="editor-statusbar"><span id="fileStatus">READY</span><div><span id="fileEncoding">UTF-8</span><span id="filePosition">Ln 1, Col 1</span><span id="fileSize">0 bytes</span></div></div>
@@ -95,7 +96,7 @@
             <time id="runProgressElapsed">0 秒</time>
           </div>
           <div class="assistant-content">
-            <section class="assistant-view chat-view active" id="chatView"><div class="message-list" id="messageList"><div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>和你的代码一起思考</h3><p>选择工作区后，描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div></div><div class="question-navigator hidden" id="questionNavigator"><button class="question-navigator-toggle" id="questionNavigatorToggle" type="button" aria-expanded="false" aria-controls="questionNavigatorPanel"><span>提问定位</span><strong id="questionNavigatorCount">0</strong></button><div class="question-navigator-panel hidden" id="questionNavigatorPanel"><header><div><strong>本对话提问</strong><span>点击缩略内容快速定位</span></div><button id="closeQuestionNavigator" type="button" aria-label="关闭提问导航">×</button></header><div class="question-navigator-list" id="questionNavigatorList"></div></div></div><div class="composer"><textarea id="messageInput" rows="1" placeholder="向 Agent 提问，使用 @path 引用文件…" disabled></textarea><div class="composer-footer"><span><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span><div><button class="stop-button" id="cancelButton" type="button" disabled>停止</button><button class="send-button" id="sendButton" type="button" disabled aria-label="发送任务"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5" /></svg></button></div></div></div></section>
+            <section class="assistant-view chat-view active" id="chatView"><div class="message-list" id="messageList"><div class="chat-empty" id="chatEmpty"><span class="chat-brand-mark" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span><span class="empty-kicker">CODE HELPER / READY</span><h3>和你的代码一起思考</h3><p>选择工作区后，描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div></div><div class="question-navigator hidden" id="questionNavigator"><button class="question-navigator-toggle" id="questionNavigatorToggle" type="button" aria-expanded="false" aria-controls="questionNavigatorPanel"><span>提问定位</span><strong id="questionNavigatorCount">0</strong></button><div class="question-navigator-panel hidden" id="questionNavigatorPanel"><header><div><strong>本对话提问</strong><span>点击缩略内容快速定位</span></div><button id="closeQuestionNavigator" type="button" aria-label="关闭提问导航">×</button></header><div class="question-navigator-list" id="questionNavigatorList"></div></div></div><div class="composer"><textarea id="messageInput" rows="1" placeholder="向 Agent 提问，使用 @path 引用文件…" disabled></textarea><div class="composer-footer"><span><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span><div><button class="stop-button" id="cancelButton" type="button" disabled>停止</button><button class="send-button" id="sendButton" type="button" disabled aria-label="发送任务"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5" /></svg></button></div></div></div></section>
             <section class="assistant-view" id="traceView"><div class="view-toolbar"><span>LIVE TRACE</span><div><strong id="stepCounter">STEP 0</strong><button class="text-button danger" id="restoreButton" type="button" disabled>回滚本轮</button></div></div><div class="activity-list" id="activityList"><div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div></div></section>
             <section class="assistant-view" id="planView"><div class="view-toolbar"><span>EXECUTION PLAN</span><strong id="planProgress">0 / 0</strong></div><div class="plan-list" id="planList"><div class="view-empty">当前会话还没有执行计划。</div></div></section>
             <section class="assistant-view" id="intelligenceView">
@@ -116,7 +117,7 @@
             返回工作区
           </button>
           <div class="settings-identity">
-            <span class="account-avatar large" aria-hidden="true">CH</span>
+            <span class="account-avatar large" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span>
             <div><span class="eyebrow">LOCAL PROFILE</span><strong>Code Helper</strong></div>
           </div>
           <nav class="settings-nav" aria-label="设置分区">
@@ -182,7 +183,7 @@
     </div>
 
     <div class="user-menu hidden" id="userMenu" role="menu" aria-label="用户菜单">
-      <div class="user-menu-profile"><span class="account-avatar" aria-hidden="true">CH</span><div><strong>Code Helper</strong><small id="userMenuModel">本地 Agent</small></div></div>
+      <div class="user-menu-profile"><span class="account-avatar" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span><div><strong>Code Helper</strong><small id="userMenuModel">本地 Agent</small></div></div>
       <button id="openSettingsButton" type="button" role="menuitem"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5 5 18l2.4-1a7 7 0 0 0 1.7 1l.4 3h5l.4-3a7 7 0 0 0 1.7-1l2.4 1 2-3.5-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg><span><strong>设置</strong><small>模型、工作区、权限与 Skills</small></span><kbd>Ctrl ,</kbd></button>
     </div>
 
@@ -202,6 +203,6 @@
       <div class="restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restoreTitle"><header><div><span class="eyebrow">CHECKPOINT RESTORE</span><h2 id="restoreTitle">选择要恢复的文件</h2></div><button class="icon-button" id="closeRestoreButton" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header><div class="restore-body"><div class="restore-file-list" id="restoreFileList"></div><pre class="restore-preview" id="restorePreviewDiff">选择文件查看恢复差异。</pre></div><footer><span>外部修改会要求二次确认</span><div><button class="dialog-secondary" id="cancelRestoreButton" type="button">取消</button><button class="dialog-primary" id="confirmRestoreButton" type="button">恢复选中文件</button></div></footer></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260831.6" defer></script>
+    <script src="/assets/app.bundle.js?v=20260831.7" defer></script>
   </body>
 </html>

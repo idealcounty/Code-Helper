@@ -683,7 +683,7 @@ function resetConversationSurface() {
   state.restoringHistory = false;
   state.historyBuffer = null;
   state.historyMetadata = null;
-  elements.messageList.innerHTML = '<div class="chat-empty" id="chatEmpty"><span class="orbit-mark"><i></i><i></i><i></i></span><h3>开始一段新的对话</h3><p>描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div>';
+  elements.messageList.innerHTML = '<div class="chat-empty" id="chatEmpty"><span class="chat-brand-mark" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span><span class="empty-kicker">CODE HELPER / READY</span><h3>开始一段新的对话</h3><p>描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div>';
   elements.thinkingIndicator = elements.messageList.querySelector("#thinkingIndicator");
   elements.thinkingStatus = elements.messageList.querySelector("#thinkingStatus");
   elements.activityList.innerHTML = '<div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div>';
