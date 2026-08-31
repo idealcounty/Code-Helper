@@ -179,6 +179,33 @@ def _load_event_file(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _load_session_archive(root: Path) -> dict[str, str]:
+    path = root / ".code-helper" / "session-archive.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    sessions = payload.get("sessions", {}) if isinstance(payload, dict) else {}
+    if not isinstance(sessions, dict):
+        return {}
+    return {
+        str(session_id): str(archived_at)
+        for session_id, archived_at in sessions.items()
+        if session_id and archived_at
+    }
+
+
+def _save_session_archive(root: Path, sessions: dict[str, str]) -> None:
+    path = root / ".code-helper" / "session-archive.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"sessions": sessions}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
 def _storage_usage(root: Path, pattern: str) -> dict[str, int]:
     """Return bounded, read-only storage usage for the intelligence panel."""
     files = [path for path in root.glob(pattern) if path.is_file()] if root.exists() else []
@@ -278,6 +305,10 @@ class CreateSessionRequest(BaseModel):
     reasoning_profile: Literal["auto", "fast", "balanced", "deep"] | None = None
     task_profile: Literal["auto", "project", "algorithm"] | None = None
     approval_policy: Literal["ask", "auto", "full"] | None = None
+
+
+class WorkspaceSessionRequest(BaseModel):
+    workspace: str = Field(min_length=1)
 
 
 class MessageRequest(BaseModel):
@@ -644,6 +675,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Workspace is not a directory")
 
         summaries: dict[str, dict[str, Any]] = {}
+        archive = _load_session_archive(root)
         session_root = root / ".code-helper" / "sessions"
         if session_root.exists():
             for event_path in session_root.glob("*.jsonl"):
@@ -658,10 +690,86 @@ def create_app(
             summaries[session_id] = _session_summary(
                 session_id, [], datetime.now(UTC).isoformat()
             )
-        sessions = sorted(
-            summaries.values(), key=lambda item: item["updated_at"], reverse=True
+        active_sessions = sorted(
+            (
+                summary
+                for session_id, summary in summaries.items()
+                if session_id not in archive
+            ),
+            key=lambda item: item["updated_at"],
+            reverse=True,
         )[:50]
-        return {"workspace": str(root), "sessions": sessions}
+        archived_sessions = sorted(
+            (
+                {**summary, "archived_at": archive[session_id]}
+                for session_id, summary in summaries.items()
+                if session_id in archive
+            ),
+            key=lambda item: item["archived_at"],
+            reverse=True,
+        )[:50]
+        return {
+            "workspace": str(root),
+            "sessions": active_sessions,
+            "archived_sessions": archived_sessions,
+        }
+
+    def resolve_workspace_session(
+        session_id: str, workspace: str
+    ) -> tuple[Path, WebSession | None]:
+        if (
+            not session_id
+            or len(session_id) > 128
+            or not all(
+                character.isalnum() or character in "-_" for character in session_id
+            )
+        ):
+            raise HTTPException(status_code=404, detail="Session not found")
+        try:
+            root = Path(workspace).expanduser().resolve(strict=True)
+            _require_workspace_scope(manager.config, root)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not root.is_dir():
+            raise HTTPException(status_code=400, detail="Workspace is not a directory")
+        live_session = manager.sessions.get(session_id)
+        if live_session is not None and live_session.runtime.workspace.root != root:
+            raise HTTPException(status_code=404, detail="Session not found")
+        event_path = root / ".code-helper" / "sessions" / f"{session_id}.jsonl"
+        if live_session is None and not event_path.is_file():
+            raise HTTPException(status_code=404, detail="Session not found")
+        return root, live_session
+
+    @app.post("/api/workspaces/sessions/{session_id}/archive")
+    async def archive_workspace_session(
+        session_id: str, request: WorkspaceSessionRequest
+    ) -> dict[str, Any]:
+        root, live_session = resolve_workspace_session(session_id, request.workspace)
+        if live_session is not None and live_session.running:
+            raise HTTPException(status_code=409, detail="运行中的对话不能归档")
+        archive = _load_session_archive(root)
+        archived_at = datetime.now(UTC).isoformat()
+        archive[session_id] = archived_at
+        try:
+            _save_session_archive(root, archive)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"无法保存归档状态：{exc}") from exc
+        return {"session_id": session_id, "archived": True, "archived_at": archived_at}
+
+    @app.post("/api/workspaces/sessions/{session_id}/restore")
+    async def restore_workspace_session(
+        session_id: str, request: WorkspaceSessionRequest
+    ) -> dict[str, Any]:
+        root, _ = resolve_workspace_session(session_id, request.workspace)
+        archive = _load_session_archive(root)
+        if session_id not in archive:
+            raise HTTPException(status_code=404, detail="Archived session not found")
+        archive.pop(session_id)
+        try:
+            _save_session_archive(root, archive)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"无法保存归档状态：{exc}") from exc
+        return {"session_id": session_id, "archived": False}
 
     @app.post("/api/sessions")
     async def create_session(request: CreateSessionRequest) -> dict[str, Any]:

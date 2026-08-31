@@ -74,6 +74,8 @@ def test_health_and_static_index() -> None:
     assert "grid-template-rows: 64px 42px auto minmax(0, 1fr) 25px" in modern_styles.text
     assert ".assistant-pane > .assistant-content { grid-row: 6; }" in modern_styles.text
     assert ".layout-focus .assistant-pane > .assistant-content { grid-row: 4; }" in modern_styles.text
+    assert ".thread-list-toolbar" in modern_styles.text
+    assert ".thread-row-action" in modern_styles.text
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text
@@ -84,6 +86,9 @@ def test_health_and_static_index() -> None:
     assert "grantButton" in frontend_bundle.text
     assert 'case "model_progress"' in frontend_bundle.text
     assert "reconcileRunState(sessionId," in frontend_bundle.text
+    assert "archived_sessions" in frontend_bundle.text
+    assert "archiveSession(session, action)" in frontend_bundle.text
+    assert "restoreSession(session, action)" in frontend_bundle.text
     assert "elements.newSessionButton.disabled = !state.workspace;" in frontend_bundle.text
     assert "阶段耗时" in frontend_bundle.text
     assert "exportTraceButton" in index.text
@@ -426,6 +431,21 @@ def test_directory_browser_and_workspace_session_listing(tmp_path: Path) -> None
         sessions = client.get(
             "/api/workspaces/sessions", params={"workspace": str(child)}
         )
+        session_id = created.json()["session_id"]
+        archived = client.post(
+            f"/api/workspaces/sessions/{session_id}/archive",
+            json={"workspace": str(child)},
+        )
+        archived_sessions = client.get(
+            "/api/workspaces/sessions", params={"workspace": str(child)}
+        )
+        restored = client.post(
+            f"/api/workspaces/sessions/{session_id}/restore",
+            json={"workspace": str(child)},
+        )
+        restored_sessions = client.get(
+            "/api/workspaces/sessions", params={"workspace": str(child)}
+        )
 
     assert browsed.status_code == 200
     assert browsed.json()["entries"] == [
@@ -433,6 +453,15 @@ def test_directory_browser_and_workspace_session_listing(tmp_path: Path) -> None
     ]
     assert sessions.status_code == 200
     assert sessions.json()["sessions"][0]["session_id"] == created.json()["session_id"]
+    assert sessions.json()["archived_sessions"] == []
+    assert archived.status_code == 200
+    assert archived.json()["archived"] is True
+    assert archived_sessions.json()["sessions"] == []
+    assert archived_sessions.json()["archived_sessions"][0]["session_id"] == session_id
+    assert restored.status_code == 200
+    assert restored.json() == {"session_id": session_id, "archived": False}
+    assert restored_sessions.json()["sessions"][0]["session_id"] == session_id
+    assert restored_sessions.json()["archived_sessions"] == []
 
 
 def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:

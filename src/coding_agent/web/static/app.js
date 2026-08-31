@@ -53,6 +53,9 @@ const state = {
   settingsOpen: false,
   layoutMode: "editor",
   filePanelVisible: false,
+  sessionListView: "active",
+  workspaceSessions: [],
+  archivedSessions: [],
   userMenuAnchor: null,
   panelLayout: loadPanelLayout(),
 };
@@ -704,34 +707,104 @@ async function loadWorkspaceSessions() {
   try {
     const params = new URLSearchParams({ workspace: state.workspace });
     const result = await api(`/api/workspaces/sessions?${params}`);
-    renderSessionList(result.sessions || []);
+    state.workspaceSessions = result.sessions || [];
+    state.archivedSessions = result.archived_sessions || [];
+    renderSessionList();
+    return result;
   } catch (error) {
     [elements.sessionList, elements.focusSessionList].forEach((container) => {
       container.innerHTML = `<div class="thread-empty">${escapeHtml(error.message)}</div>`;
     });
+    return null;
   }
 }
 
-function renderSessionList(sessions) {
+function renderSessionList() {
+  const archivedView = state.sessionListView === "archived";
+  const sessions = archivedView ? state.archivedSessions : state.workspaceSessions;
   [elements.sessionList, elements.focusSessionList].forEach((container) => {
     container.innerHTML = "";
+    const toolbar = document.createElement("div");
+    toolbar.className = "thread-list-toolbar";
+    toolbar.setAttribute("aria-label", "对话列表筛选");
+    toolbar.innerHTML = `<button type="button" class="${archivedView ? "" : "active"}" data-session-view="active">对话 <span>${state.workspaceSessions.length}</span></button><button type="button" class="${archivedView ? "active" : ""}" data-session-view="archived">已归档 <span>${state.archivedSessions.length}</span></button>`;
+    toolbar.querySelectorAll("[data-session-view]").forEach((button) => button.addEventListener("click", () => {
+      state.sessionListView = button.dataset.sessionView;
+      renderSessionList();
+    }));
+    container.append(toolbar);
     if (!sessions.length) {
-      container.innerHTML = '<div class="thread-empty">还没有保存的对话</div>';
+      const empty = document.createElement("div");
+      empty.className = "thread-empty";
+      empty.textContent = archivedView ? "还没有归档的对话" : "还没有保存的对话";
+      container.append(empty);
       return;
     }
     sessions.forEach((session) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `thread-item ${session.session_id === state.sessionId ? "active" : ""}`;
-      button.innerHTML = `<span class="thread-state ${escapeHtml(session.status)}"></span><span class="thread-copy"><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.preview)}</small></span><time>${formatRelativeTime(session.updated_at)}</time>`;
-      button.addEventListener("click", () => {
+      const row = document.createElement("div");
+      row.className = `thread-item ${session.session_id === state.sessionId ? "active" : ""} ${archivedView ? "archived" : ""}`;
+      const openButton = document.createElement("button");
+      openButton.type = "button";
+      openButton.className = "thread-open";
+      openButton.innerHTML = `<span class="thread-state ${escapeHtml(session.status)}"></span><span class="thread-copy"><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.preview)}</small></span><time>${formatRelativeTime(archivedView ? session.archived_at : session.updated_at)}</time>`;
+      openButton.addEventListener("click", () => {
+        if (archivedView) return restoreSession(session, openButton);
         if (session.session_id !== state.sessionId) {
           openWorkspace(state.workspace, session.session_id, true);
         }
       });
-      container.append(button);
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = `thread-row-action ${archivedView ? "restore" : "archive"}`;
+      action.setAttribute("aria-label", archivedView ? `恢复对话：${session.title}` : `归档对话：${session.title}`);
+      action.title = archivedView ? "恢复对话" : (session.session_id === state.sessionId && state.running ? "运行中的对话不能归档" : "归档对话");
+      action.disabled = !archivedView && session.session_id === state.sessionId && state.running;
+      action.innerHTML = archivedView
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM3 5h18v3H3zM9 12h6"/></svg>';
+      action.addEventListener("click", () => archivedView ? restoreSession(session, action) : archiveSession(session, action));
+      row.append(openButton, action);
+      container.append(row);
     });
   });
+}
+
+async function archiveSession(session, button) {
+  if (!state.workspace || button.disabled) return;
+  button.disabled = true;
+  try {
+    await api(`/api/workspaces/sessions/${encodeURIComponent(session.session_id)}/archive`, {
+      method: "POST",
+      body: JSON.stringify({ workspace: state.workspace }),
+    });
+    const archivedCurrent = session.session_id === state.sessionId;
+    const result = await loadWorkspaceSessions();
+    if (archivedCurrent && result) {
+      state.sessionListView = "active";
+      const nextSession = result.sessions?.[0];
+      await openWorkspace(state.workspace, nextSession?.session_id || null, true);
+    }
+    showToast("对话已归档，可在“已归档”中恢复");
+  } catch (error) {
+    button.disabled = false;
+    showToast(error.message);
+  }
+}
+
+async function restoreSession(session, button) {
+  if (!state.workspace || button.disabled) return;
+  button.disabled = true;
+  try {
+    await api(`/api/workspaces/sessions/${encodeURIComponent(session.session_id)}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ workspace: state.workspace }),
+    });
+    await loadWorkspaceSessions();
+    showToast("对话已恢复");
+  } catch (error) {
+    button.disabled = false;
+    showToast(error.message);
+  }
 }
 
 function formatRelativeTime(value) {
