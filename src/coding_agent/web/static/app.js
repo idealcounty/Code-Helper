@@ -29,6 +29,9 @@ const state = {
   running: false,
   stopping: false,
   runSyncTimer: null,
+  runProgressTimer: null,
+  runStartedAt: null,
+  runProgressElapsed: 0,
   runEpoch: 0,
   pendingUserEchoes: [],
   approvalPolicy: "ask",
@@ -65,6 +68,7 @@ const elements = Object.fromEntries([
   "fileEncoding", "filePosition", "fileSize", "newSessionButton", "sessionList",
   "explorerResizer", "assistantResizer", "threadResizer",
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus", "thinkingIndicator", "thinkingStatus",
+  "runProgress", "runProgressTitle", "runProgressDetail", "runProgressElapsed",
   "questionNavigator", "questionNavigatorToggle", "questionNavigatorCount", "questionNavigatorPanel", "questionNavigatorList", "closeQuestionNavigator",
   "stepCounter", "activityList", "planProgress", "planList", "restoreButton",
   "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
@@ -1183,6 +1187,7 @@ function handleEvent(event) {
       if (pendingIndex >= 0) state.pendingUserEchoes.splice(pendingIndex, 1);
       else addMessage("user", payload.message);
       setRunning(true);
+      setRunProgress("正在理解任务", "解析请求并确定执行路径");
       break;
     }
     case "run_budget_started":
@@ -1192,11 +1197,13 @@ function handleEvent(event) {
     case "run_cancel_requested":
       state.stopping = true;
       updateRunStatus();
+      setRunProgress("正在安全停止", "等待当前模型请求或工具进程退出");
       addActivity("正在停止任务", "等待当前模型请求或工具进程安全退出", "warning");
       refreshIntelligenceIfVisible();
       break;
     case "run_cancelled":
       hideThinkingIndicator();
+      hideRunProgress();
       addActivity("任务已停止", cancellationReason(payload.reason), "failure");
       refreshIntelligenceIfVisible();
       break;
@@ -1206,6 +1213,7 @@ function handleEvent(event) {
       break;
     case "run_failed":
       hideThinkingIndicator();
+      setRunProgress("任务执行失败", payload.message || payload.code || "请查看轨迹中的错误信息");
       addActivity("任务执行失败", `${payload.code || "UNEXPECTED_AGENT_ERROR"} · ${payload.message || ""}`, "failure");
       break;
     case "approval_policy_changed":
@@ -1219,12 +1227,13 @@ function handleEvent(event) {
       addActivity("审批策略已更改", approvalPolicyLabel(state.approvalPolicy), state.approvalPolicy === "full" ? "warning" : "success");
       refreshIntelligenceIfVisible();
       break;
-    case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
+    case "step_started": elements.stepCounter.textContent = `STEP ${payload.step}`; setRunProgress(`Step ${payload.step} · 构建上下文`, "正在选择与任务相关的历史、规则和仓库文件"); addActivity(`开始 Step ${payload.step}`, "构造上下文并请求模型"); break;
     case "context_built": {
       const repoSelection = payload.repo_map?.selected || [];
       const ruleCount = payload.rule_sources?.length || 0;
       const conflictCount = payload.rule_conflicts?.length || 0;
       addActivity("上下文已构建", `规则 ${ruleCount} 条${conflictCount ? ` · 潜在冲突 ${conflictCount} 条` : ""} · Repo Map ${repoSelection.length} 个文件 · ${formatNumber(payload.estimated_chars || 0)} 字符`, conflictCount ? "warning" : "success");
+      setRunProgress("上下文准备完成", `已选择 ${repoSelection.length} 个相关文件，正在请求模型`);
       refreshIntelligenceIfVisible();
       break;
     }
@@ -1239,14 +1248,16 @@ function handleEvent(event) {
     case "model_started": {
       const outputLimit = Number(payload.max_output_tokens || 0);
       showThinkingIndicator("正在分析你的请求并选择下一步操作…");
-      addActivity("模型处理中", `正在选择下一步操作${outputLimit ? ` · 输出上限 ${formatNumber(outputLimit)} tokens` : ""}`);
+      setRunProgress("模型正在思考", `正在分析上下文并选择下一步${outputLimit ? ` · 输出上限 ${formatNumber(outputLimit)} tokens` : ""}`, 0);
+      startLiveActivity("模型处理中", `正在选择下一步操作${outputLimit ? ` · 输出上限 ${formatNumber(outputLimit)} tokens` : ""}`);
       break;
     }
     case "model_progress": {
       const elapsed = Number(payload.elapsed_seconds || 0);
       const timeout = Number(payload.request_timeout_seconds || 0);
       showThinkingIndicator(`已思考 ${elapsed.toFixed(0)} 秒${timeout ? ` · 请求上限 ${timeout} 秒` : ""}`);
-      addActivity("模型仍在处理", `已等待 ${elapsed.toFixed(0)} 秒${timeout ? ` · 单次请求上限 ${timeout} 秒` : ""}`, "warning");
+      setRunProgress("模型仍在思考", `复杂任务可能需要更长时间${timeout ? ` · 单次请求上限 ${timeout} 秒` : ""}`, elapsed);
+      updateLiveActivity("模型仍在处理", `已等待 ${elapsed.toFixed(0)} 秒${timeout ? ` · 单次请求上限 ${timeout} 秒` : ""}`, "warning");
       break;
     }
     case "stuck_recovery":
@@ -1258,13 +1269,14 @@ function handleEvent(event) {
     case "stuck_terminal":
       addActivity("已停止重复写入", payload.message || "已保留当前修改，请先验证结果", "warning");
       break;
-    case "assistant_delta": appendStreamingAgentText(payload.content || ""); break;
+    case "assistant_delta": setRunProgress("正在生成回复", "模型内容正在流式返回"); appendStreamingAgentText(payload.content || ""); break;
     case "assistant_response": finishAssistantResponse(payload); break;
-    case "tool_started": addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;
+    case "tool_started": setRunProgress(`正在执行 ${payload.name}`, summarizeArguments(payload.arguments)); addActivity(`执行 ${payload.name}`, summarizeArguments(payload.arguments)); if (payload.name === "run_command") appendTerminal(`❯ ${payload.arguments.command}`, "command"); break;
     case "tool_output_delta": appendTerminal(payload.content || "", payload.stream === "stderr" ? "stderr" : ""); break;
     case "tool_result": {
       const result = payload.result || {};
       addActivity(`${result.ok ? "完成" : "失败"} ${payload.name}`, `${result.code || ""} · ${result.message || ""}`, result.ok ? "success" : "failure");
+      setRunProgress(result.ok ? "工具执行完成" : "工具执行失败", result.message || "正在准备下一步操作");
       if (payload.name === "run_command") mirrorCommandResult(result);
       if (payload.name === "analyze_complexity" && result.ok) {
         const complexity = result.data?.complexity || {};
@@ -1279,8 +1291,8 @@ function handleEvent(event) {
       break;
     }
     case "plan_updated": renderPlan(payload.plan || []); addActivity("计划已更新", payload.reason || "执行步骤发生变化", "success"); break;
-    case "approval_requested": showApproval(payload); addActivity(`等待批准 ${payload.name}`, payload.reason, "warning"); break;
-    case "verification_required": addActivity("需要验证", payload.reason, "failure"); break;
+    case "approval_requested": setRunProgress("等待你的批准", `${payload.name} · ${payload.reason || "需要授权后继续"}`); showApproval(payload); addActivity(`等待批准 ${payload.name}`, payload.reason, "warning"); break;
+    case "verification_required": setRunProgress("正在准备验证", payload.reason || "修改完成后需要运行测试"); addActivity("需要验证", payload.reason, "failure"); break;
     case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
     case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
     case "checkpoint_tracking_failed": addActivity("检查点跟踪失败", `${payload.code || ""} · ${payload.message || ""}`, "failure"); break;
@@ -1291,13 +1303,15 @@ function handleEvent(event) {
       refreshIntelligenceIfVisible();
       break;
     }
-    case "turn_finished": hideThinkingIndicator(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
+    case "turn_finished": hideThinkingIndicator(); hideRunProgress(); clearRunSyncTimer(); state.runEpoch += 1; state.stopping = false; setRunning(false); addActivity(`任务${statusLabel(payload.status)}`, payload.message, payload.status === "completed" ? "success" : "failure"); loadWorkspaceSessions(); loadIntelligence(); break;
     default: break;
   }
 }
 
 function finishAssistantResponse(payload) {
   hideThinkingIndicator();
+  finishLiveActivity();
+  setRunProgress(payload.tool_calls?.length ? "正在准备工具" : "正在整理结果", payload.tool_calls?.length ? payload.tool_calls.map((call) => call.name).join(" · ") : "即将完成本轮任务");
   if (streamingAgentMessage) {
     const body = streamingAgentMessage.querySelector(".message-body");
     if (body) {
@@ -1391,6 +1405,41 @@ function hideThinkingIndicator() {
   elements.thinkingIndicator?.classList.add("hidden");
 }
 
+function formatRunElapsed(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (value < 60) return `${value} 秒`;
+  return `${Math.floor(value / 60)}分 ${String(value % 60).padStart(2, "0")}秒`;
+}
+
+function updateRunProgressElapsed() {
+  if (!elements.runProgressElapsed || state.runStartedAt === null) return;
+  const localElapsed = (Date.now() - state.runStartedAt) / 1000;
+  const elapsed = Math.max(state.runProgressElapsed || 0, localElapsed);
+  elements.runProgressElapsed.textContent = formatRunElapsed(elapsed);
+}
+
+function setRunProgress(title, detail, elapsedSeconds = null) {
+  if (!elements.runProgress) return;
+  if (state.runStartedAt === null) state.runStartedAt = Date.now();
+  if (elapsedSeconds !== null) state.runProgressElapsed = Math.max(0, Number(elapsedSeconds) || 0);
+  elements.runProgressTitle.textContent = title || "Agent 正在运行";
+  elements.runProgressDetail.textContent = detail || "正在准备下一步操作…";
+  elements.runProgress.classList.remove("hidden");
+  updateRunProgressElapsed();
+  if (state.runProgressTimer === null) {
+    state.runProgressTimer = window.setInterval(updateRunProgressElapsed, 1000);
+  }
+}
+
+function hideRunProgress() {
+  elements.runProgress?.classList.add("hidden");
+  if (state.runProgressTimer !== null) window.clearInterval(state.runProgressTimer);
+  state.runProgressTimer = null;
+  state.runStartedAt = null;
+  state.runProgressElapsed = 0;
+  if (elements.runProgressElapsed) elements.runProgressElapsed.textContent = "0 秒";
+}
+
 function appendStreamingAgentText(content) {
   if (!content) return;
   hideThinkingIndicator();
@@ -1429,6 +1478,26 @@ function addActivity(title, detail, className = "") {
   item.innerHTML = `<i></i><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail || "")}</span></div>`;
   elements.activityList.append(item);
   elements.activityList.scrollTop = elements.activityList.scrollHeight;
+  return item;
+}
+
+function startLiveActivity(title, detail) {
+  finishLiveActivity();
+  const item = addActivity(title, detail);
+  item.dataset.liveActivity = "model";
+}
+
+function updateLiveActivity(title, detail, className = "") {
+  const item = elements.activityList.querySelector('[data-live-activity="model"]');
+  if (!item) return startLiveActivity(title, detail);
+  item.className = `activity-item ${className}`;
+  item.querySelector("strong").textContent = title;
+  item.querySelector("span").textContent = detail || "";
+  elements.activityList.scrollTop = elements.activityList.scrollHeight;
+}
+
+function finishLiveActivity() {
+  elements.activityList.querySelector('[data-live-activity="model"]')?.removeAttribute("data-live-activity");
 }
 
 function renderPlan(plan) {
@@ -1475,6 +1544,11 @@ function setRunning(running) {
   elements.exportTraceButton.disabled = !state.sessionId;
   elements.reasoningSelect.disabled = running;
   elements.runStatus.classList.toggle("running", running);
+  if (running && elements.runProgress?.classList.contains("hidden")) {
+    setRunProgress("Agent 正在运行", "正在同步当前任务状态…");
+  } else if (!running) {
+    hideRunProgress();
+  }
   updateRunStatus();
 }
 

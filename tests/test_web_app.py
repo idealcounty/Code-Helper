@@ -60,6 +60,8 @@ def test_health_and_static_index() -> None:
     assert 'id="focusTerminalButton"' not in index.text
     assert 'id="thinkingIndicator"' in index.text
     assert 'id="thinkingStatus"' in index.text
+    assert 'id="runProgress"' in index.text
+    assert 'id="runProgressElapsed"' in index.text
     assert 'id="messageInput" rows="1"' in index.text
     assert 'id="questionNavigator"' in index.text
     assert 'id="questionNavigatorList"' in index.text
@@ -69,7 +71,7 @@ def test_health_and_static_index() -> None:
     assert ".thread-item.active .thread-copy strong" in modern_styles.text
     assert ".activity-item.warning" in modern_styles.text
     assert ".layout-focus .assistant-pane { grid-column: 3; grid-row: 1;" in modern_styles.text
-    assert "grid-template-rows: 64px 42px minmax(0, 1fr) 25px" in modern_styles.text
+    assert "grid-template-rows: 64px 42px auto minmax(0, 1fr) 25px" in modern_styles.text
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text
@@ -118,8 +120,13 @@ def test_health_and_static_index() -> None:
     assert "showThinkingIndicator" in frontend_bundle.text
     assert "hideThinkingIndicator" in frontend_bundle.text
     assert "elements.thinkingIndicator = elements.messageList.querySelector" in frontend_bundle.text
+    assert 'setRunProgress("模型仍在思考"' in frontend_bundle.text
+    assert "function updateRunProgressElapsed()" in frontend_bundle.text
+    assert "function updateLiveActivity(" in frontend_bundle.text
+    assert 'data-live-activity="model"' in frontend_bundle.text
     assert "case \"assistant_delta\"" in frontend_bundle.text
     assert ".thinking-indicator" in modern_styles.text
+    assert ".run-progress" in modern_styles.text
     assert ".layout-focus .composer {" in modern_styles.text
     assert "border-top: 0" in modern_styles.text
     assert "min-height: 42px; max-height: 150px" in modern_styles.text
