@@ -72,6 +72,8 @@ def test_health_and_static_index() -> None:
     assert ".activity-item.warning" in modern_styles.text
     assert ".layout-focus .assistant-pane { grid-column: 3; grid-row: 1;" in modern_styles.text
     assert "grid-template-rows: 64px 42px auto minmax(0, 1fr) 25px" in modern_styles.text
+    assert ".assistant-pane > .assistant-content { grid-row: 6; }" in modern_styles.text
+    assert ".layout-focus .assistant-pane > .assistant-content { grid-row: 4; }" in modern_styles.text
     assert rendering_script.status_code == 200
     assert "renderMarkdown" in rendering_script.text
     assert "highlightCode" in rendering_script.text

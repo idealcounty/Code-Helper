@@ -185,6 +185,13 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .editor-statusbar div { display: flex; gap: 15px; }
 
 .assistant-pane { --thread-strip-height: 112px; display: grid; grid-template-rows: 59px var(--thread-strip-height) 8px 37px auto minmax(0, 1fr) 25px; }
+.assistant-pane > .assistant-header { grid-row: 1; }
+.assistant-pane > .thread-strip { grid-row: 2; }
+.assistant-pane > #threadResizer { grid-row: 3; }
+.assistant-pane > .assistant-tabs { grid-row: 4; }
+.assistant-pane > .run-progress { grid-row: 5; }
+.assistant-pane > .assistant-content { grid-row: 6; }
+.assistant-pane > .assistant-status { grid-row: 7; }
 .new-thread-button { height: 29px; display: flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink-soft); background: #fff; font-size: 10px; font-weight: 650; }
 .new-thread-button:hover:not(:disabled) { border-color: var(--line-strong); background: #f0f2f2; }
 .new-thread-button svg { width: 13px; }
@@ -462,6 +469,11 @@ kbd { min-width: 21px; padding: 2px 5px; border: 1px solid var(--line-strong); b
 .workbench.layout-focus { grid-template-columns: var(--explorer-width) 8px minmax(520px, 1fr); }
 .layout-focus .conversations-pane { grid-column: 1; grid-row: 1; display: grid; grid-template-rows: 59px 54px minmax(0, 1fr) auto 58px; background: #f2f4f4; box-shadow: var(--shadow); }
 .layout-focus .assistant-pane { grid-column: 3; grid-row: 1; grid-template-rows: 64px 42px auto minmax(0, 1fr) 25px; background: #fafbfb; box-shadow: var(--shadow); }
+.layout-focus .assistant-pane > .assistant-header { grid-row: 1; }
+.layout-focus .assistant-pane > .assistant-tabs { grid-row: 2; }
+.layout-focus .assistant-pane > .run-progress { grid-row: 3; }
+.layout-focus .assistant-pane > .assistant-content { grid-row: 4; }
+.layout-focus .assistant-pane > .assistant-status { grid-row: 5; }
 .layout-focus .editor-pane, .layout-focus .explorer-pane, .layout-focus #assistantResizer { display: none; }
 .layout-focus #explorerResizer { grid-column: 2; grid-row: 1; }
 .layout-focus.has-file-panel { grid-template-columns: var(--explorer-width) 8px minmax(480px, 1fr) 8px minmax(340px, var(--assistant-width)); }
