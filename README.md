@@ -20,7 +20,7 @@ Code Helper 是一个从零实现的本地 Coding Agent。它通过模型原生 
 - [x] 上下文压缩（长输出裁剪、完整结果引用、上下文预算、历史摘要和压缩事件）
 - [x] 会话恢复、证据化报告、可选桌面窗口与 PyInstaller onedir 规格
 - [x] 项目级跨对话记忆（持久存储、显式写入、自动召回和遗忘）
-- [x] 10 项确定性 Agent Eval、JSON/Markdown 基线与 CI 质量门禁
+- [x] 14 项确定性 Agent Eval、JSON/Markdown 基线与 CI 质量门禁（含三种开发工作流）
 
 详细设计见 [docs/architecture.md](docs/architecture.md)。
 记忆分层、边界与后续路线见 [docs/memory.md](docs/memory.md)。
@@ -158,7 +158,7 @@ python -m pytest -q
 
 测试使用脚本化假模型，不需要 API Key，也不会连接外部模型服务。
 
-确定性 Agent Eval 同样不需要 API Key，覆盖项目问答、代码修改、审批、恢复、取消和敏感环境等十类契约：
+确定性 Agent Eval 同样不需要 API Key，覆盖项目问答、代码修改、审批、恢复、取消、敏感环境和三种开发工作流等契约：
 
 ```powershell
 # 运行 Eval 并与仓库基线比较

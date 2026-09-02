@@ -55,6 +55,25 @@ def test_redactor_catches_common_key_shapes() -> None:
     assert safe.count(REDACTED) == 10
 
 
+def test_redactor_preserves_nested_containers_and_redacts_secret_keys() -> None:
+    redactor = Redactor(["custom-secret"])
+    value = {
+        "password": "visible-but-secret-key",
+        "items": ["custom-secret", {"token": "nested-token"}],
+        "tuple": ("custom-secret",),
+        "set": {"custom-secret"},
+        "number": 3,
+    }
+    redacted = redactor.redact(value)
+    assert redacted["password"] == REDACTED
+    assert redacted["items"][0] == REDACTED
+    assert redacted["items"][1]["token"] == "nested-token"
+    assert redacted["tuple"] == (REDACTED,)
+    assert redacted["set"] == {REDACTED}
+    assert redacted["number"] == 3
+    assert redactor.redact("private", _key="password") == REDACTED
+
+
 def test_full_tool_output_reference_is_redacted(tmp_path: Path) -> None:
     secret = "output-secret-456"
     registry = ToolRegistry()

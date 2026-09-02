@@ -29,9 +29,21 @@ jobs:
       - name: Install package and development dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e .[dev]
       - name: Compile Python sources
-        run: python -m compileall -q src evals
+        run: python -m compileall -q src evals scripts
       - name: Run test suite
-        run: python -m pytest -q
+        run: >-
+          python -m pytest -q
+          --cov=src/coding_agent
+          --cov-branch
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+          --cov-report=html:coverage-html
+          --junitxml=junit.xml
+      - name: Run credential and privacy audit
+        run: python scripts/security_audit.py --output-dir security-results
+      - name: Run API and WebSocket contract smoke
+        if: matrix.python-version == '3.11'
+        run: python scripts/api_contract_smoke.py --output-dir api-contract-results
       - name: Enforce deterministic Agent Eval baseline
         if: matrix.python-version == '3.11'
         run: >-
@@ -47,6 +59,9 @@ jobs:
       - name: Run TaskProfile comparison
         if: matrix.python-version == '3.11'
         run: python -m evals.profile_comparison --output-dir profile-results
+      - name: Run key invariant mutation smoke
+        if: matrix.python-version == '3.11'
+        run: python scripts/mutation_smoke.py --output-dir mutation-results
       - name: Upload Agent Eval report
         if: always() && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
@@ -54,6 +69,19 @@ jobs:
           name: agent-eval-report
           path: eval-results/*
           if-no-files-found: error
+      - name: Upload test and security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-python-${{ matrix.python-version }}
+          path: |
+            junit.xml
+            coverage.xml
+            coverage-html/**
+            security-results/*
+            api-contract-results/*
+            mutation-results/*
+          if-no-files-found: warn
       - name: Upload retrieval benchmark
         if: always() && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4

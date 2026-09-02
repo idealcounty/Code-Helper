@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .session import AgentState, AgentStatus
+from .session import AgentState, AgentStatus, WORKFLOW_NAMES, WORKFLOW_STAGES
 
 
 class SessionReducer:
@@ -50,6 +50,20 @@ class SessionReducer:
                 self.state.mode = mode
         elif event_type == "task_profile_selected":
             self.state.task_profile = str(payload.get("profile") or "project")
+        elif event_type == "skill_loaded":
+            name = str(payload.get("name") or "").strip()
+            if name:
+                self.state.loaded_skills.add(name)
+        elif event_type == "workflow_selected":
+            name = str(payload.get("name") or "").strip()
+            stage = str(payload.get("stage") or "inspect").strip()
+            if name in WORKFLOW_NAMES and stage in WORKFLOW_STAGES:
+                self.state.workflow_name = name
+                self.state.workflow_stage = stage
+        elif event_type == "workflow_stage_changed":
+            stage = str(payload.get("to") or "").strip()
+            if stage in WORKFLOW_STAGES and self.state.workflow_name in WORKFLOW_NAMES:
+                self.state.workflow_stage = stage
         elif event_type == "step_started":
             self.state.step = _int(payload.get("step"), self.state.step)
             self.state.status = AgentStatus.BUILDING_CONTEXT
@@ -141,6 +155,9 @@ class SessionReducer:
         self.state.recalled_memories.clear()
         self.state.recalled_user_memories.clear()
         self.state.current_objective = objective
+        self.state.workflow_name = None
+        self.state.workflow_stage = "idle"
+        self.state.loaded_skills.clear()
         self.state.repair_attempts = 0
         self.state.run_budget.clear()
         self.state.verification_evidence.clear()

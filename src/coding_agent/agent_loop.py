@@ -13,6 +13,7 @@ from .checkpoints import CheckpointManager
 from .budget import BudgetExceeded, RunBudget
 from .cancellation import CancellationToken, RunCancelled
 from .context import ContextManager
+from .algorithm.reliability import build_report, persist_report
 from .events import AgentEvent, EventBus
 from .hooks import HookTraceCallback
 from .model import ModelClient, ModelError, ModelResponse, ToolCall
@@ -384,6 +385,8 @@ class AgentRunner:
                     "rule_conflicts": context.rule_conflicts,
                     "repo_map": context.repo_map,
                     "summary_meta": context.context_summary_meta,
+                    "source_manifest": context.source_manifest,
+                    "snapshot": self._context_snapshot(context),
                 },
             )
             if context.truncated:
@@ -533,6 +536,7 @@ class AgentRunner:
                     self._stuck_recovery_attempts = 0
                 continue
 
+            await self._advance_workflow_stage(state, "completion gates evaluated")
             decision = self.verifier.evaluate(state, response)
             await self._emit(
                 state,
@@ -996,6 +1000,20 @@ class AgentRunner:
         applied = getattr(self.model_client, "effective_max_output_tokens", None)
         return applied if isinstance(applied, int) and not isinstance(applied, bool) else None
 
+    def _context_snapshot(self, context: Any) -> dict[str, Any]:
+        """Store a bounded, redacted context preview for replay inspection."""
+        messages: list[dict[str, Any]] = []
+        for message in list(getattr(context, "messages", []))[-32:]:
+            role = str(message.get("role") or "unknown") if isinstance(message, dict) else "unknown"
+            content = str(message.get("content") or "") if isinstance(message, dict) else ""
+            preview = self.tool_executor.redactor.redact_text(content[:600])
+            messages.append({"role": role, "chars": len(content), "preview": preview, "truncated": len(content) > 600})
+        tools: list[str] = []
+        for schema in getattr(context, "allowed_tools", []):
+            if isinstance(schema, dict) and schema.get("name"):
+                tools.append(str(schema["name"]))
+        return {"messages": messages, "tools": tools[:100], "redacted": True}
+
     async def _record_tool_result(
         self,
         state: AgentState,
@@ -1014,6 +1032,67 @@ class AgentRunner:
                 "result": result.to_dict(),
             },
         )
+
+        # A successful Skill load is a durable fact.  The routing Skill is
+        # intentionally not a workflow itself; only concrete workflows select
+        # the inspect stage.  Emitting these facts after the tool result keeps
+        # failures out of the loaded set and lets recovery replay the same
+        # projection without executing the Skill again.
+        if call.name == "load_skill" and result.ok:
+            skill_data = result.data.get("skill") if isinstance(result.data, dict) else None
+            skill_name = skill_data.get("name") if isinstance(skill_data, dict) else None
+            if isinstance(skill_name, str) and skill_name.strip() and skill_name not in state.loaded_skills:
+                await self._emit(
+                    state,
+                    "skill_loaded",
+                    {
+                        "name": skill_name,
+                        "description": str((skill_data or {}).get("description") or ""),
+                    },
+                )
+            if skill_name in {"add-feature", "bug-fix", "code-review"}:
+                if state.workflow_name != skill_name:
+                    await self._emit(
+                        state,
+                        "workflow_selected",
+                        {"name": skill_name, "source": "skill_loaded", "stage": "inspect"},
+                    )
+
+        # Keep algorithm verification inspectable outside the live trace.  The
+        # report is derived exclusively from the deterministic judge result;
+        # failures to persist it must never change the tool outcome.
+        if call.name in {"judge_algorithm", "run_algorithm_experiment"} and self.workspace is not None:
+            try:
+                report = build_report(
+                    session_id=state.session_id,
+                    turn_id=state.turn_id,
+                    step=state.step,
+                    event_sequence=event.sequence,
+                    arguments=call.arguments,
+                    result=result.to_dict(),
+                    workspace_root=self.workspace.root,
+                )
+                if report is not None:
+                    safe_report = self.tool_executor.redactor.redact(report)
+                    if not isinstance(safe_report, dict):
+                        raise ValueError("Algorithm report redaction returned an invalid payload")
+                    report_path = persist_report(self.workspace.root, safe_report)
+                    await self._emit(
+                        state,
+                        "algorithm_report_ready",
+                        {
+                            "report_id": safe_report["report_id"],
+                            "path": str(report_path.relative_to(self.workspace.root)),
+                            "summary": safe_report["summary"],
+                            "evidence": safe_report["evidence"],
+                        },
+                    )
+            except (OSError, ValueError) as exc:
+                await self._emit(
+                    state,
+                    "algorithm_report_failed",
+                    {"code": type(exc).__name__, "message": str(exc)},
+                )
 
         mutated_files = result.metadata.get("mutated_files", []) if result.ok else []
         if mutated_files:
@@ -1041,18 +1120,18 @@ class AgentRunner:
                                 "message": exc.message,
                             },
                         )
-        if call.name in {"run_command", "judge_algorithm"} and result.metadata.get("purpose") == "verify":
+        if call.name in {"run_command", "judge_algorithm", "run_algorithm_experiment"} and result.metadata.get("purpose") == "verify":
             verification_command = str(
                 call.arguments.get("command")
                 or (result.data or {}).get("command")
                 or ""
             )
             verification_result = result.to_dict()
-            if call.name == "judge_algorithm":
+            if call.name in {"judge_algorithm", "run_algorithm_experiment"}:
                 # Judge results are verification evidence even though they do
                 # not expose a shell exit code. Keep the command label
                 # explicit so the evidence classifier can trust this tool.
-                verification_command = f"judge_algorithm {verification_command}".strip()
+                verification_command = f"{call.name} {verification_command}".strip()
                 verification_result.setdefault("data", {})["exit_code"] = 0 if result.ok else 1
             evidence = build_verification_evidence(
                 command=verification_command,
@@ -1089,6 +1168,66 @@ class AgentRunner:
             await self._emit(state, "plan_updated", {
                 "plan": state.plan, "reason": result.data.get("reason", "")
             })
+        await self._advance_workflow_stage(state, f"tool {call.name} completed")
+
+    async def _advance_workflow_stage(self, state: AgentState, reason: str) -> None:
+        """Project deterministic workflow facts into one of the fixed stages."""
+        workflow = state.workflow_name
+        if workflow not in {"add-feature", "bug-fix", "code-review"}:
+            return
+
+        next_stage = state.workflow_stage
+        incomplete_plan = any(
+            item.get("status") in {"pending", "in_progress"} for item in state.plan
+        )
+        has_acceptance = any(str(item.get("acceptance") or "").strip() for item in state.plan)
+
+        if workflow == "add-feature":
+            if not state.plan:
+                next_stage = "inspect"
+            elif state.changed_files and not state.verification_is_fresh:
+                next_stage = "verify"
+            elif incomplete_plan:
+                next_stage = (
+                    "implement"
+                    if any(item.get("status") == "in_progress" for item in state.plan)
+                    else "plan"
+                )
+            elif not state.changed_files:
+                next_stage = "plan"
+            elif has_acceptance:
+                next_stage = "finish"
+        elif workflow == "bug-fix":
+            if not state.changed_files:
+                next_stage = "inspect"
+            elif state.workflow_stage == "inspect":
+                # The first successful mutation is the implementation
+                # milestone.  Move to verification only after the model has
+                # finished its repair pass (the no-tool completion check).
+                next_stage = "implement"
+            elif not state.verification_is_fresh:
+                next_stage = "verify"
+            elif not incomplete_plan:
+                next_stage = "finish"
+        else:  # code-review
+            if state.changed_files:
+                next_stage = "verify"
+            elif state.workflow_stage == "inspect":
+                next_stage = "verify"
+            elif not incomplete_plan:
+                next_stage = "finish"
+
+        if next_stage == state.workflow_stage:
+            return
+        await self._emit(
+            state,
+            "workflow_stage_changed",
+            {
+                "from": state.workflow_stage,
+                "to": next_stage,
+                "reason": reason,
+            },
+        )
 
     def _verification_dependency_graph(self) -> dict[str, list[str]] | None:
         """Build a best-effort import graph for targeted-test coverage checks."""

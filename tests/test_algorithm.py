@@ -19,6 +19,18 @@ def test_problem_parser_extracts_structured_sections() -> None:
     assert spec.examples == ("1 2 -> 3",)
 
 
+def test_problem_parser_extracts_numeric_bounds_and_confidence() -> None:
+    spec = parse_problem(
+        "# Bounds\n\nInput:\n t and n\n\nOutput:\n answer\n\nConstraints:\n1≤t≤3⋅10^4\n1≤n≤2⋅10^5\nsum n ≤ 2⋅10^5"
+    )
+    variables = {item["name"]: item for item in spec.variables}
+    assert variables["t"]["min"] == 1
+    assert variables["t"]["max"] == 30_000
+    assert variables["n"]["max"] == 200_000
+    assert spec.aggregate_constraints
+    assert spec.confidence > 0.5
+
+
 def test_algorithm_judge_is_reproducible_and_classifies_wrong_answer() -> None:
     cases = [JudgeCase("1\n", "2\n", "one"), JudgeCase("2\n", "4\n", "two")]
     outputs = [("2\n", "ok", None), ("5\n", "ok", None)]
@@ -51,6 +63,7 @@ def test_judge_algorithm_tool_runs_cases_through_tool_executor(tmp_path: Path) -
     assert result.ok is True
     assert result.data["judge"]["seed"] == 42
     assert result.data["judge"]["passed"] == 2
+    assert result.data["judge"]["benchmark"]["p95_ms"] >= 0
 
 
 def test_judge_algorithm_records_reproducible_minimized_failure(tmp_path: Path) -> None:
@@ -71,6 +84,49 @@ def test_judge_algorithm_records_reproducible_minimized_failure(tmp_path: Path) 
     assert result.ok is False
     assert result.code == "ALGORITHM_JUDGE_FAILED"
     assert result.data["judge"]["minimized_input"] is not None
+
+
+def test_differential_experiment_uses_oracle_and_reports_timing(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_algorithm_tools(registry, Workspace(tmp_path))
+    python = str(sys.executable)
+    candidate = f'"{python}" -c "print(0)"'
+    oracle = f'"{python}" -c "import sys; print(int(sys.stdin.read()) * 2)"'
+    result = asyncio.run(
+        ToolExecutor(registry).execute(
+            "run_algorithm_experiment",
+            {
+                "candidate_command": candidate,
+                "oracle_command": oracle,
+                "seed": 12,
+                "cases": [
+                    {"label": "zero", "input": "0\n", "source": "boundary"},
+                    {"label": "two", "input": "2\n", "source": "random"},
+                ],
+            },
+        )
+    )
+    assert result.ok is False
+    report = result.data["judge"]
+    assert report["failed"] == 1
+    assert report["cases"][0]["status"] == "passed"
+    assert report["cases"][1]["status"] == "wrong_answer"
+    assert report["cases"][1]["duration_ms"] >= 0
+    assert report["cases"][1]["oracle_source"] == "user_command"
+    assert report["minimized_input"] is not None
+
+
+def test_generate_algorithm_cases_is_seeded_and_labels_sources(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_algorithm_tools(registry, Workspace(tmp_path))
+    executor = ToolExecutor(registry)
+    arguments = {"min_value": -2, "max_value": 4, "random_count": 8, "seed": 19}
+    first = asyncio.run(executor.execute("generate_algorithm_cases", arguments))
+    second = asyncio.run(executor.execute("generate_algorithm_cases", arguments))
+    assert first.ok and first.data == second.data
+    sources = {item["source"] for item in first.data["cases"]}
+    assert sources == {"boundary", "random"}
+    assert first.metadata["random_cases"] == 8
 
 
 def test_analyze_complexity_reports_nested_loops_and_recursion(tmp_path: Path) -> None:

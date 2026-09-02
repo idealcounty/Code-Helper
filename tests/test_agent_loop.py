@@ -23,6 +23,8 @@ from coding_agent.tools import (
     register_filesystem_tools,
     register_shell_tools,
 )
+from coding_agent.tools.skills import register_skill_tools
+from coding_agent.skills import SkillLibrary
 from coding_agent.tools.base import ToolResult, ToolRisk, ToolSpec
 from coding_agent.verification_config import VerificationConfig, VerificationRule
 
@@ -178,6 +180,8 @@ def test_agent_reads_edits_verifies_and_finishes(tmp_path: Path) -> None:
 
     assert result.status is AgentStatus.COMPLETED
     assert (tmp_path / "sample.py").read_text(encoding="utf-8") == "value = 2\n"
+
+
     assert state.verification_is_fresh is True
     assert "sample.py" in state.changed_files
     event_types = [event["type"] for event in store.load()]
@@ -311,6 +315,97 @@ def test_agent_rejects_noop_patch_before_checkpoint_or_mutation(
     )
     assert noop_result["payload"]["result"]["code"] == "NO_CHANGES"
     assert noop_result["payload"]["result"]["metadata"].get("mutated_files") is None
+
+
+def test_loading_concrete_skill_records_workflow_events(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "bug-fix"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "description: Fix defects\nwhen_to_use: A reported bug\n", encoding="utf-8"
+    )
+    registry = ToolRegistry()
+    register_skill_tools(registry, SkillLibrary(tmp_path))
+    store = EventStore(tmp_path / ".events", "session")
+    runner = AgentRunner(
+        model_client=ScriptedModel([]),
+        context_manager=ContextManager(skill_library=SkillLibrary(tmp_path)),
+        registry=registry,
+        tool_executor=ToolExecutor(registry),
+        permission_policy=PermissionPolicy(),
+        event_bus=EventBus(store),
+    )
+    state = AgentState.create(session_id="session", max_steps=5)
+
+    asyncio.run(runner._record_tool_result(
+        state,
+        ToolCall("load-1", "load_skill", {"name": "bug-fix"}),
+        ToolResult.success(
+            "Loaded skill bug-fix.",
+            data={"skill": {"name": "bug-fix", "description": "Fix defects"}},
+        ),
+    ))
+
+    assert state.loaded_skills == {"bug-fix"}
+    assert state.workflow_name == "bug-fix"
+    assert state.workflow_stage == "inspect"
+    event_types = [item["type"] for item in store.load()]
+    assert "skill_loaded" in event_types
+    assert "workflow_selected" in event_types
+
+
+def test_workflow_stage_follows_plan_mutation_and_verification(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    store = EventStore(tmp_path / ".events", "session")
+    runner = AgentRunner(
+        model_client=ScriptedModel([]),
+        context_manager=ContextManager(),
+        registry=registry,
+        tool_executor=ToolExecutor(registry),
+        permission_policy=PermissionPolicy(),
+        event_bus=EventBus(store),
+    )
+    state = AgentState.create(session_id="session")
+    state.workflow_name = "add-feature"
+    state.workflow_stage = "inspect"
+    state.plan = [{"step": "实现功能", "status": "in_progress", "acceptance": "测试通过"}]
+
+    asyncio.run(runner._advance_workflow_stage(state, "plan updated"))
+    assert state.workflow_stage == "implement"
+
+    state.changed_files.add("app.py")
+    state.last_mutation_sequence = 2
+    asyncio.run(runner._advance_workflow_stage(state, "file changed"))
+    assert state.workflow_stage == "verify"
+
+    state.plan[0]["status"] = "completed"
+    state.last_successful_verification_sequence = 3
+    asyncio.run(runner._advance_workflow_stage(state, "verification accepted"))
+    assert state.workflow_stage == "finish"
+    assert [event["type"] for event in store.load()].count("workflow_stage_changed") == 3
+
+
+def test_bug_fix_first_mutation_enters_implement_before_verification(
+    tmp_path: Path,
+) -> None:
+    registry = ToolRegistry()
+    store = EventStore(tmp_path / ".events", "session")
+    runner = AgentRunner(
+        model_client=ScriptedModel([]),
+        context_manager=ContextManager(),
+        registry=registry,
+        tool_executor=ToolExecutor(registry),
+        permission_policy=PermissionPolicy(),
+        event_bus=EventBus(store),
+    )
+    state = AgentState.create(session_id="session")
+    state.workflow_name = "bug-fix"
+    state.workflow_stage = "inspect"
+    state.changed_files.add("app.py")
+    state.last_mutation_sequence = 2
+
+    asyncio.run(runner._advance_workflow_stage(state, "first file mutation"))
+
+    assert state.workflow_stage == "implement"
 
 
 def test_deepseek_reasoning_state_is_replayed_to_next_tool_round_only_in_memory(
@@ -989,12 +1084,20 @@ def test_session_token_budget_stops_before_next_model_request(tmp_path: Path) ->
 
 
 def test_independent_read_calls_run_in_parallel_and_results_keep_call_order(tmp_path: Path) -> None:
-    async def scenario() -> tuple[float, list[dict[str, Any]]]:
+    async def scenario() -> tuple[int, list[dict[str, Any]]]:
         registry = ToolRegistry()
+        active_reads = 0
+        max_active_reads = 0
 
         async def delayed_read(arguments: dict[str, Any]) -> ToolResult:
-            await asyncio.sleep(float(arguments["delay"]))
-            return ToolResult.success(str(arguments["value"]))
+            nonlocal active_reads, max_active_reads
+            active_reads += 1
+            max_active_reads = max(max_active_reads, active_reads)
+            try:
+                await asyncio.sleep(float(arguments["delay"]))
+                return ToolResult.success(str(arguments["value"]))
+            finally:
+                active_reads -= 1
 
         registry.register(
             ToolSpec(
@@ -1034,13 +1137,15 @@ def test_independent_read_calls_run_in_parallel_and_results_keep_call_order(tmp_
             permission_policy=PermissionPolicy(),
             event_bus=EventBus(store),
         )
-        started = perf_counter()
         result = await runner.run_turn(AgentState.create(session_id="parallel"), "read both")
         assert result.status is AgentStatus.COMPLETED
-        return perf_counter() - started, store.load()
+        return max_active_reads, store.load()
 
-    elapsed, events = asyncio.run(scenario())
-    assert elapsed < 0.30
+    max_active_reads, events = asyncio.run(scenario())
+    # Assert overlap directly instead of relying on a wall-clock threshold;
+    # Windows CI scheduling and coverage instrumentation can add variable
+    # latency while the two tool tasks are still genuinely concurrent.
+    assert max_active_reads == 2
     results = [event["payload"]["id"] for event in events if event["type"] == "tool_result"]
     assert results == ["slow", "fast"]
     requested = [event["payload"].get("execution") for event in events if event["type"] == "tool_requested"]

@@ -18,9 +18,17 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from ..agent_loop import AgentRunResult
+from ..cancellation import CancellationToken
+from ..algorithm.problem import parse_problem, suggest_boundary_cases
+from ..algorithm.coordinator import (
+    AlgorithmRunConfig,
+    AlgorithmRunCoordinator,
+    default_candidate_command,
+)
+from ..algorithm.reliability import get_report as get_algorithm_report, list_reports, render_markdown
 from ..config import (
     AppConfig,
     default_settings_path,
@@ -31,6 +39,7 @@ from ..events import AgentEvent
 from ..model import ModelClient, ToolCall
 from ..permissions import ApprovalMode, PermissionResult
 from ..repo_map import RepoMapBuilder
+from ..replay import build_step_frames
 from ..runtime import AgentRuntime, create_runtime, _skills_root
 from ..session import AgentStatus
 from ..skills import SkillLibrary
@@ -123,6 +132,42 @@ def _budget_view(runtime: AgentRuntime) -> dict[str, Any]:
     return view
 
 
+def _workflow_view(state: Any, *, include_details: bool = False) -> dict[str, Any]:
+    """Expose the turn-scoped workflow state used by the UI and reports.
+
+    The session contract deliberately keeps this object to the three stable
+    projection fields. Consumers that render richer explanations (the
+    intelligence and report views) can opt into plan-derived details without
+    changing the backwards-compatible session shape.
+    """
+
+    name = getattr(state, "workflow_name", None)
+    name = name if isinstance(name, str) else None
+    stage = str(getattr(state, "workflow_stage", None) or "idle")
+    loaded_skills = getattr(state, "loaded_skills", set()) or set()
+    view = {
+        "name": name,
+        "stage": stage,
+        "loaded_skills": sorted(str(item) for item in loaded_skills),
+    }
+    if not include_details:
+        return view
+
+    plan = getattr(state, "plan", [])
+    plan = plan if isinstance(plan, list) else []
+    view["acceptance"] = [
+        str(item.get("acceptance"))
+        for item in plan
+        if isinstance(item, dict) and str(item.get("acceptance") or "").strip()
+    ][:12]
+    view["active_steps"] = [
+        str(item.get("step"))
+        for item in plan
+        if isinstance(item, dict) and item.get("status") == "in_progress"
+    ][:3]
+    return view
+
+
 def _event_timestamp(event: dict[str, Any]) -> datetime | None:
     raw = event.get("timestamp")
     if not isinstance(raw, str) or not raw.strip():
@@ -144,6 +189,216 @@ def _percentile(samples: list[float], quantile: float) -> float:
     upper = min(lower + 1, len(ordered) - 1)
     fraction = position - lower
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _token_similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 1.0 if left == right else 0.0
+    return len(left & right) / len(left | right)
+
+
+def _replay_metrics(session: Any) -> dict[str, Any]:
+    events = session.runtime.event_store.load()
+    compact = [item for event in events if (item := _compact_ui_history_event(event)) is not None]
+    frames = build_step_frames(compact)
+    tool_calls = sum(len(frame.get("tool_calls") or []) for frame in frames)
+    verification = sum(len(frame.get("verification") or []) for frame in frames)
+    errors = sum(len(frame.get("errors") or []) for frame in frames)
+    tokens = sum(
+        int((event.get("payload") or {}).get("estimated_tokens") or 0)
+        for event in events
+        if event.get("type") == "context_built"
+    )
+    return {
+        "session_id": session.runtime.state.session_id,
+        "reasoning": session.runtime.state.reasoning_mode,
+        "steps": len([frame for frame in frames if int(frame.get("step") or 0) > 0]),
+        "tool_calls": tool_calls,
+        "verification_events": verification,
+        "errors": errors,
+        "estimated_context_tokens": tokens,
+        "duration_ms": round(sum(float(frame.get("duration_ms") or 0) for frame in frames), 3),
+    }
+
+
+_OBSERVABILITY_SOURCE_LABELS = {
+    "repo_map": ("项目结构", "帮助 Agent 找到与当前任务最相关的文件"),
+    "Repo Map": ("项目结构", "帮助 Agent 找到与当前任务最相关的文件"),
+    "history": ("最近对话", "保留你刚刚说过的目标和约束"),
+    "recent_messages": ("最近对话", "保留你刚刚说过的目标和约束"),
+    "summary": ("较早对话摘要", "把更早的内容压缩成可追踪的摘要"),
+    "rules": ("项目规则", "遵循工作区中的约定和说明"),
+    "core_system": ("安全规则", "保证 Agent 按照系统边界工作"),
+    "tool_schemas": ("可用工具", "告诉 Agent 当前可以使用哪些能力"),
+    "tools": ("可用工具", "告诉 Agent 当前可以使用哪些能力"),
+    "project_memory": ("项目记忆", "复用已经确认过的项目事实"),
+    "user_memory": ("你的偏好", "复用你主动启用的个人偏好"),
+    "skill_catalog": ("工作技能", "按需加载的 Skills 目录"),
+}
+
+
+def _friendly_source(source: dict[str, Any]) -> dict[str, Any]:
+    source_id = str(source.get("id") or source.get("kind") or "unknown")
+    label, description = _OBSERVABILITY_SOURCE_LABELS.get(
+        source_id, (str(source.get("label") or source_id), "本轮任务使用的参考资料")
+    )
+    enabled = bool(source.get("enabled", True))
+    chars = max(0, int(source.get("chars") or 0))
+    return {
+        "id": source_id,
+        "label": label,
+        "description": description,
+        "status": "used" if enabled and chars else "available" if enabled else "disabled",
+        "status_label": "已参考" if enabled and chars else "可参考" if enabled else "已关闭",
+        "reason": str(source.get("reason") or ""),
+        "chars": chars,
+        "tokens": int(source.get("tokens") or round(chars / 4)),
+        "locked": bool(source.get("locked", False)),
+    }
+
+
+def _observability_presentation(view: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Build a user-facing explanation without changing raw observability data.
+
+    The adapter deliberately uses only already redacted API data.  It is a
+    presentation model: changing these labels or summaries must not change
+    Agent execution, permissions, memory persistence, or event semantics.
+    """
+    if view == "replay":
+        raw_steps = data.get("steps") if isinstance(data.get("steps"), list) else []
+        simple_steps: list[dict[str, Any]] = []
+        for item in raw_steps:
+            errors = item.get("errors") if isinstance(item.get("errors"), list) else []
+            calls = item.get("tool_calls") if isinstance(item.get("tool_calls"), list) else []
+            results = item.get("tool_results") if isinstance(item.get("tool_results"), list) else []
+            files = sorted({
+                str((call.get("arguments") or {}).get("path"))
+                for call in calls
+                if isinstance(call, dict) and (call.get("arguments") or {}).get("path")
+            })
+            if errors:
+                status, status_label = "error", "需要关注"
+                description = "这一步出现了可观测错误，建议先检查详情。"
+            elif results or calls:
+                status, status_label = "done", "已完成"
+                description = f"Agent 使用了 {len(calls)} 个工具完成这一步。"
+            else:
+                status, status_label = "info", "已记录"
+                description = "这一步完成了上下文准备或模型判断。"
+            simple_steps.append({
+                "step": int(item.get("step") or 0),
+                "turn_id": str(item.get("turn_id") or ""),
+                "status": status,
+                "status_label": status_label,
+                "title": f"第 {int(item.get('step') or 0)} 步",
+                "description": description,
+                "tool_count": len(calls),
+                "files": files[:8],
+                "duration_ms": float(item.get("duration_ms") or 0),
+                "error_count": len(errors),
+                "event_count": len(item.get("events") or []),
+            })
+        error_count = len(data.get("error_sequences") or [])
+        if not simple_steps:
+            summary = {"status": "empty", "tone": "neutral", "title": "还没有工作记录", "description": "完成一次任务后，这里会用时间线展示 Agent 做过什么。"}
+        elif error_count:
+            summary = {"status": "attention", "tone": "warning", "title": "任务中有一步需要关注", "description": f"已记录 {len(simple_steps)} 个步骤，其中 {error_count} 个可观测错误。"}
+        else:
+            summary = {"status": "ok", "tone": "success", "title": "运行回放", "description": f"已按时间顺序记录 {len(simple_steps)} 个步骤。"}
+        return {"mode": "simple", "summary": summary, "steps": simple_steps, "error_count": error_count, "technical_available": bool(raw_steps or data.get("events"))}
+
+    if view == "context":
+        raw_sources = data.get("sources") if isinstance(data.get("sources"), list) else []
+        sources = [_friendly_source(item) for item in raw_sources if isinstance(item, dict)]
+        score = max(0, min(100, int(data.get("quality_score") or 0)))
+        if score >= 80:
+            budget_state, budget_label, tone = "healthy", "参考资料很充足", "success"
+        elif score >= 55:
+            budget_state, budget_label, tone = "organized", "参考资料已整理", "info"
+        else:
+            budget_state, budget_label, tone = "near_limit", "参考资料接近上限", "warning"
+        used_chars = int(data.get("actual_context_chars") or data.get("total_chars") or 0)
+        max_chars = int(data.get("max_chars") or 0)
+        summary = {"status": budget_state, "tone": tone, "title": "上下文编译", "description": f"本轮整理了 {len([item for item in sources if item['status'] == 'used'])} 类资料，确保回答贴合当前项目。"}
+        return {
+            "mode": "simple",
+            "summary": summary,
+            "budget": {"state": budget_state, "label": budget_label, "score": score, "used_chars": used_chars, "max_chars": max_chars, "tokens": int(data.get("estimated_tokens") or 0)},
+            "sources": sources,
+            "quality_issues": [str(item.get("kind") or "") for item in data.get("quality_issues") or [] if isinstance(item, dict)],
+            "technical_available": bool(raw_sources or data.get("repo_map")),
+        }
+
+    memories = data.get("memories") if isinstance(data.get("memories"), list) else []
+    candidates = data.get("pending_candidates") if isinstance(data.get("pending_candidates"), list) else []
+    recalls = data.get("recall_audit") if isinstance(data.get("recall_audit"), list) else []
+    category_labels = {"fact": "项目事实", "decision": "已做决定", "preference": "你的偏好", "task": "待办事项", "constraint": "项目约束"}
+    simple_candidates = [{
+        "id": str(item.get("id") or ""),
+        "content": str(item.get("content") or ""),
+        "category": str(item.get("category") or "fact"),
+        "category_label": category_labels.get(str(item.get("category") or "fact"), "待确认信息"),
+        "reason": str(item.get("reason") or "这条信息可能对后续任务有帮助"),
+        "source": str(item.get("turn_id") or "当前对话"),
+        "keywords": [str(keyword) for keyword in item.get("keywords") or []][:8],
+        "prompt": str(item.get("prompt") or "") or f"本轮识别到一条可能有用的信息，是否将“{str(item.get('content') or '')}”存入记忆区？",
+        "occurrence_count": max(1, int(item.get("occurrence_count") or 1)),
+        "work_type": str(item.get("work_type") or ""),
+        "source_kind": str(item.get("source_kind") or "legacy"),
+    } for item in candidates if isinstance(item, dict)]
+    simple_memories = [{
+        "id": str(item.get("id") or ""),
+        "content": str(item.get("content") or ""),
+        "category": str(item.get("category") or "fact"),
+        "category_label": category_labels.get(str(item.get("category") or "fact"), "项目记忆"),
+        "lifecycle": "已保存" if not item.get("archived") else "已归档",
+        "verified": bool(item.get("verification_status") in {"verified", "confirmed"}),
+        "pinned": bool(item.get("pinned")),
+        "state": "cancelled" if item.get("archived") else "active",
+        "action": "restore" if item.get("archived") else "archive",
+        "action_label": "重新启用" if item.get("archived") else "取消记忆",
+    } for item in memories if isinstance(item, dict)]
+    recall_items = []
+    for item in recalls[:20]:
+        memory = item.get("memory") if isinstance(item, dict) else {}
+        if not isinstance(memory, dict):
+            continue
+        recall_items.append({"content": str(memory.get("content") or ""), "reason": "与当前任务相关，因此被带入本轮", "score": item.get("score")})
+    conflict_count = len(data.get("conflicts") or [])
+    duplicate_count = len(data.get("duplicates") or []) + len(data.get("candidate_duplicates") or [])
+    active_count = sum(item["state"] == "active" for item in simple_memories)
+    cancelled_count = len(simple_memories) - active_count
+    summary = {"status": "attention" if candidates or conflict_count else "ok", "tone": "warning" if candidates or conflict_count else "success", "title": "记忆治理", "description": f"当前启用 {active_count} 条记忆，已取消 {cancelled_count} 条，另有 {len(simple_candidates)} 条建议等待你决定。"}
+    return {
+        "mode": "simple",
+        "summary": summary,
+        "candidates": simple_candidates,
+        "memories": simple_memories,
+        "recalls": recall_items,
+        "conflicts": [{"subject": str(item.get("subject") or "同一主题"), "count": len(item.get("memories") or [])} for item in data.get("conflicts") or [] if isinstance(item, dict)],
+        "duplicate_count": duplicate_count,
+        "technical_available": bool(memories or candidates or recalls or data.get("conflicts")),
+    }
+
+
+def _bookmark_path(workspace_root: Path) -> Path:
+    return workspace_root / ".code-helper" / "replay-bookmarks.json"
+
+
+def _load_replay_bookmarks(workspace_root: Path) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(_bookmark_path(workspace_root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [item for item in payload if isinstance(item, dict)][:500] if isinstance(payload, list) else []
+
+
+def _save_replay_bookmarks(workspace_root: Path, bookmarks: list[dict[str, Any]]) -> None:
+    path = _bookmark_path(workspace_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(bookmarks[-500:], ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _drive_roots() -> list[Path]:
@@ -177,6 +432,9 @@ _UI_HISTORY_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "approval_policy_changed": ("policy",),
     "step_started": ("step",),
     "task_profile_selected": ("profile", "reason"),
+    "skill_loaded": ("name",),
+    "workflow_selected": ("name", "stage"),
+    "workflow_stage_changed": ("from", "to", "reason"),
     "context_compacted": ("estimated_chars",),
     "model_started": (),
     "stuck_recovery": ("message",),
@@ -186,6 +444,12 @@ _UI_HISTORY_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "approval_requested": ("name", "reason"),
     "verification_required": ("reason",),
     "repair_attempt": ("attempt", "max_attempts", "reason"),
+    "algorithm_report_ready": ("report_id", "path", "summary", "evidence"),
+    "algorithm_report_failed": ("code", "message"),
+    "algorithm_run_progress": ("run_id", "stage", "progress", "message", "profile", "completed", "total", "cache", "model_requests"),
+    "algorithm_run_completed": ("run_id", "report_id", "status", "summary", "cache", "model_requests", "path"),
+    "algorithm_run_cancelled": ("run_id", "status", "code", "message", "profile", "model_requests"),
+    "algorithm_run_failed": ("run_id", "report_id", "status", "code", "message", "summary", "cache", "model_requests", "path"),
     "checkpoint_created": ("path",),
     "checkpoint_tracking_failed": ("code", "message"),
     "checkpoint_restored": ("files", "forced"),
@@ -235,7 +499,14 @@ def _compact_ui_history_event(event: dict[str, Any]) -> dict[str, Any] | None:
         repo_source = repo_map if isinstance(repo_map, dict) else {}
         compact_payload = {
             "estimated_chars": source.get("estimated_chars", 0),
+            "estimated_tokens": source.get("estimated_tokens", 0),
             "repo_map_selected_count": len(repo_source.get("selected") or []),
+            "source_manifest": [
+                {key: item.get(key) for key in ("kind", "chars", "enabled", "locked", "reason")}
+                for item in (source.get("source_manifest") or [])[:20]
+                if isinstance(item, dict)
+            ],
+            "snapshot": source.get("snapshot") if isinstance(source.get("snapshot"), dict) else {},
         }
     elif event_type == "verification_recorded":
         evidence = source.get("evidence")
@@ -489,13 +760,54 @@ class MessageRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
+class AlgorithmSpecRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=100_000)
+
+
+class AlgorithmRunRequest(BaseModel):
+    """Configuration for a direct, deterministic algorithm-lab run."""
+
+    candidate_command: str = Field(default="", max_length=4_000)
+    candidate_path: str = Field(default="", max_length=4_096)
+    # ``source_path`` is retained as a descriptive alias used by the roadmap
+    # and older clients; new UI code sends ``candidate_path``.
+    source_path: str = Field(default="", max_length=4_096)
+    oracle_command: str = Field(default="", max_length=4_000)
+    problem_text: str = Field(default="", max_length=100_000)
+    cases: list[dict[str, Any]] = Field(default_factory=list, max_length=256)
+    profile: Literal["quick", "standard", "full"] = "standard"
+    seed: int = Field(default=0, ge=0, le=2_147_483_647)
+    timeout: float | None = Field(default=None, ge=0.1, le=30.0)
+    shrink: bool | None = None
+    benchmark: bool | None = None
+
+
+class AlgorithmRetryRequest(BaseModel):
+    profile: Literal["quick", "standard", "full"] | None = None
+
+
+class ReplayForkRequest(BaseModel):
+    mode: Literal["ask", "plan"] = "plan"
+
+
+class ReplayCompareRequest(BaseModel):
+    left_session_id: str = Field(min_length=1, max_length=128)
+    right_session_id: str = Field(min_length=1, max_length=128)
+
+
+class ReplayBookmarkRequest(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=128)
+    step: int = Field(ge=0)
+    label: str = Field(default="根因候选", max_length=200)
+
+
 class ApprovalRequest(BaseModel):
     # ``tool_call_id`` is required for new clients.  Keep it optional at the
     # transport boundary so a cached older UI can still resolve the single
     # pending approval from the server-side session state instead of getting a
     # validation-only 422 response.
     tool_call_id: str | None = Field(default=None, min_length=1)
-    approved: bool
+    approved: StrictBool
     scope: Literal["once", "session"] = "once"
     ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
 
@@ -532,6 +844,30 @@ class RecoveryRequest(BaseModel):
 
 class MemoryCandidateRequest(BaseModel):
     action: Literal["confirm", "reject"]
+
+
+class MemoryBulkResolveRequest(BaseModel):
+    action: Literal["confirm", "reject"]
+    candidate_ids: list[str] = Field(default_factory=list, max_length=100)
+    confirm: bool = False
+
+
+class MemoryGovernanceRequest(BaseModel):
+    action: Literal["pin", "unpin", "archive", "restore", "reweight", "set_expiry", "clear_expiry"]
+    importance: int | None = Field(default=None, ge=1, le=5)
+    expires_at: str | None = Field(default=None, max_length=64)
+
+
+class MemoryMergeRequest(BaseModel):
+    memory_ids: list[str] = Field(min_length=2, max_length=100)
+    category: Literal["fact", "decision", "preference", "task"]
+    content: str = Field(min_length=1, max_length=2_000)
+    confirm: bool = False
+
+
+class ContextPreferenceRequest(BaseModel):
+    source_id: Literal["repo_map", "project_memory", "user_memory", "skill_catalog"]
+    enabled: bool
 
 
 class UserMemorySettingRequest(BaseModel):
@@ -584,6 +920,10 @@ class WebSession:
     task: asyncio.Task[AgentRunResult] | None = None
     cancel_watchdog: asyncio.Task[None] | None = None
     last_error: str | None = None
+    algorithm_tasks: dict[str, asyncio.Task[dict[str, Any]]] = field(default_factory=dict)
+    algorithm_cancellations: dict[str, CancellationToken] = field(default_factory=dict)
+    algorithm_configs: dict[str, AlgorithmRunConfig] = field(default_factory=dict)
+    algorithm_results: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def running(self) -> bool:
@@ -989,6 +1329,7 @@ def create_app(
             "reasoning_profile": _profile_from_effort(state.reasoning_mode),
             "task_profile": state.task_profile,
             "approval_policy": session.runtime.runner.permission_policy.approval_mode,
+            "workflow": _workflow_view(state),
             "step": state.step,
             "running": session.running,
             "changed_files": sorted(state.changed_files),
@@ -1009,7 +1350,7 @@ def create_app(
         runtime = session.runtime
         state = runtime.state
         events = runtime.event_store.load()
-        loaded_skills: list[str] = []
+        loaded_skills: list[str] = sorted(str(item) for item in (state.loaded_skills or set()))
         compactions = 0
         output_references: list[str] = []
         repo_map_calls = 0
@@ -1145,6 +1486,7 @@ def create_app(
                 "truncated": repo_map["truncated"],
             },
             "skills": {"available": skills, "loaded": loaded_skills},
+            "workflow": _workflow_view(state, include_details=True),
             "memory": {
                 **runtime.memory_store.stats(),
                 "recalled": state.recalled_memories,
@@ -1234,6 +1576,703 @@ def create_app(
         session = manager.get(session_id)
         return build_trace(session.runtime.event_store.load())
 
+    @app.get("/api/sessions/{session_id}/agent-lab/replay")
+    @app.get("/api/sessions/{session_id}/replay")
+    async def get_agent_replay(session_id: str) -> dict[str, Any]:
+        """Return a bounded, redacted event timeline grouped by Agent step."""
+        session = manager.get(session_id)
+        compact_events = [
+            compact
+            for event in session.runtime.event_store.load()
+            if (compact := _compact_ui_history_event(event)) is not None
+        ]
+        frames = build_step_frames(compact_events)
+        # Include both terminal failures and the first failed tool result so
+        # the replay UI can distinguish a root-cause event from later
+        # cascading ``run_failed`` records.
+        errors = [
+            int(event.get("sequence") or 0)
+            for event in compact_events
+            if event.get("type") in {"run_failed", "run_budget_exhausted", "algorithm_report_failed"}
+        ]
+        errors.extend(
+            int(error.get("sequence") or 0)
+            for frame in frames
+            for error in (frame.get("errors") or [])
+            if error.get("type") == "tool_result_failed"
+        )
+        errors = sorted(set(errors))
+        return {
+            "steps": frames,
+            "events": compact_events[-1200:],
+            "error_sequences": errors[-50:],
+            "bookmarks": [
+                item for item in _load_replay_bookmarks(session.runtime.workspace.root)
+                if item.get("session_id") == session_id
+            ],
+            "evidence": {"level": "event_log", "kind": "redacted_ui_history"},
+        }
+
+    @app.post("/api/replay/compare")
+    async def compare_replays(request: ReplayCompareRequest) -> dict[str, Any]:
+        left = manager.get(request.left_session_id)
+        right = manager.get(request.right_session_id)
+        if left.runtime.workspace.root.resolve() != right.runtime.workspace.root.resolve():
+            raise HTTPException(status_code=409, detail="Replay comparison requires the same workspace")
+        left_metrics = _replay_metrics(left)
+        right_metrics = _replay_metrics(right)
+        return {
+            "left": left_metrics,
+            "right": right_metrics,
+            "delta": {
+                key: right_metrics[key] - left_metrics[key]
+                for key in ("steps", "tool_calls", "verification_events", "errors", "estimated_context_tokens", "duration_ms")
+            },
+            "evidence": {"level": "event_log", "kind": "aligned_session_metrics", "disclaimer": "仅比较可观测执行路径，不比较私有思维文本。"},
+        }
+
+    @app.post("/api/sessions/{session_id}/replay/bookmarks")
+    async def add_replay_bookmark(
+        session_id: str, request: ReplayBookmarkRequest
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        bookmark = {
+            "id": secrets.token_hex(12),
+            "session_id": session_id,
+            "turn_id": request.turn_id,
+            "step": request.step,
+            "label": request.label,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        bookmarks = _load_replay_bookmarks(session.runtime.workspace.root)
+        bookmarks.append(bookmark)
+        _save_replay_bookmarks(session.runtime.workspace.root, bookmarks)
+        return {"bookmark": bookmark}
+
+    @app.get("/api/sessions/{session_id}/replay/turns/{turn_id}/steps/{step}")
+    async def get_replay_step(session_id: str, turn_id: str, step: int) -> dict[str, Any]:
+        session = manager.get(session_id)
+        compact_events = [
+            compact
+            for event in session.runtime.event_store.load()
+            if (compact := _compact_ui_history_event(event)) is not None
+        ]
+        frame = next(
+            (
+                item
+                for item in build_step_frames(compact_events)
+                if item.get("turn_id") == turn_id and int(item.get("step") or 0) == step
+            ),
+            None,
+        )
+        if frame is None:
+            raise HTTPException(status_code=404, detail="Replay step was not found")
+        return {"step": frame, "evidence": {"level": "event_log", "kind": "redacted_step_frame"}}
+
+    @app.post("/api/sessions/{session_id}/replay/turns/{turn_id}/steps/{step}/fork")
+    async def fork_replay_step(
+        session_id: str, turn_id: str, step: int, request: ReplayForkRequest
+    ) -> dict[str, Any]:
+        """Create a safe Context Fork without replaying commands or writes."""
+        source = manager.get(session_id)
+        events = source.runtime.event_store.load()
+        target_sequence = 0
+        frames = build_step_frames([
+            compact
+            for event in events
+            if (compact := _compact_ui_history_event(event)) is not None
+        ])
+        frame = next(
+            (
+                item
+                for item in frames
+                if item.get("turn_id") == turn_id and int(item.get("step") or 0) == step
+            ),
+            None,
+        )
+        if frame is None:
+            raise HTTPException(status_code=404, detail="Replay step was not found")
+        target_sequence = int(frame.get("finished_sequence") or 0)
+        try:
+            fork = manager.create(
+                str(source.runtime.workspace.root),
+                request.mode,
+                reasoning_profile=_profile_from_effort(source.runtime.state.reasoning_mode),
+                task_profile=source.runtime.state.requested_task_profile,
+                approval_policy="ask",
+            )
+            fork_events = [event for event in events if int(event.get("sequence") or 0) <= target_sequence]
+            fork_messages: list[dict[str, Any]] = []
+            for event in fork_events:
+                payload = event.get("payload") or {}
+                event_type = event.get("type")
+                if event_type == "turn_started" and payload.get("message"):
+                    fork_messages.append({"role": "user", "content": str(payload["message"])})
+                elif event_type == "assistant_response" and payload.get("content"):
+                    fork_messages.append({"role": "assistant", "content": str(payload["content"])})
+            fork.runtime.state.messages = fork_messages
+            fork.runtime.state.plan = list(source.runtime.state.plan)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "session_id": fork.runtime.state.session_id,
+            "workspace": str(fork.runtime.workspace.root),
+            "mode": request.mode,
+            "source": {"session_id": session_id, "turn_id": turn_id, "step": step, "sequence": target_sequence},
+            "safety": {"replayed_writes": False, "replayed_commands": False, "approval_policy": "ask"},
+        }
+
+    @app.get("/api/sessions/{session_id}/context-compiler")
+    async def get_context_compiler(session_id: str) -> dict[str, Any]:
+        """Expose the latest context build as an explainable, read-only view."""
+        session = manager.get(session_id)
+        events = session.runtime.event_store.load()
+        latest = next(
+            (event for event in reversed(events) if event.get("type") == "context_built"),
+            None,
+        )
+        payload = (latest or {}).get("payload") or {}
+        repo_map = payload.get("repo_map") or {}
+        selected = repo_map.get("selected") or []
+        rules = payload.get("rule_sources") or []
+        sources: list[dict[str, Any]] = [
+            {"id": "history", "label": "最近对话", "chars": sum(len(str(item.get("content") or "")) for item in session.runtime.state.messages), "enabled": True, "reason": "保留当前任务的最近消息"},
+            {"id": "repo_map", "label": "Repo Map", "chars": int(repo_map.get("selected_chars") or 0), "enabled": not bool(repo_map.get("disabled_by_config") or repo_map.get("disabled_by_profile")), "reason": "按任务相关性和导入中心性排序"},
+            {"id": "rules", "label": "项目规则", "chars": int(payload.get("rule_chars") or 0), "enabled": bool(rules), "reason": "工作区规则文件匹配当前路径"},
+            {"id": "summary", "label": "历史摘要", "chars": len(str((payload.get("summary_meta") or {}).get("summary") or "")), "enabled": bool(session.runtime.state.context_summary), "reason": "上下文超预算时压缩旧消息"},
+            {"id": "tools", "label": "Tools Schema", "chars": len(str(session.runtime.registry.schemas())), "enabled": True, "reason": "当前模式允许的工具描述"},
+        ]
+        manifest = payload.get("source_manifest")
+        if isinstance(manifest, list) and manifest:
+            sources = [
+                {
+                    "id": str(item.get("kind") or "unknown"),
+                    "label": str(item.get("kind") or "unknown"),
+                    "chars": max(0, int(item.get("chars") or 0)),
+                    "tokens": round(max(0, int(item.get("chars") or 0)) / 4),
+                    "enabled": bool(item.get("enabled", True)),
+                    "locked": bool(item.get("locked", False)),
+                    "reason": str(item.get("reason") or ""),
+                }
+                for item in manifest
+                if isinstance(item, dict)
+            ] or sources
+        configured = {
+            "repo_map": bool(session.runtime.context_manager.repo_map_enabled),
+            "project_memory": bool(session.runtime.context_manager.project_memory_enabled),
+            "user_memory": bool(session.runtime.context_manager.user_memory_enabled),
+            "skill_catalog": bool(session.runtime.context_manager.skill_catalog_enabled),
+        }
+        for source in sources:
+            source_id = str(source.get("id") or "")
+            if source_id in configured:
+                source["enabled"] = configured[source_id]
+                source["configured_enabled"] = configured[source_id]
+        existing_source_ids = {str(item.get("id") or "") for item in sources}
+        for source_id, enabled in configured.items():
+            if source_id not in existing_source_ids:
+                sources.append({"id": source_id, "label": source_id, "chars": 0, "tokens": 0, "enabled": enabled, "locked": False, "reason": "最近一次构建没有注入该来源"})
+        total_chars = sum(max(0, int(item["chars"])) for item in sources if item["enabled"])
+        max_chars = max(1, int(session.runtime.context_manager.max_context_chars))
+        original_history_chars = sum(
+            len(str(message.get("content") or ""))
+            for message in session.runtime.state.messages
+            if isinstance(message, dict)
+        )
+        actual_context_chars = max(0, int(payload.get("estimated_chars") or 0))
+        score = max(0, min(100, round(100 - max(0, total_chars - max_chars) / max_chars * 100)))
+        normalized_messages = [" ".join(str(item.get("content") or "").casefold().split()) for item in session.runtime.state.messages if str(item.get("content") or "").strip()]
+        duplicate_messages = len(normalized_messages) - len(set(normalized_messages))
+        quality_issues: list[dict[str, Any]] = []
+        if duplicate_messages:
+            quality_issues.append({"kind": "duplicate_recent_message", "count": duplicate_messages, "penalty": min(15, duplicate_messages * 3)})
+        if bool(repo_map.get("truncated")):
+            quality_issues.append({"kind": "repo_map_truncated", "count": 1, "penalty": 5})
+        score = max(0, score - sum(int(item["penalty"]) for item in quality_issues))
+        enabled_count = sum(1 for item in sources if item.get("enabled", True))
+        quality_breakdown = {
+            "relevance": 30 if selected else 20,
+            "freshness": 20 if latest else 8,
+            "protocol_completeness": 20 if any(item.get("id") in {"tool_schemas", "tools"} for item in sources) else 8,
+            "budget_balance": round(15 * score / 100),
+            "traceability": min(15, 5 + enabled_count * 2),
+        }
+        return {
+            "sources": sources,
+            "total_chars": total_chars,
+            "actual_context_chars": actual_context_chars,
+            "original_history_chars": original_history_chars,
+            "estimated_tokens": int(payload.get("estimated_tokens") or 0),
+            "max_chars": max_chars,
+            "quality_score": score,
+            "quality_breakdown": quality_breakdown,
+            "quality_issues": quality_issues,
+            "repo_map": {"selected": selected, "truncated": bool(repo_map.get("truncated"))},
+            "evidence": {"level": "observed", "kind": "context_built_event" if latest else "no_context_snapshot"},
+        }
+
+    @app.get("/api/sessions/{session_id}/context/builds")
+    async def list_context_builds(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        builds: list[dict[str, Any]] = []
+        for event in session.runtime.event_store.load():
+            if event.get("type") != "context_built":
+                continue
+            payload = event.get("payload") or {}
+            builds.append({
+                "build_id": str(event.get("event_id") or event.get("sequence") or ""),
+                "sequence": int(event.get("sequence") or 0),
+                "turn_id": str(event.get("turn_id") or ""),
+                "timestamp": event.get("timestamp"),
+                "estimated_chars": int(payload.get("estimated_chars") or 0),
+                "estimated_tokens": int(payload.get("estimated_tokens") or 0),
+                "segments": payload.get("source_manifest") or [],
+            })
+        return {"builds": builds[-100:], "total": len(builds), "evidence": {"level": "event_log", "kind": "context_build_manifest"}}
+
+    @app.get("/api/sessions/{session_id}/context/builds/{build_id}")
+    async def get_context_build(session_id: str, build_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        for event in reversed(session.runtime.event_store.load()):
+            if event.get("type") == "context_built" and str(event.get("event_id") or event.get("sequence") or "") == build_id:
+                return {"build_id": build_id, "sequence": event.get("sequence"), "turn_id": event.get("turn_id"), "timestamp": event.get("timestamp"), "manifest": event.get("payload") or {}, "evidence": {"level": "event_log", "kind": "context_build_manifest"}}
+        raise HTTPException(status_code=404, detail="Context build was not found")
+
+    @app.get("/api/sessions/{session_id}/context/preferences")
+    async def get_context_preferences(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        manager_state = session.runtime.context_manager
+        return {
+            "sources": {
+                "repo_map": {
+                    "enabled": bool(manager_state.repo_map_enabled),
+                    "locked": False,
+                    "reason": "可关闭以比较上下文选择差异；核心系统提示和最近消息不可关闭",
+                },
+                "project_memory": {"enabled": bool(manager_state.project_memory_enabled), "locked": False, "reason": "控制后续构建是否召回项目记忆"},
+                "user_memory": {"enabled": bool(manager_state.user_memory_enabled), "locked": False, "reason": "控制后续构建是否注入已启用的用户记忆"},
+                "skill_catalog": {"enabled": bool(manager_state.skill_catalog_enabled), "locked": False, "reason": "控制后续构建是否包含 Skills 目录摘要"},
+                "core_system": {"enabled": True, "locked": True},
+                "recent_messages": {"enabled": True, "locked": True},
+                "tool_schemas": {"enabled": True, "locked": True},
+            },
+            "evidence": {"level": "runtime", "kind": "context_preferences"},
+        }
+
+    @app.put("/api/sessions/{session_id}/context/preferences")
+    async def set_context_preference(
+        session_id: str, request: ContextPreferenceRequest
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        manager_state = session.runtime.context_manager
+        attribute = {
+            "repo_map": "repo_map_enabled",
+            "project_memory": "project_memory_enabled",
+            "user_memory": "user_memory_enabled",
+            "skill_catalog": "skill_catalog_enabled",
+        }[request.source_id]
+        setattr(manager_state, attribute, bool(request.enabled))
+        return await get_context_preferences(session_id)
+
+    @app.post("/api/sessions/{session_id}/context-compiler/what-if")
+    @app.post("/api/sessions/{session_id}/context/shadow-build")
+    async def context_compiler_what_if(session_id: str) -> dict[str, Any]:
+        """Return a deterministic estimate of the last context with Repo Map removed."""
+        current = await get_context_compiler(session_id)
+        sources = list(current.get("sources") or [])
+        without_map = [item for item in sources if item.get("id") not in {"repo_map", "Repo Map"}]
+        current_chars = sum(int(item.get("chars") or 0) for item in sources if item.get("enabled", True))
+        shadow_chars = sum(int(item.get("chars") or 0) for item in without_map if item.get("enabled", True))
+        return {
+            "current": {"total_chars": current_chars, "estimated_tokens": round(current_chars / 4)},
+            "without_repo_map": {"total_chars": shadow_chars, "estimated_tokens": round(shadow_chars / 4)},
+            "delta": {"chars": shadow_chars - current_chars, "tokens": round((shadow_chars - current_chars) / 4)},
+            "sources": without_map,
+            "evidence": {"level": "estimated", "kind": "deterministic_shadow_context", "disclaimer": "这是基于最近一次构建的 What-if 估算，不会发起模型请求。"},
+        }
+
+    @app.get("/api/sessions/{session_id}/memory-governance")
+    @app.get("/api/sessions/{session_id}/memory/governance")
+    async def get_memory_governance(session_id: str) -> dict[str, Any]:
+        """Return memory candidates, duplicates and conflicts for human review."""
+        runtime = manager.get(session_id).runtime
+        memories = runtime.memory_store.list(limit=None)
+        duplicate_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for memory in memories:
+            key = (memory.category, " ".join(memory.content.casefold().split()))
+            duplicate_groups.setdefault(key, []).append(memory.to_dict())
+        duplicates = [group for group in duplicate_groups.values() if len(group) > 1]
+        conflicts: list[dict[str, Any]] = []
+        by_subject: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for memory in memories:
+            if memory.subject:
+                by_subject.setdefault((memory.category, memory.subject.casefold()), []).append(memory.to_dict())
+        for (category, subject), group in by_subject.items():
+            if len(group) > 1 and len({item["content"].casefold() for item in group}) > 1:
+                conflicts.append({"category": category, "subject": subject, "memories": group})
+        pending = runtime.summary_store.candidates(status="pending", limit=100)
+        candidate_duplicates: list[list[dict[str, Any]]] = []
+        for candidate in pending:
+            words = set(str(candidate.get("content") or "").casefold().split())
+            match = next(
+                (
+                    group for group in candidate_duplicates
+                    if _token_similarity(words, set(str(group[0].get("content") or "").casefold().split())) >= 0.72
+                    and str(group[0].get("category")) == str(candidate.get("category"))
+                ),
+                None,
+            )
+            if match is None:
+                candidate_duplicates.append([candidate])
+            else:
+                match.append(candidate)
+        candidate_duplicates = [group for group in candidate_duplicates if len(group) > 1]
+        return {
+            "memories": [item.to_dict() for item in memories[:200]],
+            "pending_candidates": pending,
+            "duplicates": duplicates,
+            "candidate_duplicates": candidate_duplicates,
+            "conflicts": conflicts,
+            "recalled": runtime.state.recalled_memories,
+            "stats": runtime.memory_store.stats(),
+            "recall_audit": [
+                {
+                    **{key: value for key, value in item.items() if key != "memory"},
+                    "memory": (item.get("memory") or {}).to_dict() if hasattr(item.get("memory"), "to_dict") else item.get("memory"),
+                }
+                for item in (runtime.state.recalled_memories or [])
+                if isinstance(item, dict)
+            ],
+            "evidence": {"level": "observed", "kind": "append_only_memory_store", "disclaimer": "记忆变更仍需人工确认。"},
+        }
+
+    @app.get("/api/sessions/{session_id}/observability/{view}")
+    async def get_observability_presentation(session_id: str, view: str) -> dict[str, Any]:
+        """Return a plain-language presentation model for the research views.
+
+        ``raw`` remains available through each original endpoint.  This
+        additive route lets the UI default to approachable explanations while
+        keeping every technical field available behind a professional toggle.
+        """
+        if view not in {"replay", "context", "memory"}:
+            raise HTTPException(status_code=404, detail="Unknown observability view")
+        if view == "replay":
+            raw = await get_agent_replay(session_id)
+        elif view == "context":
+            raw = await get_context_compiler(session_id)
+        else:
+            raw = await get_memory_governance(session_id)
+        return {
+            "view": view,
+            "presentation": _observability_presentation(view, raw),
+            "raw": raw,
+            "evidence": raw.get("evidence") or {"level": "observed"},
+        }
+
+    @app.post("/api/sessions/{session_id}/algorithm-lab/spec")
+    @app.post("/api/sessions/{session_id}/algorithm-lab/spec/parse")
+    async def parse_algorithm_spec(
+        session_id: str, request: AlgorithmSpecRequest
+    ) -> dict[str, Any]:
+        """Parse a problem statement for the reliability workbench.
+
+        This endpoint is deliberately conservative: the parser extracts
+        headings and constraint-like lines, but never claims a proof or
+        executes user supplied code.
+        """
+        manager.get(session_id)
+        spec = parse_problem(request.text)
+        confidence = 0.35
+        if spec.constraints:
+            confidence += 0.35
+        if spec.input_description and spec.output_description:
+            confidence += 0.2
+        if spec.examples:
+            confidence += 0.1
+        return {
+            "spec": spec.to_dict(),
+            "suggested_cases": suggest_boundary_cases(spec),
+            "evidence": {
+                "level": "estimated",
+                "kind": "deterministic_parser",
+                "confidence": round(min(confidence, 1.0), 2),
+                "disclaimer": "解析结果用于生成测试建议，不替代人工审阅。",
+            },
+        }
+
+    @app.post("/api/sessions/{session_id}/algorithm-lab/cases")
+    async def generate_algorithm_cases(
+        session_id: str, request: AlgorithmSpecRequest
+    ) -> dict[str, Any]:
+        manager.get(session_id)
+        spec = parse_problem(request.text)
+        return {
+            "spec": spec.to_dict(),
+            "cases": suggest_boundary_cases(spec, limit=32),
+            "evidence": {"level": "estimated", "kind": "deterministic_boundary_generator", "disclaimer": "边界输入是保守建议，完整题型仍需人工补充。"},
+        }
+
+    @app.post("/api/sessions/{session_id}/algorithm-lab/runs", status_code=202)
+    async def start_algorithm_run(
+        session_id: str, request: AlgorithmRunRequest
+    ) -> dict[str, Any]:
+        """Start a direct deterministic algorithm run.
+
+        This endpoint intentionally does not call the model.  The explicit
+        button action is the user's authorization to run the supplied
+        candidate/Oracle commands inside the selected workspace.
+        """
+
+        session = manager.get(session_id)
+        if session.running:
+            raise HTTPException(status_code=409, detail="Cannot start an algorithm run while Agent is running")
+        candidate_command = request.candidate_command.strip()
+        candidate_path = (request.candidate_path.strip() or request.source_path.strip())
+        if not candidate_command and candidate_path:
+            candidate_command = default_candidate_command(candidate_path)
+        if not candidate_command:
+            raise HTTPException(status_code=400, detail="candidate_command or candidate_path is required")
+        if not request.oracle_command.strip() and not request.cases:
+            raise HTTPException(status_code=400, detail="Provide oracle_command with problem_text, or explicit expected-output cases")
+        config = AlgorithmRunConfig(
+            candidate_command=candidate_command,
+            oracle_command=request.oracle_command.strip(),
+            candidate_path=candidate_path,
+            cases=tuple(dict(item) for item in request.cases if isinstance(item, dict)),
+            problem_text=request.problem_text,
+            profile=request.profile,
+            seed=request.seed,
+            timeout=request.timeout,
+            shrink=request.shrink,
+            benchmark=request.benchmark,
+        )
+        token = CancellationToken()
+        async def on_algorithm_progress(payload: dict[str, Any]) -> None:
+            current = session.algorithm_results.setdefault(run_id, {"run_id": run_id})
+            current.update(payload)
+            current["status"] = "running" if payload.get("stage") not in {"completed", "failed", "cancelled"} else str(payload.get("stage"))
+
+        coordinator = AlgorithmRunCoordinator(
+            workspace=session.runtime.workspace,
+            event_bus=session.runtime.event_bus,
+            session_id=session.runtime.state.session_id,
+            cancellation=token,
+            progress_callback=on_algorithm_progress,
+        )
+        run_id = coordinator.run_id
+        session.algorithm_cancellations[run_id] = token
+        session.algorithm_configs[run_id] = config
+        session.algorithm_results[run_id] = {
+            "run_id": run_id,
+            "status": "queued",
+            "profile": request.profile,
+            "model_requests": 0,
+        }
+
+        async def execute() -> dict[str, Any]:
+            session.algorithm_results[run_id] = {
+                "run_id": run_id,
+                "status": "running",
+                "profile": request.profile,
+                "model_requests": 0,
+            }
+            result = await coordinator.run(config)
+            session.algorithm_results[run_id] = result
+            return result
+
+        task = asyncio.create_task(execute(), name=f"algorithm-run-{run_id}")
+        session.algorithm_tasks[run_id] = task
+
+        def finish(done: asyncio.Task[dict[str, Any]]) -> None:
+            session.algorithm_tasks.pop(run_id, None)
+            try:
+                result = done.result()
+            except asyncio.CancelledError:
+                session.algorithm_results[run_id] = {
+                    "run_id": run_id,
+                    "status": "cancelled",
+                    "profile": request.profile,
+                    "code": "CANCELLED",
+                    "message": "task cancelled",
+                    "model_requests": 0,
+                }
+            except Exception as exc:  # coordinator normally serializes failures
+                session.algorithm_results[run_id] = {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "profile": request.profile,
+                    "code": type(exc).__name__,
+                    "message": str(exc),
+                    "model_requests": 0,
+                }
+            else:
+                session.algorithm_results[run_id] = result
+
+        task.add_done_callback(finish)
+        return {
+            "accepted": True,
+            "run_id": run_id,
+            "status": "queued",
+            "profile": request.profile,
+            "model_requests": 0,
+            "message": "算法实验已启动，后续阶段通过事件流实时更新",
+        }
+
+    @app.get("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}/status")
+    async def get_algorithm_run_status(session_id: str, run_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        result = session.algorithm_results.get(run_id)
+        if result is not None:
+            return {"run": result, "running": run_id in session.algorithm_tasks}
+        report = get_algorithm_report(session.runtime.workspace.root, run_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Algorithm run was not found")
+        failed = int((report.get("summary") or {}).get("failed") or 0)
+        status = "failed" if failed else "completed"
+        return {"run": {"run_id": run_id, "status": status, "report_id": run_id, "report": report, "model_requests": 0}, "running": False}
+
+    @app.post("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}/cancel")
+    async def cancel_algorithm_run(session_id: str, run_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        task = session.algorithm_tasks.get(run_id)
+        token = session.algorithm_cancellations.get(run_id)
+        if task is None or token is None:
+            result = session.algorithm_results.get(run_id)
+            return {"cancel_requested": False, "already_finished": True, "status": (result or {}).get("status", "unknown")}
+        newly_requested = token.cancel("user_requested")
+        return {"cancel_requested": True, "already_requested": not newly_requested, "run_id": run_id}
+
+    @app.post("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}/retry", status_code=202)
+    async def retry_algorithm_run(
+        session_id: str, run_id: str, request: AlgorithmRetryRequest | None = None
+    ) -> dict[str, Any]:
+        session = manager.get(session_id)
+        config = session.algorithm_configs.get(run_id)
+        if config is None:
+            raise HTTPException(status_code=404, detail="Original algorithm run configuration is unavailable")
+        replacement = request.profile if request and request.profile else config.profile
+        retry_config = AlgorithmRunConfig(
+            candidate_command=config.candidate_command,
+            oracle_command=config.oracle_command,
+            candidate_path=config.candidate_path,
+            cases=config.cases,
+            problem_text=config.problem_text,
+            profile=replacement,
+            seed=config.seed,
+            timeout=config.timeout,
+            shrink=config.shrink,
+            benchmark=config.benchmark,
+        )
+        payload = AlgorithmRunRequest(
+            candidate_command=retry_config.candidate_command,
+            candidate_path=retry_config.candidate_path,
+            oracle_command=retry_config.oracle_command,
+            problem_text=retry_config.problem_text,
+            cases=list(retry_config.cases),
+            profile=retry_config.profile,
+            seed=retry_config.seed,
+            timeout=retry_config.timeout,
+            shrink=retry_config.shrink,
+            benchmark=retry_config.benchmark,
+        )
+        return await start_algorithm_run(session_id, payload)
+
+    @app.get("/api/sessions/{session_id}/algorithm-lab/runs")
+    async def get_algorithm_runs(session_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        reports = list_reports(session.runtime.workspace.root)
+        active = [
+            item for item in session.algorithm_results.values()
+            if item.get("status") in {"queued", "running"}
+        ]
+        return {
+            "runs": reports,
+            "total": len(reports),
+            "active_runs": active,
+            "evidence": {"level": "deterministic", "kind": "persisted_judge_reports"},
+        }
+
+    @app.get("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}")
+    async def get_algorithm_run(session_id: str, run_id: str) -> dict[str, Any]:
+        session = manager.get(session_id)
+        # Keep the documented detail route useful while a run is still active.
+        # Older clients expect ``report`` for completed runs; active clients
+        # can consume the same route without having to know the ``/status``
+        # compatibility suffix.
+        active = session.algorithm_results.get(run_id)
+        if active is not None:
+            return {"run": active, "running": run_id in session.algorithm_tasks}
+        report = get_algorithm_report(session.runtime.workspace.root, run_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Algorithm report was not found")
+        return {"report": report}
+
+    @app.get("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}/markdown")
+    @app.get("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}/report.md")
+    async def export_algorithm_run_markdown(session_id: str, run_id: str) -> Response:
+        session = manager.get(session_id)
+        report = get_algorithm_report(session.runtime.workspace.root, run_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Algorithm report was not found")
+        return Response(render_markdown(report), media_type="text/markdown")
+
+    @app.post("/api/sessions/{session_id}/memory/candidates/bulk-resolve")
+    async def bulk_resolve_memory_candidates(
+        session_id: str, request: MemoryBulkResolveRequest
+    ) -> dict[str, Any]:
+        if not request.confirm:
+            raise HTTPException(status_code=400, detail="Bulk memory changes require explicit confirmation")
+        runtime = manager.get(session_id).runtime
+        resolved: list[dict[str, Any]] = []
+        skipped: list[str] = []
+        for candidate_id in dict.fromkeys(request.candidate_ids):
+            result = (
+                runtime.summary_store.confirm(candidate_id, runtime.memory_store)
+                if request.action == "confirm"
+                else runtime.summary_store.reject(candidate_id)
+            )
+            if result is None:
+                skipped.append(candidate_id)
+            else:
+                resolved.append(result)
+        return {"resolved": resolved, "skipped": skipped, "action": request.action}
+
+    @app.get("/api/sessions/{session_id}/memory/recall-audit")
+    async def get_memory_recall_audit(session_id: str) -> dict[str, Any]:
+        runtime = manager.get(session_id).runtime
+        return {
+            "recalled": runtime.state.recalled_memories,
+            "turn_id": runtime.state.turn_id,
+            "evidence": {"level": "runtime", "kind": "memory_recall_scores"},
+        }
+
+    @app.post("/api/sessions/{session_id}/memory/cluster/{cluster_id}/merge")
+    async def merge_memory_cluster(
+        session_id: str, cluster_id: str, request: MemoryMergeRequest
+    ) -> dict[str, Any]:
+        del cluster_id
+        if not request.confirm:
+            raise HTTPException(status_code=400, detail="Memory merge requires explicit confirmation")
+        runtime = manager.get(session_id).runtime
+        memories = [runtime.memory_store.get(memory_id) for memory_id in dict.fromkeys(request.memory_ids)]
+        if len(memories) < 2 or any(memory is None for memory in memories):
+            raise HTTPException(status_code=404, detail="At least two valid memories are required")
+        merged = runtime.memory_store.remember(
+            category=request.category,
+            content=request.content,
+            keywords=list(dict.fromkeys(keyword for memory in memories if memory for keyword in memory.keywords))[:12],
+            importance=max(memory.importance for memory in memories if memory),
+            source_session_id=session_id,
+            source_turn_id=runtime.state.turn_id,
+        )
+        archived: list[dict[str, Any]] = []
+        for memory in memories:
+            if memory and memory.id != merged.id:
+                updated = runtime.memory_store.update_metadata(memory.id, archived=True, duplicate_of=merged.id)
+                if updated:
+                    archived.append(updated.to_dict())
+        return {"merged": merged.to_dict(), "archived": archived, "evidence": {"level": "user_confirmed", "kind": "append_only_memory_merge"}}
+
     @app.post("/api/sessions/{session_id}/memory/candidates/{candidate_id}")
     async def resolve_memory_candidate(
         session_id: str, candidate_id: str, request: MemoryCandidateRequest
@@ -1247,6 +2286,58 @@ def create_app(
         if candidate is None:
             raise HTTPException(status_code=404, detail="Memory candidate was not found or was already resolved")
         return {"candidate": candidate}
+
+    @app.patch("/api/sessions/{session_id}/memory/{memory_id}")
+    async def update_memory_governance(
+        session_id: str, memory_id: str, request: MemoryGovernanceRequest
+    ) -> dict[str, Any]:
+        runtime = manager.get(session_id).runtime
+        changes: dict[str, Any] = {
+            "pin": {"pinned": True},
+            "unpin": {"pinned": False},
+            "archive": {"archived": True},
+            "restore": {"archived": False},
+            "reweight": {"importance": request.importance},
+            "set_expiry": {"expires_at": request.expires_at},
+            "clear_expiry": {"expires_at": None},
+        }[request.action]
+        if request.action == "reweight" and request.importance is None:
+            raise HTTPException(status_code=400, detail="importance is required for reweight")
+        if request.action == "set_expiry" and not request.expires_at:
+            raise HTTPException(status_code=400, detail="expires_at is required for set_expiry")
+        try:
+            memory = runtime.memory_store.update_metadata(memory_id, **changes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Memory was not found")
+        return {"memory": memory.to_dict(), "action": request.action}
+
+    @app.post("/api/sessions/{session_id}/memory/{memory_id}/revalidate")
+    async def revalidate_memory(session_id: str, memory_id: str) -> dict[str, Any]:
+        runtime = manager.get(session_id).runtime
+        memory = runtime.memory_store.get(memory_id)
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Memory was not found")
+        evidence = runtime.memory_store._repository_evidence(memory)
+        symbol_status = "not_applicable"
+        if memory.symbols:
+            repo_map = RepoMapBuilder(runtime.workspace).build(query=" ".join(memory.symbols), focus_paths=memory.file_paths, max_files=80, max_chars=20_000)
+            available = {
+                str(symbol).casefold()
+                for item in repo_map.get("files", [])
+                for symbol in (item.get("symbols") or [])
+            }
+            found = sum(symbol.casefold() in available for symbol in memory.symbols)
+            symbol_status = "verified" if found == len(memory.symbols) else "partial" if found else "missing"
+        observed = [value for value in (evidence, symbol_status) if value != "not_applicable"]
+        status = "not_applicable" if not observed else "missing" if all(value == "missing" for value in observed) else "verified" if all(value == "verified" for value in observed) else "partial"
+        updated = runtime.memory_store.update_metadata(
+            memory_id,
+            last_verified_at=datetime.now(UTC).isoformat(),
+            verification_status=status,
+        )
+        return {"memory": updated.to_dict() if updated else memory.to_dict(), "verification_status": status, "checks": {"files": evidence, "symbols": symbol_status}, "evidence": {"level": "deterministic", "kind": "workspace_revalidation"}}
 
     @app.post("/api/sessions/{session_id}/user-memory/enabled")
     async def set_user_memory_enabled(
@@ -1650,6 +2741,20 @@ def create_app(
     async def get_events(session_id: str) -> list[dict[str, Any]]:
         return manager.get(session_id).runtime.event_store.load()
 
+    @app.get("/api/sessions/{session_id}/algorithm-lab/runs/{run_id}/events")
+    async def get_algorithm_run_events(session_id: str, run_id: str) -> dict[str, Any]:
+        """Return the redacted, durable event slice for one deterministic Run."""
+
+        session = manager.get(session_id)
+        events = [
+            event
+            for event in session.runtime.event_store.load()
+            if str(event.get("payload", {}).get("run_id") or "") == run_id
+        ]
+        if not events and run_id not in session.algorithm_results:
+            raise HTTPException(status_code=404, detail="Algorithm run was not found")
+        return {"run_id": run_id, "events": events, "total": len(events)}
+
     @app.get("/api/sessions/{session_id}/report")
     async def get_report(session_id: str) -> dict[str, Any]:
         """Return an evidence-focused completion report for CLI/Web consumers."""
@@ -1661,6 +2766,7 @@ def create_app(
             "status": state.status,
             "changed_files": sorted(state.changed_files),
             "plan": state.plan,
+            "workflow": _workflow_view(state, include_details=True),
             "verification": {
                 "fresh": state.verification_is_fresh,
                 "successful_sequence": state.last_successful_verification_sequence,
@@ -1744,14 +2850,14 @@ def create_app(
     async def get_checkpoint(session_id: str) -> dict[str, Any]:
         session = manager.get(session_id)
         state = session.runtime.state
-        manager = session.runtime.checkpoint_manager
+        checkpoint_manager = session.runtime.checkpoint_manager
         try:
-            preview = manager.preview_restore(state.turn_id)
+            preview = checkpoint_manager.preview_restore(state.turn_id)
         except ToolError:
             preview = []
         return {
             "turn_id": state.turn_id,
-            "files": manager.list_files(state.turn_id),
+            "files": checkpoint_manager.list_files(state.turn_id),
             "preview": preview,
         }
 
@@ -1825,6 +2931,15 @@ def create_app(
                         "running": session.running,
                         "status": session.runtime.state.status.value,
                         "pending_approval": session.runtime.state.pending_approval,
+                        # Include the same derived details as the session
+                        # intelligence view.  The browser replays compact
+                        # history first and then applies this metadata; if it
+                        # only receives the base projection here, acceptance
+                        # criteria and active steps would be cleared at the
+                        # end of a refresh.
+                        "workflow": _workflow_view(
+                            session.runtime.state, include_details=True
+                        ),
                     },
                 }
             )

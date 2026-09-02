@@ -1,0 +1,146 @@
+{
+  "meta": {
+    "run_id": "2026-09-01_125804_e3d2e699",
+    "git_commit": "e3d2e69963577a1ee875d22a66d2c338c6d926c1",
+    "snapshot": "b968c94616e832ed9f359cf67ae0752d3f7745b6f4c6e3f7167916118954cb36",
+    "environment": "Windows-11-10.0.26200-SP0"
+  },
+  "quality": {
+    "checks": [
+      {
+        "name": "compile-python",
+        "status": "passed"
+      },
+      {
+        "name": "javascript-syntax",
+        "status": "passed"
+      },
+      {
+        "name": "git-diff-check",
+        "status": "passed"
+      },
+      {
+        "name": "security-audit",
+        "status": "passed"
+      },
+      {
+        "name": "fault-injection",
+        "status": "passed"
+      },
+      {
+        "name": "context-stress",
+        "status": "passed"
+      },
+      {
+        "name": "api-contract",
+        "status": "passed"
+      },
+      {
+        "name": "pytest",
+        "status": "passed"
+      },
+      {
+        "name": "e2e-deterministic",
+        "status": "passed"
+      },
+      {
+        "name": "agent-eval",
+        "status": "passed"
+      },
+      {
+        "name": "retrieval-benchmark",
+        "status": "passed"
+      },
+      {
+        "name": "algorithm-benchmark",
+        "status": "passed"
+      },
+      {
+        "name": "profile-comparison",
+        "status": "passed"
+      },
+      {
+        "name": "coverage-baseline",
+        "status": "passed"
+      },
+      {
+        "name": "mutation-smoke",
+        "status": "passed"
+      }
+    ],
+    "passed": 15,
+    "total": 15
+  },
+  "tests": 366,
+  "coverage": {
+    "line_percent": 86.46,
+    "branch_percent": 75.0,
+    "lines_covered": 7301.0,
+    "lines_valid": 8444.0,
+    "branches_covered": 2088.0,
+    "branches_valid": 2784.0,
+    "trace_line_percent": 58.06
+  },
+  "performance": {
+    "requests": 300,
+    "concurrency": 25,
+    "error_percent": 0.0,
+    "throughput": 96.195,
+    "p50_ms": 27.55,
+    "p95_ms": 2758.599,
+    "p99_ms": 2777.927,
+    "max_ms": 2787.47
+  },
+  "concurrency": {
+    "sessions": 20,
+    "concurrency": 5,
+    "completion_percent": 100.0,
+    "mismatches": 0,
+    "throughput": 7.224
+  },
+  "context": {
+    "files_seen": 1002,
+    "selected": 40,
+    "repo_map_selected_chars": 5049,
+    "repo_map_budget_chars": 12000,
+    "repo_map_percent": 42.08,
+    "history_chars": 7192,
+    "history_budget_chars": 8000,
+    "history_percent": 89.9,
+    "dropped_messages": 194
+  },
+  "desktop": {
+    "passed": true,
+    "file_count": 1806,
+    "executable_bytes": 14827092,
+    "launch_passed": true,
+    "startup_ms": 1489.68,
+    "health_status": 200
+  },
+  "soaks": [
+    {
+      "label": "soak-2026-09-01-final30-60s",
+      "duration_seconds": 60.149,
+      "sessions": 505,
+      "failures": 0,
+      "completion_percent": 100.0,
+      "rss_peak_bytes": 152469504
+    },
+    {
+      "label": "soak-2026-09-01-2h",
+      "duration_seconds": 7200.111,
+      "sessions": 45535,
+      "failures": 0,
+      "completion_percent": 100.0,
+      "rss_peak_bytes": 482582528
+    }
+  ],
+  "soak": {
+    "label": "soak-2026-09-01-final30-60s",
+    "duration_seconds": 60.149,
+    "sessions": 505,
+    "failures": 0,
+    "completion_percent": 100.0,
+    "rss_peak_bytes": 152469504
+  }
+}

@@ -77,6 +77,7 @@ async def run_suite(
     output_price_per_million: float | None = None,
     profile_override: str = "auto",
     retrieval_enabled: bool = True,
+    workflow_enabled: bool = True,
 ) -> dict[str, Any]:
     tasks = load_tasks(task_ids)
     results: list[EvalTaskResult] = []
@@ -96,12 +97,13 @@ async def run_suite(
                     real_config=real_config,
                     task_profile=profile_override,
                     retrieval_enabled=retrieval_enabled,
+                    workflow_enabled=workflow_enabled,
                 )
             except Exception as exc:
                 result = _crashed_result(task.id, task.title, task.category, exc)
             results.append(result)
 
-    metrics = summarize_metrics(results)
+    metrics = summarize_metrics(results, workflow_enabled=workflow_enabled)
     estimated_cost = _estimated_cost(
         metrics,
         input_price_per_million=input_price_per_million,
@@ -113,6 +115,7 @@ async def run_suite(
         "mode": mode,
         "profile_override": profile_override,
         "retrieval_enabled": retrieval_enabled,
+        "workflow_enabled": workflow_enabled,
         "model": _model_metadata(mode, real_config),
         "code": {
             "commit": _git_commit(),
@@ -128,9 +131,14 @@ async def run_suite(
     }
 
 
-def summarize_metrics(results: list[EvalTaskResult]) -> dict[str, Any]:
+def summarize_metrics(
+    results: list[EvalTaskResult], *, workflow_enabled: bool = True
+) -> dict[str, Any]:
     """Summarize the suite and expose the same metrics per selected profile."""
     metrics = _summarize_core(results)
+    metrics["workflows"] = _summarize_workflows(
+        results, workflow_enabled=workflow_enabled
+    )
     active = [result for result in results if not result.skipped]
     profiles = sorted({result.task_profile for result in active})
     metrics["profiles"] = {
@@ -140,6 +148,99 @@ def summarize_metrics(results: list[EvalTaskResult]) -> dict[str, Any]:
         for profile in profiles
     }
     return metrics
+
+
+_WORKFLOW_CATEGORIES = {
+    "workflow_add_feature",
+    "workflow_bug_fix",
+    "workflow_code_review",
+}
+
+
+def _workflow_assertion(result: EvalTaskResult, name: str) -> bool | None:
+    """Return a named workflow assertion, or None when it is not applicable."""
+
+    for assertion in result.assertions:
+        if assertion.name == name:
+            return assertion.passed
+    return None
+
+
+def _rate_assertion(results: list[EvalTaskResult], name: str) -> float:
+    candidates = [
+        result
+        for result in results
+        if (value := _workflow_assertion(result, name)) is not None
+    ]
+    return _rate(
+        sum(bool(_workflow_assertion(result, name)) for result in candidates),
+        len(candidates),
+    )
+
+
+def _average_tokens(result: EvalTaskResult) -> float:
+    usage = result.token_usage
+    return float(
+        usage.get(
+            "total_tokens",
+            usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+        )
+    )
+
+
+def _summarize_workflows(
+    results: list[EvalTaskResult], *, workflow_enabled: bool = True
+) -> dict[str, Any]:
+    """Summarize the explicit development-workflow evidence in a run."""
+
+    workflows = [
+        result
+        for result in results
+        if not result.skipped and result.category in _WORKFLOW_CATEGORIES
+    ]
+    add_feature = [item for item in workflows if item.category == "workflow_add_feature"]
+    modified = [
+        item
+        for item in workflows
+        if item.category in {"workflow_add_feature", "workflow_bug_fix"}
+    ]
+    review = [item for item in workflows if item.category == "workflow_code_review"]
+    summary = {
+        "task_count": len(workflows),
+        "skill_load_rate": _rate_assertion(workflows, "workflow_skill_loaded"),
+        "selection_rate": _rate_assertion(workflows, "workflow_selected"),
+        "add_feature_plan_rate": _rate_assertion(add_feature, "workflow_plan_created"),
+        "add_feature_plan_completion_rate": _rate_assertion(
+            add_feature, "workflow_plan_completed"
+        ),
+        "fresh_verification_rate": _rate_assertion(
+            modified, "workflow_fresh_verification"
+        ),
+        "review_read_only_rate": _rate_assertion(
+            review, "workflow_review_read_only"
+        ),
+        "recovery_stage_consistency_rate": _rate_assertion(
+            workflows, "workflow_recovery_stage_consistent"
+        ),
+        "average_steps": _average([item.step_count for item in workflows]),
+        "average_tokens": _average([_average_tokens(item) for item in workflows]),
+        "average_tool_calls": _average([item.tool_calls for item in workflows]),
+        "average_duration_ms": _average([item.duration_ms for item in workflows]),
+    }
+    if not workflow_enabled:
+        # A disabled arm may still complete the same fixture task, but it did
+        # not produce workflow evidence.  Do not represent missing evidence as
+        # a perfect rate (the generic empty-candidate convention is 1.0).
+        for key in (
+            "skill_load_rate",
+            "selection_rate",
+            "add_feature_plan_rate",
+            "add_feature_plan_completion_rate",
+            "fresh_verification_rate",
+            "recovery_stage_consistency_rate",
+        ):
+            summary[key] = 0.0
+    return summary
 
 
 def _summarize_core(results: list[EvalTaskResult]) -> dict[str, Any]:
@@ -447,6 +548,28 @@ def _markdown_report(report: dict[str, Any]) -> str:
             f"{_percent(profile_metrics['completion_rate'])} | "
             f"{_percent(profile_metrics['verification_rate'])} | "
             f"{_percent(profile_metrics['recall_at_5'])} |"
+        )
+    workflows = metrics.get("workflows") or {}
+    if workflows.get("task_count"):
+        lines.extend(
+            [
+                "",
+                "## Workflow metrics",
+                "",
+                "| Metric | Value |",
+                "| --- | ---: |",
+                f"| Workflow tasks | {workflows['task_count']} |",
+                f"| Skill load rate | {_percent(workflows['skill_load_rate'])} |",
+                f"| Workflow selection rate | {_percent(workflows['selection_rate'])} |",
+                f"| Add Feature plan rate | {_percent(workflows['add_feature_plan_rate'])} |",
+                f"| Add Feature plan completion | {_percent(workflows['add_feature_plan_completion_rate'])} |",
+                f"| Fresh verification rate | {_percent(workflows['fresh_verification_rate'])} |",
+                f"| Code Review read-only rate | {_percent(workflows['review_read_only_rate'])} |",
+                f"| Recovery stage consistency | {_percent(workflows['recovery_stage_consistency_rate'])} |",
+                f"| Average Steps | {workflows['average_steps']} |",
+                f"| Average Tokens | {workflows['average_tokens']} |",
+                f"| Average duration | {workflows['average_duration_ms']} ms |",
+            ]
         )
     lines.extend([
         "",

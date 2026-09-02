@@ -118,3 +118,14 @@ def test_remaining_cost_constrains_provider_output_ceiling() -> None:
 
     assert budget.consumed_cost_usd == pytest.approx(0.002)
     assert budget.output_token_ceiling == 1_000
+
+
+def test_step_budget_boundary_is_inclusive() -> None:
+    budget = RunBudget(max_steps=2)
+    budget.start()
+
+    budget.check_step(2)
+    with pytest.raises(BudgetExceeded) as error:
+        budget.check_step(3)
+
+    assert error.value.code == "STEP_BUDGET_EXHAUSTED"

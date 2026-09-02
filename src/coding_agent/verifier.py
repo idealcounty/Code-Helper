@@ -25,6 +25,17 @@ class Verifier:
     def evaluate(
         self, state: AgentState, response: ModelResponse
     ) -> CompletionDecision:
+        workflow = state.workflow_name
+        if workflow == "add-feature":
+            if not state.plan:
+                return self._continue_or_partial(
+                    state, "Add-feature requires a non-empty plan before completion"
+                )
+            if not any(str(item.get("acceptance") or "").strip() for item in state.plan):
+                return self._continue_or_partial(
+                    state, "Add-feature plan must include at least one acceptance condition"
+                )
+
         incomplete_plan = any(
             item.get("status") in {"pending", "in_progress"} for item in state.plan
         )
@@ -34,6 +45,16 @@ class Verifier:
         if state.pending_approval:
             return CompletionDecision(
                 CompletionStatus.CONTINUE, "A tool approval is still pending"
+            )
+
+        if workflow == "code-review" and state.changed_files:
+            return self._continue_or_partial(
+                state, "Code-review workflow is read-only and cannot complete after a file change"
+            )
+
+        if workflow in {"add-feature", "bug-fix"} and not state.changed_files:
+            return self._continue_or_partial(
+                state, f"{workflow} must record at least one changed file before completion"
             )
 
         if state.changed_files and not state.verification_is_fresh:
@@ -46,6 +67,12 @@ class Verifier:
                 state,
                 "Files changed after the latest successful verification. "
                 "Run an appropriate command with purpose='verify'.",
+            )
+
+        if workflow in {"add-feature", "bug-fix", "code-review"} and state.workflow_stage != "finish":
+            return self._continue_or_partial(
+                state,
+                f"{workflow} is not in the finish stage; complete the workflow gates before claiming completion",
             )
 
         return CompletionDecision(

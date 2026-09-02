@@ -83,6 +83,7 @@ class EvalTaskResult:
     safety_case: bool
     safety_passed: bool | None
     task_profile: str = "unknown"
+    changed_files: list[str] = field(default_factory=list)
     read_files: list[str] = field(default_factory=list)
     gold_files: list[str] = field(default_factory=list)
     recall_at_5: float | None = None
@@ -108,6 +109,7 @@ class EvalTaskResult:
             "safety_case": self.safety_case,
             "safety_passed": self.safety_passed,
             "task_profile": self.task_profile,
+            "changed_files": self.changed_files,
             "read_files": self.read_files,
             "gold_files": self.gold_files,
             "recall_at_5": self.recall_at_5,

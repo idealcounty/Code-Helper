@@ -24,3 +24,28 @@ def test_context_exposes_token_estimate_without_changing_char_budget() -> None:
     assert context.estimated_chars > 0
     assert context.estimated_tokens > 0
     assert context.token_estimator
+
+
+def test_token_estimator_uses_encoding_and_falls_back_when_encoding_fails() -> None:
+    class Encoding:
+        name = "fake"
+
+        def __init__(self, error: Exception | None = None) -> None:
+            self.error = error
+
+        def encode(self, _: str) -> list[int]:
+            if self.error:
+                raise self.error
+            return [1, 2, 3]
+
+    estimator = TokenEstimator("fake")
+    estimator._encoding = Encoding()
+    estimator.backend = "tiktoken:fake"
+    exact = estimator.estimate([{"role": "user", "content": "hello"}])
+    assert exact.tokens == 3
+    assert exact.backend == "tiktoken:fake"
+
+    estimator._encoding = Encoding(ValueError("broken encoder"))
+    fallback = estimator.estimate([{"role": "user", "content": "hello"}])
+    assert fallback.tokens > 0
+    assert fallback.exact is False

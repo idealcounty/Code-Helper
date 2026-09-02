@@ -1,5 +1,6 @@
 const PANEL_LAYOUT_KEY = "code-helper.panel-layout.v1";
 const WORKSPACE_STATE_KEY = "code-helper.workspace-state.v1";
+const RESEARCH_DETAIL_MODE_KEY = "code-helper.research-professional-mode.v1";
 const RESTORABLE_VIEWS = new Set(["chat", "trace", "plan", "intelligence"]);
 const RESTORABLE_MODES = new Set(["act", "plan", "ask"]);
 const RESTORABLE_REASONING = new Set(["auto", "fast", "balanced", "deep"]);
@@ -57,6 +58,7 @@ const state = {
   layoutMode: "editor",
   filePanelVisible: false,
   sessionMode: "act",
+  workflow: { name: null, stage: "idle", loaded_skills: [], acceptance: [], active_steps: [] },
   modeSyncPromise: null,
   pendingMode: null,
   sessionListView: "active",
@@ -64,10 +66,18 @@ const state = {
   archivedSessions: [],
   userMenuAnchor: null,
   panelLayout: loadPanelLayout(),
+  researchOpen: false,
+  researchView: "algorithm",
+  researchExpertMode: loadResearchExpertMode(),
+  researchDataCache: Object.create(null),
+  algorithmReports: [],
+  algorithmActiveRunId: null,
+  algorithmPollingRunId: null,
 };
 
 const elements = Object.fromEntries([
   "healthBadge", "providerLabel", "workspaceTitle", "workspaceInput", "taskProfileSelect", "approvalPolicySelect", "workbench",
+  "algorithmLabButton", "researchWorkbench", "researchGrid", "researchDetailToggle", "closeAlgorithmLabButton", "refreshAlgorithmLabButton", "startAlgorithmRunButton", "cancelAlgorithmRunButton", "algorithmLabRunsList", "algorithmLabReport", "algorithmLabRunStatus", "algorithmLabRunCount", "algorithmLabPassRate", "algorithmLabEvidence", "algorithmSpecInput", "parseAlgorithmSpecButton", "algorithmSpecOutput", "algorithmCandidatePath", "algorithmCandidateCommand", "algorithmOracleCommand", "algorithmRunProfile", "algorithmRunProgress",
   "conversationsPane", "focusSessionList", "focusNewSessionButton", "focusFilesButton",
   "focusWorkspaceTitle", "focusUserMenuButton", "focusAccountStatus", "closeFilePanelButton", "assistantTitle",
   "browseWorkspaceButton", "createSessionButton", "modeSelect", "reasoningSelect",
@@ -79,7 +89,7 @@ const elements = Object.fromEntries([
   "messageList", "messageInput", "sendButton", "cancelButton", "runStatus", "thinkingIndicator", "thinkingStatus",
   "runProgress", "runProgressTitle", "runProgressDetail", "runProgressElapsed",
   "questionNavigator", "questionNavigatorToggle", "questionNavigatorCount", "questionNavigatorPanel", "questionNavigatorList", "closeQuestionNavigator",
-  "stepCounter", "activityList", "planProgress", "planList", "restoreButton",
+  "stepCounter", "activityList", "planProgress", "planList", "restoreButton", "workflowSummaryTitle", "workflowSummaryDetail", "workflowSummaryBadge",
   "refreshIntelligenceButton", "exportTraceButton", "intelligenceContent",
   "browserBackdrop", "browserPath", "browserUpButton", "browserList",
   "chooseWorkspaceButton", "closeBrowserButton", "cancelBrowserButton",
@@ -225,6 +235,8 @@ function toggleUserMenu(event) {
 
 async function openSettingsPage() {
   closeUserMenu();
+  state.researchOpen = false;
+  elements.researchWorkbench.classList.add("hidden");
   state.settingsOpen = true;
   elements.workbench.classList.add("hidden");
   elements.settingsPage.classList.remove("hidden");
@@ -332,6 +344,14 @@ function loadWorkspaceState() {
   } catch {
     return null;
   }
+}
+
+function loadResearchExpertMode() {
+  try { return localStorage.getItem(RESEARCH_DETAIL_MODE_KEY) === "1"; } catch { return false; }
+}
+
+function saveResearchExpertMode() {
+  try { localStorage.setItem(RESEARCH_DETAIL_MODE_KEY, state.researchExpertMode ? "1" : "0"); } catch { /* storage may be disabled */ }
 }
 
 function saveWorkspaceState() {
@@ -609,6 +629,7 @@ async function openWorkspace(workspace, sessionId = null, preserveEditor = false
     state.sessionId = result.session_id;
     state.workspace = result.workspace;
     state.sessionMode = result.mode || "act";
+    renderWorkflowSummary(result.workflow || { name: null, stage: "idle" });
     state.pendingMode = null;
     state.modeSyncPromise = null;
     state.running = false;
@@ -689,6 +710,7 @@ function resetConversationSurface() {
   elements.activityList.innerHTML = '<div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div>';
   elements.planList.innerHTML = '<div class="view-empty">当前会话还没有执行计划。</div>';
   elements.planProgress.textContent = "0 / 0";
+  renderWorkflowSummary({ name: null, stage: "idle" });
   elements.stepCounter.textContent = "STEP 0";
   hideThinkingIndicator();
   resetQuestionNavigator();
@@ -1349,6 +1371,9 @@ function restoreHistoricalEvent(event) {
       break;
     }
     case "task_profile_selected": addActivity("任务类型已确定", `${payload.profile || "project"} · ${payload.reason || ""}`, "success"); break;
+    case "skill_loaded": addActivity("已加载 Skill", payload.name || payload.skill || "按需技能", "success"); break;
+    case "workflow_selected": renderWorkflowSummary({ ...state.workflow, name: payload.name, stage: payload.stage || "inspect" }); addActivity("工作流已选择", `${workflowNameLabel(payload.name)} · ${workflowStageLabel(payload.stage || "inspect")}`, "success"); break;
+    case "workflow_stage_changed": renderWorkflowSummary({ ...state.workflow, name: payload.name || state.workflow.name, stage: payload.to || payload.to_stage || payload.stage || "idle" }); addActivity("工作流阶段", `${workflowStageLabel(payload.from || payload.from_stage)} → ${workflowStageLabel(payload.to || payload.to_stage || payload.stage)}`, "success"); break;
     case "context_compacted": addActivity("上下文已压缩", `约 ${payload.estimated_chars || 0} 字符`, "warning"); break;
     case "model_started": addActivity("模型处理", "已请求模型选择下一步操作"); break;
     case "stuck_recovery": addActivity("检测到重复编辑，正在恢复", payload.message || "请重新读取文件后选择下一步", "warning"); break;
@@ -1368,6 +1393,12 @@ function restoreHistoricalEvent(event) {
     case "approval_requested": addActivity(`等待批准 ${payload.name}`, payload.reason, "warning"); break;
     case "verification_required": addActivity("需要验证", payload.reason, "failure"); break;
     case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
+    case "algorithm_report_ready": addActivity("算法可靠性报告已生成", `${payload.summary?.passed || 0}/${payload.summary?.total || 0} 通过 · ${payload.report_id || ""}`, "success"); break;
+    case "algorithm_report_failed": addActivity("算法报告保存失败", `${payload.code || ""} · ${payload.message || ""}`, "warning"); break;
+    case "algorithm_run_progress": addActivity(`算法实验 · ${payload.stage || "运行中"}`, `${payload.message || ""}${payload.progress != null ? ` · ${payload.progress}%` : ""} · ${payload.model_requests || 0} 次模型请求`, payload.stage === "failed" ? "failure" : "success"); break;
+    case "algorithm_run_completed": addActivity("算法实验完成", `${payload.summary?.passed || 0}/${payload.summary?.total || 0} 通过 · ${payload.model_requests || 0} 次模型请求`, "success"); break;
+    case "algorithm_run_cancelled": addActivity("算法实验已取消", payload.message || "用户取消", "warning"); break;
+    case "algorithm_run_failed": addActivity("算法实验失败", `${payload.code || ""} · ${payload.message || ""}`, "failure"); break;
     case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
     case "checkpoint_tracking_failed": addActivity("检查点跟踪失败", `${payload.code || ""} · ${payload.message || ""}`, "failure"); break;
     case "checkpoint_restored": addActivity(payload.forced ? "已强制回滚本轮修改" : "已回滚本轮修改", (payload.files || []).join(", "), payload.forced ? "warning" : "success"); break;
@@ -1411,6 +1442,7 @@ function restoreEventHistory(events, metadata = {}) {
     hideRunProgress();
     finishLiveActivity();
   }
+  if (metadata.workflow) renderWorkflowSummary(metadata.workflow);
   if (metadata.status === "waiting_approval" && metadata.pending_approval) {
     showApproval(metadata.pending_approval);
   } else {
@@ -1490,6 +1522,18 @@ function handleEvent(event, { historical = false } = {}) {
       if (elements.taskProfileSelect) elements.taskProfileSelect.value = payload.profile || "project";
       addActivity("任务类型已确定", `${payload.profile || "project"} · ${payload.reason || ""}`, "success");
       break;
+    case "skill_loaded":
+      renderWorkflowSummary({ ...state.workflow, loaded_skills: [...new Set([...(state.workflow.loaded_skills || []), payload.name || payload.skill].filter(Boolean))] });
+      addActivity("已加载 Skill", payload.name || payload.skill || "按需技能", "success");
+      break;
+    case "workflow_selected":
+      renderWorkflowSummary({ ...state.workflow, name: payload.name, stage: payload.stage || "inspect" });
+      addActivity("工作流已选择", `${workflowNameLabel(payload.name)} · ${workflowStageLabel(payload.stage || "inspect")}`, "success");
+      break;
+    case "workflow_stage_changed":
+      renderWorkflowSummary({ ...state.workflow, name: payload.name || state.workflow.name, stage: payload.to || payload.to_stage || payload.stage || "idle" });
+      addActivity("工作流阶段", `${workflowStageLabel(payload.from || payload.from_stage)} → ${workflowStageLabel(payload.to || payload.to_stage || payload.stage)}`, "success");
+      break;
     case "mode_changed":
       if (["ask", "plan", "act"].includes(payload.mode)) {
         state.sessionMode = payload.mode;
@@ -1549,6 +1593,29 @@ function handleEvent(event, { historical = false } = {}) {
     case "approval_requested": setRunProgress("等待你的批准", `${payload.name} · ${payload.reason || "需要授权后继续"}`); showApproval(payload); addActivity(`等待批准 ${payload.name}`, payload.reason, "warning"); break;
     case "verification_required": setRunProgress("正在准备验证", payload.reason || "修改完成后需要运行测试"); addActivity("需要验证", payload.reason, "failure"); break;
     case "repair_attempt": addActivity(`自动修复 ${payload.attempt}/${payload.max_attempts}`, payload.reason, "warning"); break;
+    case "algorithm_report_ready":
+      addActivity("算法可靠性报告已生成", `${payload.summary?.passed || 0}/${payload.summary?.total || 0} 通过 · 点击顶部实验室查看`, "success");
+      if (state.researchOpen) loadAlgorithmLab();
+      break;
+    case "algorithm_report_failed": addActivity("算法报告保存失败", `${payload.code || ""} · ${payload.message || ""}`, "warning"); break;
+    case "algorithm_run_progress":
+      elements.algorithmRunProgress.textContent = `${payload.message || "算法实验运行中"}${payload.progress != null ? ` · ${payload.progress}%` : ""} · ${payload.model_requests || 0} 次模型请求`;
+      if (payload.run_id) state.algorithmActiveRunId = payload.run_id;
+      break;
+    case "algorithm_run_completed":
+      elements.cancelAlgorithmRunButton.classList.add("hidden");
+      elements.algorithmRunProgress.textContent = `实验完成 · ${payload.summary?.passed || 0}/${payload.summary?.total || 0} 通过 · ${payload.model_requests || 0} 次模型请求`;
+      if (state.researchOpen) loadAlgorithmLab();
+      break;
+    case "algorithm_run_cancelled":
+      elements.cancelAlgorithmRunButton.classList.add("hidden");
+      elements.algorithmRunProgress.textContent = "实验已取消";
+      break;
+    case "algorithm_run_failed":
+      elements.cancelAlgorithmRunButton.classList.add("hidden");
+      elements.algorithmRunProgress.textContent = `实验失败：${payload.message || payload.code || "未知错误"}`;
+      if (state.researchOpen) loadAlgorithmLab();
+      break;
     case "checkpoint_created": addActivity("创建检查点", payload.path, "success"); break;
     case "checkpoint_tracking_failed": addActivity("检查点跟踪失败", `${payload.code || ""} · ${payload.message || ""}`, "failure"); break;
     case "checkpoint_restored": addActivity(payload.forced ? "已强制回滚本轮修改" : "已回滚本轮修改", (payload.files || []).join(", "), payload.forced ? "warning" : "success"); break;
@@ -1757,9 +1824,16 @@ function finishLiveActivity() {
 
 function renderPlan(plan) {
   const items = Array.isArray(plan) ? plan : [];
+  if (state.workflow?.name) {
+    renderWorkflowSummary({
+      ...state.workflow,
+      acceptance: items.filter((item) => item && item.acceptance).map((item) => item.acceptance),
+      active_steps: items.filter((item) => item?.status === "in_progress").map((item) => item.step),
+    });
+  }
   const completed = items.filter((item) => item.status === "completed").length;
   elements.planProgress.textContent = `${completed} / ${items.length}`;
-  elements.planList.innerHTML = items.length ? items.map((item, index) => `<div class="plan-item ${escapeHtml(item.status || "pending")}"><span>${item.status === "completed" ? "✓" : index + 1}</span><p>${escapeHtml(item.step || "")}</p></div>`).join("") : '<div class="view-empty">当前会话还没有执行计划。</div>';
+  elements.planList.innerHTML = items.length ? items.map((item, index) => `<div class="plan-item ${escapeHtml(item.status || "pending")}"><span>${item.status === "completed" ? "✓" : index + 1}</span><div><p>${escapeHtml(item.step || "")}</p>${item.acceptance ? `<small class="plan-acceptance">验收：${escapeHtml(item.acceptance)}</small>` : ""}</div></div>`).join("") : '<div class="view-empty">当前会话还没有执行计划。</div>';
 }
 
 function normalizeApprovalPayload(payload = {}) {
@@ -1796,6 +1870,39 @@ function summarizeArguments(args = {}) { return String(args.path || args.command
 function statusLabel(status) { return ({ completed: "已完成", partial: "部分完成", failed: "失败", cancelled: "已停止" })[status] || status; }
 function cancellationReason(reason) { return ({ user_requested: "用户主动停止", task_cancelled: "后台任务被中止", state_cancel_requested: "会话请求停止" })[reason] || reason || "运行已取消"; }
 function approvalPolicyLabel(policy) { return ({ ask: "请求批准", auto: "帮我批准", full: "完全放开" })[policy] || policy; }
+function workflowNameLabel(name) { return ({ "add-feature": "新增功能", "bug-fix": "修复 Bug", "code-review": "代码审查" })[name] || name || "未选择工作流"; }
+function workflowStageLabel(stage) { return ({ idle: "待开始", inspect: "检查", plan: "规划", implement: "实现", verify: "验证", finish: "完成" })[stage] || stage || "待开始"; }
+
+function renderWorkflowSummary(workflow = state.workflow) {
+  const value = workflow && typeof workflow === "object" ? workflow : {};
+  state.workflow = {
+    name: value.name || null,
+    stage: value.stage || "idle",
+    loaded_skills: Array.isArray(value.loaded_skills) ? value.loaded_skills : [],
+    acceptance: Array.isArray(value.acceptance) ? value.acceptance : [],
+    active_steps: Array.isArray(value.active_steps) ? value.active_steps : [],
+  };
+  const title = elements.workflowSummaryTitle;
+  const detail = elements.workflowSummaryDetail;
+  const badge = elements.workflowSummaryBadge;
+  if (!title || !detail || !badge) return;
+  const current = state.workflow;
+  if (!current.name) {
+    title.textContent = "普通对话";
+    detail.textContent = "选择任务后，Agent 会自动进入对应工作流";
+    badge.textContent = "待开始";
+    badge.className = "workflow-badge idle";
+    return;
+  }
+  title.textContent = workflowNameLabel(current.name);
+  const parts = [`阶段：${workflowStageLabel(current.stage)}`];
+  if (current.active_steps.length) parts.push(`当前步骤：${current.active_steps[0]}`);
+  if (current.loaded_skills.length) parts.push(`Skill：${current.loaded_skills.join("、")}`);
+  if (current.acceptance.length) parts.push(`验收标准 ${current.acceptance.length} 条`);
+  detail.textContent = parts.join(" · ");
+  badge.textContent = workflowStageLabel(current.stage);
+  badge.className = `workflow-badge ${current.stage}`;
+}
 
 function mirrorCommandResult(result) {
   const data = result.data || {};
@@ -1889,6 +1996,8 @@ function renderIntelligence(data) {
   const totals = repo.totals || {};
   const skills = data.skills || { available: [], loaded: [] };
   const loaded = new Set(skills.loaded || []);
+  const workflow = data.workflow || state.workflow || {};
+  renderWorkflowSummary(workflow);
   const toolTotals = data.tool_totals || {};
   const usage = data.token_usage || {};
   const storage = data.storage || { events: {}, tool_results: {} };
@@ -1939,7 +2048,10 @@ function renderIntelligence(data) {
   const memoryCategories = memory.categories || {};
   const recalledIds = new Set((memory.recalled || []).map((item) => item.memory?.id || item.id));
   const memoryRows = (memory.recent || []).map((item) => `<li class="${recalledIds.has(item.id) ? "recalled" : ""}"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
-  const candidateRows = (summaryMemory.candidates || []).map((item) => `<li class="memory-candidate"><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">保留</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
+  const candidateRows = (summaryMemory.candidates || []).map((item) => {
+    const keywords = (item.keywords || []).slice(0, 5).map((keyword) => `<i>${escapeHtml(keyword)}</i>`).join("");
+    return `<li class="memory-candidate"><div class="intelligence-memory-suggestion"><b>${escapeHtml(item.occurrence_count > 1 ? `重复出现 ${item.occurrence_count} 次` : "本轮识别")}</b><span>${escapeHtml(item.prompt || item.content)}</span>${keywords ? `<small>${keywords}</small>` : ""}</div><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">加入记忆</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">暂不保存</button></div></li>`;
+  }).join("");
   const userRows = (userMemory.recent || []).map((item) => `<li><span><b>${escapeHtml(item.category)}</b>${escapeHtml(item.content)}</span><em>${item.importance || 3}</em></li>`).join("");
   const evidenceRows = (verification.evidence || []).slice(-5).reverse().map((item) => `<li class="evidence-row ${item.accepted ? "accepted" : "rejected"}"><div><span><b>${escapeHtml(String(item.kind || "unknown").toUpperCase())}</b><em>${escapeHtml(item.source || "untrusted")}</em></span><code>${escapeHtml(item.command || "")}</code><small>${escapeHtml(item.reason || "")}</small></div><i title="${item.accepted ? "满足完成契约" : "不满足完成契约"}">${item.accepted ? "✓" : "!"}</i></li>`).join("");
   const verificationConfigRows = (verificationConfig.commands || []).map((command) => `<li><span>全局</span><code>${escapeHtml(command)}</code></li>`).join("");
@@ -1963,6 +2075,14 @@ function renderIntelligence(data) {
   }).join("");
   const ruleConflictRows = contextConflicts.slice(0, 12).map((item) => `<li class="context-conflict"><span><b>${escapeHtml(item.heading || "同名规则")}</b>${escapeHtml(item.source || "")} ↔ ${escapeHtml(item.other_source || "")}</span><em>目标 ${escapeHtml(item.target || ".")}</em></li>`).join("");
   elements.intelligenceContent.innerHTML = `
+    <section class="intelligence-section workflow-section ${workflow.name ? "active" : "idle"}">
+      <div class="intelligence-heading"><div><span class="intel-icon">FLOW</span><strong>当前开发工作流</strong></div><b>${escapeHtml(workflow.name ? workflowStageLabel(workflow.stage) : "普通对话")}</b></div>
+      <div class="workflow-intel-main"><strong>${escapeHtml(workflowNameLabel(workflow.name))}</strong><span>${escapeHtml(workflow.name ? `阶段：${workflowStageLabel(workflow.stage)}` : "尚未加载具体开发 Skill")}</span></div>
+      ${workflow.active_steps?.length ? `<p class="intel-note">当前步骤：${escapeHtml(workflow.active_steps.join("；"))}</p>` : ""}
+      ${workflow.loaded_skills?.length ? `<p class="intel-note">已加载：${workflow.loaded_skills.map(escapeHtml).join("、")}</p>` : ""}
+      ${workflow.acceptance?.length ? `<details><summary>验收标准（${workflow.acceptance.length}）</summary><ul class="context-source-list">${workflow.acceptance.map((item) => `<li><span>${escapeHtml(item)}</span><em>acceptance</em></li>`).join("")}</ul></details>` : ""}
+      <p class="intel-note">工作流只负责约束执行顺序与完成门槛，不会扩大工具权限。</p>
+    </section>
     <section class="intelligence-section run-budget-section ${runBudgetState}">
       <div class="intelligence-heading"><div><span class="intel-icon">RUN</span><strong>运行预算</strong></div><b>${runBudgetState === "warning" ? "LIMIT" : "ACTIVE"}</b></div>
       <div class="run-budget-grid">
@@ -2005,7 +2125,7 @@ function renderIntelligence(data) {
     </section>
     <section class="intelligence-section candidate-section">
       <div class="intelligence-heading"><div><span class="intel-icon">ASK</span><strong>待确认记忆</strong></div><b>${summaryMemory.pending_candidates || 0} 条</b></div>
-      <p class="intel-note">每轮会生成结构化总结，但候选内容只有经你确认后才会长期保存。</p>
+      <p class="intel-note">每轮对话后会提取关键词和任务类型；只有你点击“加入记忆”后才会长期保存。</p>
       <ul class="memory-list candidate-list">${candidateRows || '<li class="empty"><span>目前没有等待确认的候选</span></li>'}</ul>
     </section>
     <section class="intelligence-section user-memory-section">
@@ -2089,13 +2209,101 @@ async function handleIntelligenceAction(event) {
       return loadIntelligence();
     } catch (error) { return showToast(error.message); }
   }
+  const replayButton = event.target.closest("[data-replay-action]");
+  if (replayButton) {
+    const action = replayButton.dataset.replayAction;
+    const turnId = encodeURIComponent(replayButton.dataset.turnId || "");
+    const step = encodeURIComponent(replayButton.dataset.step || "0");
+    try {
+      if (action === "inspect") {
+        const result = await api(`/api/sessions/${state.sessionId}/replay/turns/${turnId}/steps/${step}`);
+        const frame = result.step || {};
+        const context = frame.context_build || {};
+        const calls = (frame.tool_calls || []).map((call) => call.name || call.tool || "tool").join(", ") || "无";
+        const sources = (context.source_manifest || []).map((item) => `<li><b>${escapeHtml(item.kind || "source")}</b><span>${formatNumber(item.chars || 0)} chars · ${escapeHtml(item.reason || "")}</span></li>`).join("");
+        const previews = (context.snapshot?.messages || []).slice(-8).map((item) => `<li><b>${escapeHtml(item.role || "message")}</b><span>${escapeHtml(item.preview || "")}</span></li>`).join("");
+        const inspector = document.querySelector("#replayInspector");
+        if (inspector) {
+          inspector.classList.remove("hidden");
+          inspector.innerHTML = `<strong>Step ${escapeHtml(step)} 检查器</strong><p>${formatNumber(context.estimated_chars || 0)} chars · ${formatNumber(context.estimated_tokens || 0)} tokens · Tool Calls：${escapeHtml(calls)}</p><div><h4>上下文来源</h4><ul>${sources || "<li>暂无来源快照</li>"}</ul></div><details><summary>展开脱敏消息预览</summary><ul>${previews || "<li>旧事件没有消息预览</li>"}</ul></details>`;
+        }
+      } else if (action === "bookmark") {
+        await api(`/api/sessions/${state.sessionId}/replay/bookmarks`, { method: "POST", body: JSON.stringify({ turn_id: decodeURIComponent(turnId), step: Number(step), label: "根因候选" }) });
+        showToast(`已将 Step ${step} 标记为根因候选`);
+        return setResearchView("replay");
+      } else if (action === "compare") {
+        const other = (state.workspaceSessions || []).find((item) => item.session_id !== state.sessionId);
+        if (!other) return showToast("当前工作区没有可比较的另一会话");
+        const result = await api("/api/replay/compare", { method: "POST", body: JSON.stringify({ left_session_id: other.session_id, right_session_id: state.sessionId }) });
+        const inspector = document.querySelector("#replayInspector");
+        if (inspector) {
+          inspector.classList.remove("hidden");
+          inspector.innerHTML = `<strong>执行路径对比</strong><div class="replay-compare"><span>另一会话：${result.left.steps} Steps · ${result.left.tool_calls} Tools · ${formatNumber(result.left.estimated_context_tokens)} Tokens</span><span>当前会话：${result.right.steps} Steps · ${result.right.tool_calls} Tools · ${formatNumber(result.right.estimated_context_tokens)} Tokens</span></div><small>只比较可观测路径，不展示或比较私有思维文本。</small>`;
+        }
+      } else if (action === "fork") {
+        if (!window.confirm("从该 Step 创建安全分支？历史命令和文件写入不会重放。")) return;
+        const result = await api(`/api/sessions/${state.sessionId}/replay/turns/${turnId}/steps/${step}/fork`, { method: "POST", body: JSON.stringify({ mode: "ask" }) });
+        await openWorkspace(result.workspace, result.session_id);
+        showToast("已创建安全上下文分支");
+        closeAlgorithmLab();
+      }
+    } catch (error) { showToast(error.message); }
+    return;
+  }
   const candidateButton = event.target.closest("[data-memory-action]");
   if (candidateButton) {
     try {
       await api(`/api/sessions/${state.sessionId}/memory/candidates/${candidateButton.dataset.candidateId}`, { method: "POST", body: JSON.stringify({ action: candidateButton.dataset.memoryAction }) });
       showToast(candidateButton.dataset.memoryAction === "confirm" ? "记忆已确认并保存" : "候选记忆已忽略");
-      return loadIntelligence();
+      return state.researchOpen && state.researchView === "memory" ? setResearchView("memory") : loadIntelligence();
     } catch (error) { return showToast(error.message); }
+  }
+  const bulkMemoryButton = event.target.closest("[data-memory-bulk]");
+  if (bulkMemoryButton) {
+    const action = bulkMemoryButton.dataset.memoryBulk;
+    const candidateIds = (bulkMemoryButton.dataset.candidateIds || "").split(",").filter(Boolean);
+    if (!candidateIds.length || !window.confirm(`确定${action === "confirm" ? "批量确认" : "全部忽略"}这 ${candidateIds.length} 条候选记忆吗？`)) return;
+    try {
+      await api(`/api/sessions/${state.sessionId}/memory/candidates/bulk-resolve`, { method: "POST", body: JSON.stringify({ action, candidate_ids: candidateIds, confirm: true }) });
+      showToast("候选聚类已处理");
+      return setResearchView("memory");
+    } catch (error) { showToast(error.message); }
+    return;
+  }
+  const governanceButton = event.target.closest("[data-memory-governance]");
+  if (governanceButton) {
+    const action = governanceButton.dataset.memoryGovernance;
+    const memoryId = governanceButton.dataset.memoryId;
+    if (action === "archive" && !window.confirm("取消这条记忆？取消后它不会再加入后续对话，但仍可重新启用。")) return;
+    try {
+      if (action === "verify") {
+        await api(`/api/sessions/${state.sessionId}/memory/${encodeURIComponent(memoryId)}/revalidate`, { method: "POST" });
+      } else {
+        const body = { action };
+        if (action === "set_expiry") body.expires_at = new Date(Date.now() + 30 * 86400000).toISOString();
+        await api(`/api/sessions/${state.sessionId}/memory/${encodeURIComponent(memoryId)}`, { method: "PATCH", body: JSON.stringify(body) });
+      }
+      showToast(action === "verify" ? "记忆已重新验证" : action === "archive" ? "已取消记忆，后续对话不再使用" : action === "restore" ? "记忆已重新启用" : action === "set_expiry" ? "已设置 30 天后过期" : action === "clear_expiry" ? "已清除记忆期限" : "记忆治理操作已完成");
+      if (state.researchOpen && state.researchView === "memory") setResearchView("memory");
+    } catch (error) { showToast(error.message); }
+    return;
+  }
+  const contextButton = event.target.closest("[data-context-action]");
+  if (contextButton) {
+    try {
+      if (contextButton.dataset.contextAction === "toggle-source") {
+        const enabled = contextButton.dataset.enabled !== "1";
+        const sourceId = contextButton.dataset.sourceId;
+        await api(`/api/sessions/${state.sessionId}/context/preferences`, { method: "PUT", body: JSON.stringify({ source_id: sourceId, enabled }) });
+        showToast(`${sourceId} 已${enabled ? "启用" : "关闭"}（仅影响后续构建）`);
+        return setResearchView("context");
+      }
+      if (contextButton.dataset.contextAction === "what-if") {
+        const result = await api(`/api/sessions/${state.sessionId}/context-compiler/what-if`, { method: "POST" });
+        showToast(`关闭 Repo Map 将减少约 ${formatNumber(Math.abs(result.delta?.chars || 0))} 字符`);
+      }
+    } catch (error) { showToast(error.message); }
+    return;
   }
   const userButton = event.target.closest("[data-user-memory-action]");
   if (!userButton) return;
@@ -2141,6 +2349,352 @@ function setAssistantView(view) {
   if (visibleView === "intelligence") loadIntelligence();
   syncFocusLayoutState();
   saveWorkspaceState();
+}
+
+function closeAlgorithmLab() {
+  state.researchOpen = false;
+  elements.researchWorkbench.classList.add("hidden");
+  elements.algorithmLabButton.focus();
+}
+
+function setResearchView(view) {
+  const selected = new Set(["algorithm", "context", "memory"]).has(view) ? view : "algorithm";
+  state.researchView = selected;
+  document.querySelectorAll(".research-nav button").forEach((button) => button.classList.toggle("active", button.dataset.researchView === selected));
+  elements.researchGrid.classList.toggle("research-secondary", selected !== "algorithm");
+  elements.researchDetailToggle.classList.toggle("hidden", selected === "algorithm");
+  elements.researchDetailToggle.setAttribute("aria-pressed", state.researchExpertMode ? "true" : "false");
+  elements.researchDetailToggle.textContent = state.researchExpertMode ? "专业详情：开" : "专业详情：关";
+  if (selected === "algorithm") {
+    loadAlgorithmLab();
+    return;
+  }
+  elements.algorithmLabReport.innerHTML = '<div class="research-empty large"><span class="research-empty-mark">◎</span><h2>加载中…</h2><p>正在读取可观测数据。</p></div>';
+  const fallbackPaths = {
+    replay: `/api/sessions/${encodeURIComponent(state.sessionId)}/agent-lab/replay`,
+    context: `/api/sessions/${encodeURIComponent(state.sessionId)}/context-compiler`,
+    memory: `/api/sessions/${encodeURIComponent(state.sessionId)}/memory-governance`,
+  };
+  api(`/api/sessions/${encodeURIComponent(state.sessionId)}/observability/${selected}`)
+    .catch(() => api(fallbackPaths[selected]))
+    .then((data) => { state.researchDataCache[selected] = data; renderResearchSecondary(selected, data); })
+    .catch((error) => {
+    elements.algorithmLabReport.innerHTML = `<div class="research-empty large error">${escapeHtml(error.message)}</div>`;
+  });
+}
+
+function renderResearchSecondary(view, data) {
+  const raw = data?.raw || data || {};
+  const presentation = data?.presentation;
+  if (!state.researchExpertMode && presentation) {
+    if (view === "replay") return renderSimpleReplay(presentation, raw);
+    if (view === "context") return renderSimpleContext(presentation, raw);
+    return renderSimpleMemory(presentation, raw);
+  }
+  if (view === "replay") return renderTechnicalReplay(raw);
+  if (view === "context") return renderTechnicalContext(raw);
+  return renderTechnicalMemory(raw);
+}
+
+function renderSimpleReplay(data, raw) {
+  const steps = Array.isArray(data.steps) ? data.steps : [];
+  const bookmarks = new Set((raw.bookmarks || []).map((item) => `${item.turn_id}:${item.step}`));
+  const rows = steps.map((step) => {
+    const marked = bookmarks.has(`${step.turn_id}:${step.step}`);
+    const files = step.files?.length ? `<span class="observability-files">涉及 ${step.files.slice(0, 3).map(escapeHtml).join("、")}</span>` : "";
+    return `<li class="observability-step ${escapeHtml(step.status || "info")} ${marked ? "bookmarked" : ""}"><div class="observability-step-mark">${step.status === "error" ? "!" : "✓"}</div><div class="observability-step-main"><strong>${escapeHtml(step.title || `第 ${step.step} 步`)}${marked ? " · 已标记" : ""}</strong><span>${escapeHtml(step.status_label || "已记录")} · ${escapeHtml(step.description || "")}</span>${files}</div><div class="replay-actions"><button type="button" data-replay-action="inspect" data-turn-id="${escapeHtml(step.turn_id)}" data-step="${step.step}">看详情</button><button type="button" data-replay-action="bookmark" data-turn-id="${escapeHtml(step.turn_id)}" data-step="${step.step}">${marked ? "取消标记" : "标记问题"}</button><button type="button" data-replay-action="fork" data-turn-id="${escapeHtml(step.turn_id)}" data-step="${step.step}">从这里继续</button></div></li>`;
+  }).join("");
+  const summary = data.summary || {};
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">AGENT WORK LOG</span><h2>${escapeHtml(summary.title || "运行回放")}</h2><p>${escapeHtml(summary.description || "按时间顺序查看任务进展。")}</p></div><button class="text-button" type="button" data-replay-action="compare">比较两次执行</button></header><div class="observability-summary ${escapeHtml(summary.tone || "neutral")}" role="status"><strong>${escapeHtml(summary.status === "attention" ? "需要关注" : summary.status === "empty" ? "等待记录" : "进展正常")}</strong><span>${escapeHtml(summary.description || "")}</span></div><div class="secondary-intro">这里展示 Agent 实际做过的可观测动作，不展示私有思维内容。你可以点“看详情”了解某一步，也可以从该步创建安全分支。</div><div id="replayInspector" class="replay-inspector hidden"></div><ol class="observability-timeline">${rows || '<li class="research-empty">当前会话还没有工作记录。</li>'}</ol>`;
+}
+
+function renderSimpleContext(data, raw) {
+  const adjustable = new Set(["repo_map", "project_memory", "user_memory", "skill_catalog"]);
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const cards = sources.map((item) => {
+    const action = adjustable.has(item.id) && !item.locked ? `<button class="context-toggle ${item.status === "disabled" ? "off" : "on"}" data-context-action="toggle-source" data-source-id="${escapeHtml(item.id)}" data-enabled="${item.status === "disabled" ? "0" : "1"}" type="button">${item.status === "disabled" ? "已关闭" : "使用中"}</button>` : `<span class="context-toggle ${item.status === "disabled" ? "off" : "on"}">${item.status_label || "已参考"}${item.locked ? " · 固定" : ""}</span>`;
+    return `<article class="observability-source ${item.status}"><div class="observability-source-icon">${item.status === "disabled" ? "−" : "✓"}</div><div><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.description || "")}</p><small>${escapeHtml(item.reason || "")}</small></div><div class="observability-source-action">${action}</div></article>`;
+  }).join("");
+  const budget = data.budget || {};
+  const used = budget.used_chars && budget.max_chars ? `${formatNumber(budget.used_chars)} / ${formatNumber(budget.max_chars)} 字符` : `${formatNumber(budget.tokens || 0)} tokens`;
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">AGENT WORK LOG</span><h2>${escapeHtml(data.summary?.title || "上下文编译")}</h2><p>${escapeHtml(data.summary?.description || "")}</p></div><button class="text-button" data-context-action="what-if" type="button">试试看少参考一类</button></header><div class="observability-summary ${escapeHtml(budget.tone || data.summary?.tone || "info")}" role="status"><strong>${escapeHtml(budget.label || "参考资料已整理")}</strong><span>${escapeHtml(used)} · ${escapeHtml(String(budget.score ?? 0))}/100</span></div><div class="secondary-intro">Agent 会从项目结构、最近对话和已确认记忆中挑选有帮助的资料。关闭某一项只影响后续任务，不会删除任何内容。</div><div class="observability-source-list">${cards || '<div class="research-empty">暂无上下文记录。</div>'}</div><details class="observability-technical"><summary>查看专业详情</summary><pre>${escapeHtml(JSON.stringify({ quality_breakdown: raw.quality_breakdown, quality_issues: raw.quality_issues, repo_map: raw.repo_map }, null, 2))}</pre></details>`;
+}
+
+function renderSimpleMemory(data, raw) {
+  const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+  const memories = Array.isArray(data.memories) ? data.memories : [];
+  const candidateRows = candidates.map((item) => {
+    const keywords = (item.keywords || []).slice(0, 6).map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("");
+    return `<li class="memory-card pending"><div><span class="memory-kind">${escapeHtml(item.occurrence_count > 1 ? `重复出现 ${item.occurrence_count} 次` : "本轮识别")}</span><strong class="memory-suggestion-prompt">${escapeHtml(item.prompt || item.content)}</strong>${keywords ? `<div class="memory-keyword-list" aria-label="检测到的关键词">${keywords}</div>` : ""}<small>建议保存为：${escapeHtml(item.content)}<br />${escapeHtml(item.reason)} · 来源：${escapeHtml(item.source || "当前对话")}</small></div><div class="memory-actions"><button class="primary" data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">加入记忆</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">暂不保存</button></div></li>`;
+  }).join("");
+  const memoryRows = memories.slice(0, 40).map((item) => `<li class="memory-card ${escapeHtml(item.state || "active")}"><div><span class="memory-kind">${escapeHtml(item.state === "cancelled" ? "已取消" : item.category_label || "项目记忆")}</span><strong>${escapeHtml(item.content)}</strong><small>${item.state === "cancelled" ? "不会再加入后续对话，可随时重新启用" : "已加入记忆，会在相关任务中作为参考"}</small></div><div class="memory-actions"><button class="${item.state === "cancelled" ? "primary" : ""}" data-memory-governance="${escapeHtml(item.action || "archive")}" data-memory-id="${escapeHtml(item.id)}" type="button">${escapeHtml(item.action_label || "取消记忆")}</button></div></li>`).join("");
+  const conflictHint = data.conflicts?.length ? `<div class="observability-callout warning">有 ${data.conflicts.length} 个主题存在不同说法，建议打开专业详情后逐条处理。</div>` : "";
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">HUMAN-GOVERNED MEMORY</span><h2>${escapeHtml(data.summary?.title || "记忆治理")}</h2><p>${escapeHtml(data.summary?.description || "")}</p></div></header><div class="observability-summary ${escapeHtml(data.summary?.tone || "success")}" role="status"><strong>${candidates.length ? "发现新的记忆建议" : "记忆状态正常"}</strong><span>每轮只生成建议；只有你点击“加入记忆”后才会保存。</span></div>${conflictHint}<div class="memory-columns observability-memory-columns"><div><h3>本轮记忆建议 <small>${candidates.length}</small></h3>${candidateRows ? `<ul class="memory-list">${candidateRows}</ul>` : '<div class="research-empty">本轮没有需要确认的记忆建议。</div>'}</div><div><h3>已添加的记忆 <small>${memories.length}</small></h3>${memoryRows ? `<ul class="memory-list">${memoryRows}</ul>` : '<div class="research-empty">还没有添加项目记忆。</div>'}</div></div><details class="observability-technical"><summary>查看召回、重复和冲突详情</summary><pre>${escapeHtml(JSON.stringify({ recalls: data.recalls, conflicts: raw.conflicts, duplicates: raw.duplicates, candidate_duplicates: raw.candidate_duplicates }, null, 2))}</pre></details>`;
+}
+
+function renderTechnicalReplay(data) {
+  const steps = Array.isArray(data.steps) ? data.steps : [];
+  const bookmarks = new Set((data.bookmarks || []).map((item) => `${item.turn_id}:${item.step}`));
+  const rows = steps.map((step) => { const eventRows = (step.events || []).map((event) => `<li><code>#${event.sequence || 0}</code><span>${escapeHtml(event.type || "event")}</span></li>`).join(""); const toolRows = (step.tool_calls || []).map((call) => escapeHtml(call.name || call.tool || "tool")).join(", "); const marked = bookmarks.has(`${step.turn_id}:${step.step}`); return `<li class="replay-step ${(step.errors || []).length ? "has-error" : ""} ${marked ? "bookmarked" : ""}"><strong>Step ${step.step || 0}${marked ? " ★" : ""}</strong><span>${step.events?.length || 0} 个事件 · 工具：${toolRows || "无"}${(step.errors || []).length ? " · 发现错误" : ""}</span><div class="replay-actions"><button type="button" data-replay-action="inspect" data-turn-id="${escapeHtml(step.turn_id)}" data-step="${step.step || 0}">检查</button><button type="button" data-replay-action="bookmark" data-turn-id="${escapeHtml(step.turn_id)}" data-step="${step.step || 0}">标记根因</button><button type="button" data-replay-action="fork" data-turn-id="${escapeHtml(step.turn_id)}" data-step="${step.step || 0}">分支</button></div><details><summary>事件</summary><ul class="replay-event-list">${eventRows}</ul></details></li>`; }).join("");
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">PROFESSIONAL / REPLAY</span><h2>运行回放详情</h2><p>Step、事件和工具调用均来自脱敏事件日志。</p></div><button class="text-button" type="button" data-replay-action="compare">比较最近两次执行</button></header><div id="replayInspector" class="replay-inspector hidden"></div><ul class="replay-step-list">${rows || '<li class="research-empty">当前会话暂无可回放事件。</li>'}</ul>`;
+}
+
+function renderTechnicalContext(data) {
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const adjustable = new Set(["repo_map", "project_memory", "user_memory", "skill_catalog"]);
+  const rows = sources.map((item) => { const status = item.enabled ? (Number(item.chars || 0) ? "启用" : "启用（暂无注入）") : "关闭"; return `<tr><td><strong>${escapeHtml(item.label || item.id)}</strong><small>${escapeHtml(item.reason || "")}</small></td><td><code>${formatNumber(item.chars || 0)}</code><small>${formatNumber(item.tokens || Math.round((item.chars || 0) / 4))} tokens</small></td><td>${adjustable.has(item.id) ? `<button class="context-toggle ${item.enabled ? "on" : "off"}" data-context-action="toggle-source" data-source-id="${escapeHtml(item.id)}" data-enabled="${item.enabled ? "1" : "0"}" type="button">${status}</button>` : `<span class="context-toggle ${item.enabled ? "on" : "off"}">${status}${item.locked ? " · 锁定" : ""}</span>`}</td></tr>`; }).join("");
+  const repoFiles = (data.repo_map?.selected || []).slice(0, 40).map((item) => `<li><code>${escapeHtml(item.path || "")}</code><span>score ${escapeHtml(item.score ?? "—")} · ${(item.reason || []).map(escapeHtml).join("、") || "相关性命中"}</span></li>`).join("");
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">PROFESSIONAL / CONTEXT</span><h2>上下文编译详情</h2><p>质量评分 ${data.quality_score ?? 0}/100 · ${formatNumber(data.estimated_tokens || 0)} tokens 估算</p></div><button class="text-button" data-context-action="what-if" type="button">比较关闭 Repo Map</button></header><div class="context-quality"><strong>${data.quality_score ?? 0}</strong><span>上下文质量</span><small>来源合计 ${formatNumber(data.total_chars || 0)} chars · 已发送 ${formatNumber(data.actual_context_chars || 0)} chars</small></div><div class="research-table-wrap"><table><thead><tr><th>来源</th><th>字符 / Token</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table></div>${repoFiles ? `<details class="context-repo-details"><summary>查看 Repo Map 入选文件（${(data.repo_map?.selected || []).length}）</summary><ul class="context-source-list">${repoFiles}</ul></details>` : ""}`;
+}
+
+function renderTechnicalMemory(data) {
+  const memories = Array.isArray(data.memories) ? data.memories : [];
+  const candidates = Array.isArray(data.pending_candidates) ? data.pending_candidates : [];
+  const memoryRows = memories.slice(0, 80).map((item) => `<li><span class="memory-kind">${escapeHtml(item.category || "fact")}</span><strong>${escapeHtml(item.content || "")}</strong><small>${escapeHtml(item.updated_at || "")} · ${escapeHtml(item.verification_status || "未验证")}${item.archived ? " · 已归档" : ""}</small><div class="memory-actions"><button data-memory-governance="${item.pinned ? "unpin" : "pin"}" data-memory-id="${escapeHtml(item.id)}" type="button">${item.pinned ? "取消固定" : "固定"}</button><button data-memory-governance="${item.archived ? "restore" : "archive"}" data-memory-id="${escapeHtml(item.id)}" type="button">${item.archived ? "恢复" : "归档"}</button><button data-memory-governance="verify" data-memory-id="${escapeHtml(item.id)}" type="button">重新验证</button></div></li>`).join("");
+  const candidateRows = candidates.slice(0, 20).map((item) => `<li><span class="memory-kind">${escapeHtml(item.category || "task")}</span><strong>${escapeHtml(item.content || "")}</strong><small>${escapeHtml(item.reason || "")}</small><div class="memory-actions"><button data-memory-action="confirm" data-candidate-id="${escapeHtml(item.id)}" type="button">确认保存</button><button data-memory-action="reject" data-candidate-id="${escapeHtml(item.id)}" type="button">忽略</button></div></li>`).join("");
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">PROFESSIONAL / MEMORY</span><h2>记忆治理详情</h2><p>${memories.length} 条项目记忆 · ${candidates.length} 条待确认候选</p></div></header><div class="secondary-intro">专业详情保留分类、验证、归档、期限和召回审计字段；候选仍需人工确认后才会写入长期记忆。</div><div class="memory-columns"><div><h3>候选收件箱</h3>${candidateRows ? `<ul class="memory-list">${candidateRows}</ul>` : '<div class="research-empty">暂无待确认候选。</div>'}</div><div><h3>长期记忆库</h3>${memoryRows ? `<ul class="memory-list">${memoryRows}</ul>` : '<div class="research-empty">暂无项目记忆。</div>'}</div></div>`;
+}
+
+function openAlgorithmLab() {
+  if (!state.sessionId) {
+    showToast("请先打开一个工作区");
+    return;
+  }
+  closeUserMenu();
+  state.researchOpen = true;
+  setResearchView("algorithm");
+  elements.researchWorkbench.classList.remove("hidden");
+  seedAlgorithmRunForm();
+  loadAlgorithmLab();
+  elements.closeAlgorithmLabButton.focus();
+}
+
+function seedAlgorithmRunForm() {
+  if (elements.algorithmCandidatePath && !elements.algorithmCandidatePath.value && state.activeFilePath) {
+    elements.algorithmCandidatePath.value = state.activeFilePath;
+  }
+  if (elements.algorithmCandidateCommand && !elements.algorithmCandidateCommand.value && state.activeFilePath) {
+    const suffix = state.activeFilePath.split(".").pop()?.toLowerCase();
+    if (suffix === "py") elements.algorithmCandidateCommand.value = `python "${state.activeFilePath}"`;
+    else if (["js", "mjs"].includes(suffix)) elements.algorithmCandidateCommand.value = `node "${state.activeFilePath}"`;
+    else if (["cpp", "cc", "cxx", "c", "java"].includes(suffix)) elements.algorithmCandidateCommand.value = state.activeFilePath;
+  }
+}
+
+async function startAlgorithmRun() {
+  if (!state.sessionId) return showToast("请先打开一个工作区");
+  seedAlgorithmRunForm();
+  const candidatePath = elements.algorithmCandidatePath?.value.trim() || "";
+  const candidateCommand = elements.algorithmCandidateCommand?.value.trim() || "";
+  const oracleCommand = elements.algorithmOracleCommand?.value.trim() || "";
+  const problemText = elements.algorithmSpecInput?.value.trim() || "";
+  if (!candidatePath && !candidateCommand) return showToast("请填写候选文件路径或候选命令");
+  if (!oracleCommand && !problemText) return showToast("请填写 Oracle 命令，或先粘贴题面");
+  const button = elements.startAlgorithmRunButton;
+  button.disabled = true;
+  button.textContent = "启动中…";
+  elements.algorithmRunProgress.textContent = "正在创建确定性实验（不会请求模型）…";
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        candidate_path: candidatePath,
+        candidate_command: candidateCommand,
+        oracle_command: oracleCommand,
+        problem_text: problemText,
+        profile: elements.algorithmRunProfile?.value || "standard",
+      }),
+    });
+    state.algorithmActiveRunId = result.run_id;
+    elements.algorithmRunProgress.textContent = `Run ${result.run_id.slice(0, 8)} 已启动 · 0 次模型请求`;
+    showToast("算法实验已启动");
+    pollAlgorithmRun(result.run_id);
+  } catch (error) {
+    elements.algorithmRunProgress.textContent = `启动失败：${error.message}`;
+    showToast(`启动算法实验失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "开始算法实验";
+  }
+}
+
+async function cancelAlgorithmRun() {
+  if (!state.sessionId || !state.algorithmActiveRunId) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/runs/${encodeURIComponent(state.algorithmActiveRunId)}/cancel`, { method: "POST" });
+    elements.algorithmRunProgress.textContent = "已请求停止，正在清理运行中的进程…";
+    showToast("已请求停止算法实验");
+  } catch (error) { showToast(`停止实验失败：${error.message}`); }
+}
+
+async function pollAlgorithmRun(runId, attempt = 0) {
+  if (!state.sessionId || !runId) return;
+  state.algorithmPollingRunId = runId;
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/runs/${encodeURIComponent(runId)}/status`);
+    const run = result.run || {};
+    const summary = run.summary || run.report?.summary || {};
+    if (run.status === "queued" || run.status === "running") {
+      elements.cancelAlgorithmRunButton.classList.remove("hidden");
+      elements.algorithmRunProgress.textContent = `${run.stage || "运行中"} · ${run.message || "正在执行"}${run.progress != null ? ` · ${run.progress}%` : ""} · ${run.model_requests || 0} 次模型请求`;
+      if (attempt < 600) setTimeout(() => pollAlgorithmRun(runId, attempt + 1), 500);
+      return;
+    }
+    elements.cancelAlgorithmRunButton.classList.add("hidden");
+    if (state.algorithmPollingRunId === runId) state.algorithmPollingRunId = null;
+    elements.algorithmRunProgress.textContent = `${run.status === "completed" ? "实验完成" : run.status === "cancelled" ? "实验已取消" : "实验失败"} · ${summary.passed || 0}/${summary.total || 0} 通过 · ${run.model_requests || 0} 次模型请求`;
+    await loadAlgorithmLab();
+    if (run.report_id) await loadAlgorithmReport(run.report_id);
+  } catch (error) {
+    if (attempt < 10) setTimeout(() => pollAlgorithmRun(runId, attempt + 1), 1000);
+    else if (state.algorithmPollingRunId === runId) state.algorithmPollingRunId = null;
+  }
+}
+
+function algorithmReportSummary(report) {
+  const summary = report?.summary || {};
+  const total = Number(summary.total || 0);
+  const passed = Number(summary.passed || 0);
+  return { total, passed, failed: Number(summary.failed || Math.max(total - passed, 0)) };
+}
+
+function renderAlgorithmLabMetrics(reports) {
+  elements.algorithmLabRunCount.textContent = String(reports.length);
+  const latest = reports[0];
+  if (!latest) {
+    elements.algorithmLabPassRate.textContent = "—";
+    elements.algorithmLabEvidence.textContent = "—";
+    return;
+  }
+  const { total, passed } = algorithmReportSummary(latest);
+  elements.algorithmLabPassRate.textContent = total ? `${Math.round((passed / total) * 100)}%` : "0%";
+  elements.algorithmLabEvidence.textContent = latest.evidence?.level === "deterministic" ? "确定" : "估计";
+}
+
+function renderAlgorithmRunList(reports, activeRuns = []) {
+  elements.algorithmLabRunsList.innerHTML = "";
+  if (!reports.length && !activeRuns.length) {
+    elements.algorithmLabRunsList.innerHTML = '<div class="research-empty">暂无报告。填写候选命令后点击“开始算法实验”。</div>';
+    return;
+  }
+  activeRuns.forEach((run) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "research-run-item active running";
+    button.innerHTML = `<span class="research-run-status running"></span><span class="research-run-copy"><strong>Run ${escapeHtml(String(run.run_id || "").slice(0, 8))}</strong><small>${escapeHtml(run.message || "算法实验运行中")} · ${run.model_requests || 0} 次模型请求</small></span><b>运行中</b>`;
+    elements.algorithmLabRunsList.append(button);
+  });
+  reports.forEach((report, index) => {
+    const { total, passed, failed } = algorithmReportSummary(report);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `research-run-item${index === 0 ? " active" : ""}`;
+    button.dataset.runId = report.report_id;
+    const source = report.source?.path || "未指定源文件";
+    button.innerHTML = `<span class="research-run-status ${failed ? "failed" : "passed"}"></span><span class="research-run-copy"><strong>${escapeHtml(source)}</strong><small>${passed}/${total} 通过 · Step ${Number(report.step || 0)} · ${escapeHtml(formatResearchTime(report.created_at))}</small></span><b>${failed ? `${failed} 失败` : "通过"}</b>`;
+    button.addEventListener("click", () => {
+      elements.algorithmLabRunsList.querySelectorAll(".research-run-item").forEach((item) => item.classList.toggle("active", item === button));
+      loadAlgorithmReport(report.report_id);
+    });
+    elements.algorithmLabRunsList.append(button);
+  });
+}
+
+function formatResearchTime(value) {
+  if (!value) return "刚刚";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "刚刚";
+  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderAlgorithmReport(report) {
+  if (!report) {
+    elements.algorithmLabReport.innerHTML = '<div class="research-empty large"><span class="research-empty-mark">◎</span><h2>选择一份报告</h2><p>判题结果会在这里展示。</p></div>';
+    return;
+  }
+  const { total, passed, failed } = algorithmReportSummary(report);
+  const summary = report.summary || {};
+  const source = report.source || {};
+  const complexity = report.complexity || {};
+  const benchmark = report.benchmark || {};
+  const curveRows = Array.isArray(benchmark.curve) && benchmark.curve.length ? benchmark.curve.map((item) => `<tr><td>${formatNumber(item.input_size || 0)}</td><td>${item.samples || 0}</td><td>${escapeHtml(item.p50_ms ?? 0)} ms</td><td>${escapeHtml(item.p95_ms ?? 0)} ms</td></tr>`).join("") : "";
+  const cases = Array.isArray(report.cases) ? report.cases : [];
+  const caseRows = cases.slice(0, 160).map((item) => `<tr><td><span class="case-dot ${item.status === "passed" ? "passed" : "failed"}"></span>${escapeHtml(item.label || "case")}</td><td>${escapeHtml(item.status || "unknown")}</td><td><code>${escapeHtml(item.input || "")}</code></td><td><code>${escapeHtml(item.actual || "")}</code></td></tr>`).join("");
+  const firstFailure = summary.first_failure;
+  const shrinkTrace = (summary.shrink_trace || []).map((item) => `${formatNumber(item.bytes || 0)} bytes`).join(" → ");
+  const failureBlock = firstFailure ? `<div class="research-failure"><strong>最小失败反例</strong><code>${escapeHtml(summary.minimized_input || firstFailure.input || "未生成")}</code><small>${escapeHtml(firstFailure.detail || "输出与期望不一致")}${shrinkTrace ? ` · 缩减：${escapeHtml(shrinkTrace)}` : ""}</small></div>` : "";
+  const runInfo = report.run || {};
+  const cacheInfo = runInfo.cache || {};
+  const compileCache = runInfo.compile_cache || {};
+  const cacheLabel = compileCache.hit ? "编译命中" : (cacheInfo.hits ? `${cacheInfo.hits} 条命中` : "首次运行");
+  elements.algorithmLabReport.innerHTML = `<header class="research-report-header"><div><span class="eyebrow">REPORT ${escapeHtml(report.report_id || "")}</span><h2>${failed ? "发现失败用例" : "判题通过"}</h2><p>${escapeHtml(source.path || "未指定文件")} · seed ${escapeHtml(source.seed ?? "0")}</p></div><a class="text-button" href="/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/runs/${encodeURIComponent(report.report_id)}/markdown" target="_blank" rel="noreferrer">导出 Markdown</a></header><div class="research-report-metrics"><div><span>理论复杂度</span><strong>${escapeHtml(complexity.estimated_time_complexity || "未关联")}</strong></div><div><span>测试用例</span><strong>${total}</strong></div><div><span>通过</span><strong class="passed-text">${passed}</strong></div><div><span>失败</span><strong class="failed-text">${failed}</strong></div><div><span>运行耗时 P95</span><strong>${benchmark.p95_ms != null ? `${escapeHtml(benchmark.p95_ms)} ms` : "—"}</strong></div><div><span>缓存</span><strong>${escapeHtml(cacheLabel)}</strong></div><div><span>证据</span><strong>确定性</strong></div></div>${failureBlock}<div class="research-command"><span>执行命令</span><code>${escapeHtml(source.command || "未记录")}</code></div>${curveRows ? `<h3 class="research-subheading">复杂度实测曲线（按输入字节分桶）</h3><div class="research-table-wrap"><table><thead><tr><th>输入规模</th><th>样本</th><th>P50</th><th>P95</th></tr></thead><tbody>${curveRows}</tbody></table></div>` : ""}<div class="research-table-wrap"><table><thead><tr><th>用例</th><th>状态</th><th>输入</th><th>实际输出</th></tr></thead><tbody>${caseRows || '<tr><td colspan="4">没有逐用例记录</td></tr>'}</tbody></table></div>`;
+}
+
+async function loadAlgorithmReport(reportId) {
+  if (!state.sessionId || !reportId) return;
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/runs/${encodeURIComponent(reportId)}`);
+    renderAlgorithmReport(result.report);
+  } catch (error) {
+    renderAlgorithmReport(null);
+    showToast(`读取判题报告失败：${error.message}`);
+  }
+}
+
+async function parseAlgorithmSpec() {
+  const text = elements.algorithmSpecInput.value.trim();
+  if (!state.sessionId || !text) {
+    elements.algorithmSpecOutput.textContent = "请粘贴题面后再解析。";
+    return;
+  }
+  elements.parseAlgorithmSpecButton.disabled = true;
+  elements.parseAlgorithmSpecButton.textContent = "解析中…";
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/spec`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    const spec = result.spec || {};
+    const constraints = Array.isArray(spec.constraints) && spec.constraints.length ? spec.constraints : ["未识别到明确约束"];
+    const examples = Array.isArray(spec.examples) ? spec.examples.length : 0;
+    const suggested = Array.isArray(result.suggested_cases) ? result.suggested_cases : [];
+    elements.algorithmSpecOutput.innerHTML = `<strong>${escapeHtml(spec.title || "未识别标题")}</strong><span>约束 ${constraints.length} 条 · 样例 ${examples} 个 · 置信度 ${Math.round(Number(result.evidence?.confidence || 0) * 100)}%</span><ul>${constraints.slice(0, 5).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><small>边界建议（需人工确认）：${suggested.slice(0, 8).map((item) => `<code>${escapeHtml(item.input || "")}</code>`).join(" ") || "—"}</small>`;
+  } catch (error) {
+    elements.algorithmSpecOutput.textContent = `解析失败：${error.message}`;
+  } finally {
+    elements.parseAlgorithmSpecButton.disabled = false;
+    elements.parseAlgorithmSpecButton.textContent = "解析约束";
+  }
+}
+
+async function loadAlgorithmLab() {
+  if (!state.sessionId) return;
+  elements.algorithmLabRunStatus.textContent = "加载中…";
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/algorithm-lab/runs`);
+    state.algorithmReports = Array.isArray(result.runs) ? result.runs : [];
+    const activeRuns = Array.isArray(result.active_runs) ? result.active_runs : [];
+    renderAlgorithmLabMetrics(state.algorithmReports);
+    renderAlgorithmRunList(state.algorithmReports, activeRuns);
+    elements.algorithmLabRunStatus.textContent = activeRuns.length ? `${activeRuns.length} 运行 · ${state.algorithmReports.length} 份` : `${state.algorithmReports.length} 份`;
+    if (activeRuns.length) {
+      const active = activeRuns[0];
+      state.algorithmActiveRunId = active.run_id || state.algorithmActiveRunId;
+      if (active.run_id && state.algorithmPollingRunId !== active.run_id) {
+        pollAlgorithmRun(active.run_id);
+      }
+    }
+    if (state.algorithmReports.length) {
+      renderAlgorithmReport(state.algorithmReports[0]);
+    } else {
+      renderAlgorithmReport(null);
+    }
+  } catch (error) {
+    state.algorithmReports = [];
+    elements.algorithmLabRunStatus.textContent = "加载失败";
+    elements.algorithmLabRunsList.innerHTML = `<div class="research-empty error">${escapeHtml(error.message)}</div>`;
+    renderAlgorithmReport(null);
+  }
 }
 
 async function browseWorkspace() {
@@ -2270,6 +2824,25 @@ function showToast(message) {
   toastTimer = setTimeout(() => elements.toast.classList.add("hidden"), 3200);
 }
 
+elements.algorithmLabButton.addEventListener("click", openAlgorithmLab);
+elements.closeAlgorithmLabButton.addEventListener("click", closeAlgorithmLab);
+elements.refreshAlgorithmLabButton.addEventListener("click", loadAlgorithmLab);
+elements.startAlgorithmRunButton.addEventListener("click", startAlgorithmRun);
+elements.cancelAlgorithmRunButton.addEventListener("click", cancelAlgorithmRun);
+elements.parseAlgorithmSpecButton.addEventListener("click", parseAlgorithmSpec);
+elements.algorithmLabReport.addEventListener("click", handleIntelligenceAction);
+document.querySelectorAll(".research-nav button").forEach((button) => button.addEventListener("click", () => setResearchView(button.dataset.researchView)));
+elements.researchDetailToggle.addEventListener("click", () => {
+  state.researchExpertMode = !state.researchExpertMode;
+  saveResearchExpertMode();
+  elements.researchDetailToggle.setAttribute("aria-pressed", state.researchExpertMode ? "true" : "false");
+  elements.researchDetailToggle.textContent = state.researchExpertMode ? "专业详情：开" : "专业详情：关";
+  if (state.researchOpen && state.researchView !== "algorithm") {
+    const cached = state.researchDataCache[state.researchView];
+    if (cached) renderResearchSecondary(state.researchView, cached);
+    else setResearchView(state.researchView);
+  }
+});
 elements.createSessionButton.addEventListener("click", () => openWorkspace(elements.workspaceInput.value));
 elements.workspaceInput.addEventListener("keydown", (event) => { if (event.key === "Enter") openWorkspace(elements.workspaceInput.value); });
 elements.browseWorkspaceButton.addEventListener("click", browseWorkspace);

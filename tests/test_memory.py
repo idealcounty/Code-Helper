@@ -63,6 +63,21 @@ def test_duplicate_memory_updates_existing_record(tmp_path: Path) -> None:
     assert MemoryStore(tmp_path / "memory").get(first.id).importance == 5
 
 
+def test_memory_lifecycle_metadata_is_persisted_and_search_filters_archived_expired(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory")
+    pinned = store.remember(category="fact", content="Keep this pinned")
+    expired = store.remember(category="fact", content="Temporary fact")
+    store.update_metadata(pinned.id, pinned=True, verification_status="verified")
+    store.update_metadata(expired.id, expires_at="2000-01-01T00:00:00+00:00")
+    assert store.get(pinned.id).pinned is True
+    assert store.search("Keep this pinned")[0].id == pinned.id
+    assert store.search("Temporary fact") == []
+    assert store.stats()["expired"] == 1
+    store.update_metadata(pinned.id, archived=True)
+    assert store.search("Keep this pinned") == []
+    assert store.list(limit=None)[0].archived is True
+
+
 def test_context_automatically_recalls_relevant_cross_session_memory(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / ".code-helper" / "memory")
     remembered = store.remember(
@@ -185,6 +200,88 @@ def test_turn_summary_candidate_requires_confirmation(tmp_path: Path) -> None:
     confirmed = summaries.confirm(candidate["id"], memories)
     assert confirmed and confirmed["status"] == "confirmed"
     assert memories.list()[0].content == candidate["content"]
+
+
+def test_turn_summary_builds_readable_keyword_suggestion_and_tracks_repetition(
+    tmp_path: Path,
+) -> None:
+    memories = MemoryStore(tmp_path / "memory")
+    summaries = SessionSummaryStore(tmp_path / "summaries")
+    state = AgentState.create(session_id="keyword-session")
+    state.turn_id = "turn-1"
+    state.current_objective = "请使用 C++ 完成这道算法题，并分析时间复杂度"
+
+    first = summaries.create(state, AgentStatus.COMPLETED, "done", memories)
+    first_suggestion = next(
+        candidate for candidate in first.candidates if candidate.source_kind == "conversation_keywords"
+    )
+
+    assert first_suggestion.keywords == ["C++", "算法", "复杂度"]
+    assert first_suggestion.occurrence_count == 1
+    assert first_suggestion.work_type == "算法问题求解"
+    assert first_suggestion.prompt.startswith("本轮对话中识别到")
+    assert "是否将" in first_suggestion.prompt and "存入记忆区" in first_suggestion.prompt
+    assert memories.list() == []
+
+    state.turn_id = "turn-2"
+    state.current_objective = "继续用 C++ 解决算法题，注意复杂度分析"
+    second = summaries.create(state, AgentStatus.COMPLETED, "done", memories)
+    repeated = next(
+        candidate for candidate in second.candidates if candidate.source_kind == "conversation_keywords"
+    )
+
+    assert repeated.occurrence_count == 2
+    assert repeated.prompt.startswith("我们检测到你在最近 2 次对话中经常使用")
+    assert "完成算法问题求解" in repeated.prompt
+    pending_profiles = [
+        item for item in summaries.candidates() if item["source_kind"] == "conversation_keywords"
+    ]
+    assert [item["id"] for item in pending_profiles] == [repeated.id]
+
+    confirmed = summaries.confirm(repeated.id, memories)
+    assert confirmed and confirmed["status"] == "confirmed"
+    assert memories.list()[0].keywords == ["c++", "算法", "复杂度"]
+
+
+def test_keyword_work_type_does_not_match_short_english_marker_inside_word(
+    tmp_path: Path,
+) -> None:
+    summaries = SessionSummaryStore(tmp_path / "summaries")
+    state = AgentState.create(session_id="english-keywords")
+    state.current_objective = "Build the authentication feature and update repository code"
+
+    summary = summaries.create(
+        state,
+        AgentStatus.COMPLETED,
+        "done",
+        MemoryStore(tmp_path / "memory"),
+    )
+    suggestion = next(
+        candidate for candidate in summary.candidates if candidate.source_kind == "conversation_keywords"
+    )
+
+    assert suggestion.work_type == "项目功能开发"
+
+
+def test_keyword_suggestion_does_not_treat_because_as_use_decision(
+    tmp_path: Path,
+) -> None:
+    summaries = SessionSummaryStore(tmp_path / "summaries")
+    state = AgentState.create(session_id="english-decision-boundary")
+    state.current_objective = "Explain this algorithm because performance matters"
+
+    summary = summaries.create(
+        state,
+        AgentStatus.COMPLETED,
+        "done",
+        MemoryStore(tmp_path / "memory"),
+    )
+    suggestion = next(
+        candidate for candidate in summary.candidates if candidate.source_kind == "conversation_keywords"
+    )
+
+    assert suggestion.category == "preference"
+    assert suggestion.work_type == "算法问题求解"
 
 
 def test_memory_filters_hybrid_ranking_and_conflicts(tmp_path: Path) -> None:
@@ -370,3 +467,123 @@ def test_internal_observation_does_not_change_user_memory_recall(tmp_path: Path)
     ContextManager(user_memory=service).build(state, [])
 
     assert state.recalled_user_memories[0]["id"] == preferred.id
+
+
+def test_project_memory_tool_handles_candidates_and_missing_records(tmp_path: Path) -> None:
+    state = AgentState.create(session_id="tool-session")
+    store = MemoryStore(tmp_path / "memory")
+    registry = ToolRegistry()
+    register_memory_tools(registry, store, state)
+    executor = ToolExecutor(registry)
+
+    missing_forget = asyncio.run(
+        executor.execute("forget_project_memory", {"memory_id": "missing"})
+    )
+    missing_confirm = asyncio.run(
+        executor.execute("confirm_memory_candidate", {"candidate_id": "missing"})
+    )
+    missing_reject = asyncio.run(
+        executor.execute("reject_memory_candidate", {"candidate_id": "missing"})
+    )
+    invalid = asyncio.run(
+        executor.execute(
+            "remember_project_memory", {"category": "invalid", "content": "bad"}
+        )
+    )
+
+    assert missing_forget.code == "MEMORY_NOT_FOUND"
+    assert missing_confirm.code == "MEMORY_CANDIDATE_NOT_FOUND"
+    assert missing_reject.code == "MEMORY_CANDIDATE_NOT_FOUND"
+    assert invalid.code == "INVALID_ARGUMENTS"
+
+
+def test_project_memory_candidate_tool_lists_confirms_and_rejects(
+    tmp_path: Path,
+) -> None:
+    state = AgentState.create(session_id="candidate-session")
+    state.turn_id = "turn-1"
+    state.current_objective = "I prefer focused tests first"
+    summaries = SessionSummaryStore(tmp_path / "summaries")
+    store = MemoryStore(tmp_path / "memory")
+    summaries.create(state, AgentStatus.PARTIAL, "finish later", store)
+    registry = ToolRegistry()
+    register_memory_tools(registry, store, state, summaries)
+    executor = ToolExecutor(registry)
+
+    listed = asyncio.run(executor.execute("list_memory_candidates", {}))
+    candidate_id = listed.data["candidates"][0]["id"]
+    confirmed = asyncio.run(
+        executor.execute("confirm_memory_candidate", {"candidate_id": candidate_id})
+    )
+    empty = asyncio.run(executor.execute("list_memory_candidates", {}))
+
+    assert listed.ok and listed.data["candidates"]
+    assert confirmed.ok and confirmed.data["candidate"]["status"] == "confirmed"
+    assert len(empty.data["candidates"]) == 1
+    assert empty.data["candidates"][0]["category"] == "task"
+
+    state.current_objective = "I always document decisions"
+    state.turn_id = "turn-2"
+    summaries.create(state, AgentStatus.PARTIAL, "later", store)
+    pending = asyncio.run(executor.execute("list_memory_candidates", {}))
+    rejected = asyncio.run(
+        executor.execute(
+            "reject_memory_candidate",
+            {"candidate_id": pending.data["candidates"][0]["id"]},
+        )
+    )
+    assert rejected.ok and rejected.data["candidate"]["status"] == "rejected"
+
+
+def test_project_memory_tool_without_summary_store_returns_empty_candidates(
+    tmp_path: Path,
+) -> None:
+    state = AgentState.create(session_id="no-summary")
+    registry = ToolRegistry()
+    register_memory_tools(registry, MemoryStore(tmp_path / "memory"), state)
+    result = asyncio.run(ToolExecutor(registry).execute("list_memory_candidates", {}))
+
+    assert result.ok and result.data["candidates"] == []
+
+
+def test_user_memory_tools_enforce_opt_in_and_toggle_state(tmp_path: Path) -> None:
+    service = UserMemoryService(tmp_path / "user-memory")
+    state = AgentState.create(session_id="user-tool")
+    registry = ToolRegistry()
+    register_user_memory_tools(registry, service, state)
+    executor = ToolExecutor(registry)
+
+    disabled_search = asyncio.run(executor.execute("search_user_memory", {"query": "x"}))
+    disabled_remember = asyncio.run(
+        executor.execute(
+            "remember_user_memory", {"category": "fact", "content": "x"}
+        )
+    )
+    disabled_clear = asyncio.run(executor.execute("clear_user_memory", {}))
+    exported = asyncio.run(executor.execute("export_user_memory", {}))
+    invalid_toggle = asyncio.run(
+        executor.execute("set_user_memory_enabled", {"enabled": "yes"})
+    )
+    enabled = asyncio.run(
+        executor.execute("set_user_memory_enabled", {"enabled": True})
+    )
+    saved = asyncio.run(
+        executor.execute(
+            "remember_user_memory", {"category": "fact", "content": "remembered"}
+        )
+    )
+    searched = asyncio.run(executor.execute("search_user_memory", {"query": "remembered"}))
+    cleared = asyncio.run(executor.execute("clear_user_memory", {}))
+    disabled = asyncio.run(
+        executor.execute("set_user_memory_enabled", {"enabled": False})
+    )
+
+    assert disabled_search.code == "USER_MEMORY_DISABLED"
+    assert disabled_remember.code == "USER_MEMORY_DISABLED"
+    assert disabled_clear.code == "USER_MEMORY_DISABLED"
+    assert exported.ok and exported.data["enabled"] is False
+    assert invalid_toggle.code == "INVALID_ARGUMENTS"
+    assert enabled.ok and enabled.data["enabled"] is True
+    assert saved.ok and searched.data["memories"]
+    assert cleared.ok and cleared.data["cleared"] == 1
+    assert disabled.ok and disabled.data["enabled"] is False

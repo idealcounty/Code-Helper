@@ -81,6 +81,55 @@ def test_cancelled_command_terminates_child_process_tree(tmp_path: Path) -> None
     assert not (tmp_path / "child-finished").exists()
 
 
+def test_cancelled_long_output_keeps_result_reference(tmp_path: Path) -> None:
+    cancellation = CancellationToken()
+    registry = ToolRegistry()
+    register_shell_tools(
+        registry,
+        Workspace(tmp_path),
+        default_timeout=10,
+        cancellation=cancellation,
+    )
+    result_store = tmp_path / "tool-results"
+    executor = ToolExecutor(registry, result_store=result_store)
+    # Keep the child alive well beyond cancellation, and publish a readiness
+    # marker only after the large payload has been flushed.  A fixed sleep is
+    # racy on a busy Windows event loop (especially under coverage): the test
+    # can cancel before the reader has consumed any output and then incorrectly
+    # conclude that cancellation lost the result reference.
+    code = (
+        "import time; from pathlib import Path; "
+        "print('x'*20000, flush=True); Path('output-ready').write_text('ready'); "
+        "time.sleep(120)"
+    )
+
+    async def scenario():
+        task = asyncio.create_task(
+            executor.execute(
+                "run_command",
+                {
+                    "argv": [sys.executable, "-c", code],
+                    "purpose": "inspect",
+                },
+            )
+        )
+        for _ in range(250):
+            if (tmp_path / "output-ready").exists():
+                break
+            await asyncio.sleep(0.02)
+        assert (tmp_path / "output-ready").exists()
+        cancellation.cancel("test_cancel")
+        return await asyncio.wait_for(task, timeout=5)
+
+    result = asyncio.run(scenario())
+
+    assert result.code == "COMMAND_CANCELLED"
+    assert result.data.get("result_reference")
+    references = list(result_store.glob("tool-result-*.json"))
+    assert len(references) == 1
+    assert len(references[0].read_text(encoding="utf-8")) > 12_000
+
+
 def test_command_streams_stdout_and_stderr_deltas(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_shell_tools(registry, Workspace(tmp_path), default_timeout=10)

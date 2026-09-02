@@ -172,3 +172,48 @@ def test_reducer_ignores_duplicate_event_id() -> None:
     assert [item["content"] for item in state.messages if item["role"] == "assistant"] == [
         "hello"
     ]
+
+
+def test_reducer_restores_workflow_events_and_is_idempotent() -> None:
+    state = AgentState.create(session_id="session")
+    events = [
+        _event("turn_started", 1, {"message": "修复 bug"}),
+        _event("skill_loaded", 2, {"name": "bug-fix"}),
+        _event("skill_loaded", 3, {"name": "bug-fix"}),
+        _event("workflow_selected", 4, {"name": "bug-fix", "stage": "inspect"}),
+        _event(
+            "workflow_stage_changed",
+            5,
+            {"from": "inspect", "to": "implement", "reason": "reproduced"},
+        ),
+    ]
+    state.restore_from_events(events)
+
+    assert state.workflow_name == "bug-fix"
+    assert state.workflow_stage == "implement"
+    assert state.loaded_skills == {"bug-fix"}
+
+    state.apply_event(events[-1])
+    assert state.workflow_stage == "implement"
+
+
+def test_new_turn_clears_workflow_state() -> None:
+    state = AgentState.create(session_id="session")
+    state.workflow_name = "bug-fix"
+    state.workflow_stage = "verify"
+    state.loaded_skills.add("bug-fix")
+
+    state.begin_new_turn()
+
+    assert state.workflow_name is None
+    assert state.workflow_stage == "idle"
+    assert state.loaded_skills == set()
+
+
+def test_legacy_events_default_to_idle_workflow() -> None:
+    state = AgentState.create(session_id="session")
+    state.restore_from_events([_event("turn_started", 1, {"message": "旧会话"})])
+
+    assert state.workflow_name is None
+    assert state.workflow_stage == "idle"
+    assert state.loaded_skills == set()

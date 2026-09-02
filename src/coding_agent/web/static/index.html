@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f3f4f4" />
     <title>Code Helper · Agent Workspace</title>
-    <link rel="icon" type="image/png" href="/static/code-helper-logo.png?v=20260831.7" />
-    <link rel="stylesheet" href="/static/modern.css?v=20260831.7" />
+    <link rel="icon" type="image/png" href="/static/code-helper-logo.png?v=20260831.8" />
+    <link rel="stylesheet" href="/static/modern.css?v=20260901.13" />
   </head>
   <body>
     <div class="app-shell">
@@ -25,6 +25,7 @@
           <label class="mode-control approval-policy-control" data-policy="ask" title="控制当前会话遇到写文件、执行命令等操作时的审批方式"><span>审批</span><select id="approvalPolicySelect" aria-label="工具审批策略" disabled><option value="ask">请求批准</option><option value="auto">帮我批准</option><option value="full">完全放开</option></select></label>
           <label class="mode-control reasoning-control"><span>推理</span><select id="reasoningSelect" aria-label="推理档位"><option value="auto">Auto</option><option value="fast">Fast</option><option value="balanced">Balanced</option><option value="deep">Deep</option></select></label>
           <label class="mode-control"><span>任务</span><select id="taskProfileSelect" aria-label="任务类型"><option value="auto">自动</option><option value="project">项目</option><option value="algorithm">算法</option></select></label>
+          <button class="research-launch" id="algorithmLabButton" type="button" title="打开算法可靠性实验室"><span aria-hidden="true">◎</span><b>算法实验室</b></button>
           <div class="health" id="healthBadge" role="status"><i></i><span>检查服务</span></div>
         </div>
       </header>
@@ -98,7 +99,7 @@
           <div class="assistant-content">
             <section class="assistant-view chat-view active" id="chatView"><div class="message-list" id="messageList"><div class="chat-empty" id="chatEmpty"><span class="chat-brand-mark" aria-hidden="true"><img src="/static/code-helper-logo.png?v=20260831.7" alt="" draggable="false" /></span><span class="empty-kicker">CODE HELPER / READY</span><h3>和你的代码一起思考</h3><p>选择工作区后，描述你希望理解、修改或验证的任务。</p></div><div class="thinking-indicator hidden" id="thinkingIndicator" role="status" aria-live="polite"><span class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-copy"><strong>模型正在思考</strong><span id="thinkingStatus">正在分析你的请求并选择下一步操作…</span></span></div></div><div class="question-navigator hidden" id="questionNavigator"><button class="question-navigator-toggle" id="questionNavigatorToggle" type="button" aria-expanded="false" aria-controls="questionNavigatorPanel"><span>提问定位</span><strong id="questionNavigatorCount">0</strong></button><div class="question-navigator-panel hidden" id="questionNavigatorPanel"><header><div><strong>本对话提问</strong><span>点击缩略内容快速定位</span></div><button id="closeQuestionNavigator" type="button" aria-label="关闭提问导航">×</button></header><div class="question-navigator-list" id="questionNavigatorList"></div></div></div><div class="composer"><textarea id="messageInput" rows="1" placeholder="向 Agent 提问，使用 @path 引用文件…" disabled></textarea><div class="composer-footer"><span><kbd>Ctrl</kbd><kbd>Enter</kbd> 发送</span><div><button class="stop-button" id="cancelButton" type="button" disabled>停止</button><button class="send-button" id="sendButton" type="button" disabled aria-label="发送任务"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 7l5 5-5 5" /></svg></button></div></div></div></section>
             <section class="assistant-view" id="traceView"><div class="view-toolbar"><span>LIVE TRACE</span><div><strong id="stepCounter">STEP 0</strong><button class="text-button danger" id="restoreButton" type="button" disabled>回滚本轮</button></div></div><div class="activity-list" id="activityList"><div class="view-empty">Agent 的模型请求、工具调用和验证过程会显示在这里。</div></div></section>
-            <section class="assistant-view" id="planView"><div class="view-toolbar"><span>EXECUTION PLAN</span><strong id="planProgress">0 / 0</strong></div><div class="plan-list" id="planList"><div class="view-empty">当前会话还没有执行计划。</div></div></section>
+            <section class="assistant-view" id="planView"><div class="view-toolbar"><span>EXECUTION PLAN</span><strong id="planProgress">0 / 0</strong></div><div class="workflow-summary" id="workflowSummary" aria-live="polite"><div class="workflow-summary-copy"><span class="eyebrow">WORKFLOW</span><strong id="workflowSummaryTitle">普通对话</strong><small id="workflowSummaryDetail">选择任务后，Agent 会自动进入对应工作流</small></div><span class="workflow-badge idle" id="workflowSummaryBadge">待开始</span></div><div class="plan-list" id="planList"><div class="view-empty">当前会话还没有执行计划。</div></div></section>
             <section class="assistant-view" id="intelligenceView">
               <div class="view-toolbar"><span>CONTEXT INTELLIGENCE</span><div><button class="text-button" id="exportTraceButton" type="button" disabled>导出 Trace</button><button class="text-button" id="refreshIntelligenceButton" type="button">刷新</button></div></div>
               <div class="intelligence-scroll" id="intelligenceContent">
@@ -109,6 +110,19 @@
           <div class="assistant-status"><div class="run-status" id="runStatus"><i></i><span>未连接</span></div><span id="providerLabel">MODEL · CHECKING</span></div>
         </aside>
       </main>
+
+      <section class="research-workbench hidden" id="researchWorkbench" aria-labelledby="researchWorkbenchTitle">
+        <header class="research-header">
+          <div class="research-heading"><span class="eyebrow">RESEARCH WORKBENCH / ALGORITHM RELIABILITY</span><h1 id="researchWorkbenchTitle">算法可靠性实验室</h1><p>把约束、判题证据和失败样例集中到一个可复核的工作台。报告只展示确定性工具的实际结果。</p></div>
+          <div class="research-header-actions"><nav class="research-nav" aria-label="研究工作台"><button class="active" data-research-view="algorithm" type="button">算法可靠性</button><button data-research-view="context" type="button">上下文编译</button><button data-research-view="memory" type="button">记忆治理</button></nav><button class="research-detail-toggle" id="researchDetailToggle" type="button" aria-pressed="false">专业详情：关</button><button class="research-spec-button" id="startAlgorithmRunButton" type="button">开始算法实验</button><button class="text-button hidden" id="cancelAlgorithmRunButton" type="button">停止实验</button><button class="text-button" id="refreshAlgorithmLabButton" type="button">刷新</button><button class="dialog-primary" id="closeAlgorithmLabButton" type="button">返回工作区</button></div>
+        </header>
+        <div class="research-summary" id="algorithmLabSummary"><div class="research-metric"><span>最近运行</span><strong id="algorithmLabRunCount">—</strong><small>判题报告</small></div><div class="research-metric"><span>通过率</span><strong id="algorithmLabPassRate">—</strong><small>最近报告</small></div><div class="research-metric"><span>证据等级</span><strong id="algorithmLabEvidence">—</strong><small>确定性判题</small></div><div class="research-metric research-metric-hint"><span>快速路径</span><strong>按钮直接运行</strong><small>默认不调用模型，阶段实时更新</small></div></div>
+        <div class="research-grid" id="researchGrid">
+          <aside class="research-runs"><div class="research-panel-heading"><div><span class="eyebrow">RUNS</span><h2>判题运行</h2></div><span id="algorithmLabRunStatus">未加载</span></div><div class="research-run-list" id="algorithmLabRunsList"><div class="research-empty">打开工作区后加载判题报告。</div></div></aside>
+          <section class="research-report" id="algorithmLabReport"><div class="research-empty large"><span class="research-empty-mark">◎</span><h2>选择一份报告</h2><p>要求 Agent 使用算法判题工具运行样例、边界或随机对拍后，这里会展示通过数、失败反例与证据。</p></div></section>
+          <aside class="research-inspector"><div class="research-panel-heading"><div><span class="eyebrow">DETERMINISTIC RUN</span><h2>一键实验配置</h2></div></div><div class="research-run-config"><label>候选文件路径<input id="algorithmCandidatePath" type="text" placeholder="例如 solution.cpp（可留空）" /></label><label>候选命令<input id="algorithmCandidateCommand" type="text" placeholder="例如 python solution.py" /></label><label>Oracle 命令<small>提供 Oracle 后可从题面自动生成边界用例</small><input id="algorithmOracleCommand" type="text" placeholder="例如 python brute.py" /></label><label>实验档位<select id="algorithmRunProfile"><option value="quick">Quick · 快速冒烟</option><option value="standard" selected>Standard · 标准验证</option><option value="full">Full · 完整审计</option></select></label><div class="research-run-progress" id="algorithmRunProgress">点击“开始算法实验”后，这里会显示阶段、进度和缓存命中情况。</div></div><div class="research-panel-heading research-panel-heading-next"><div><span class="eyebrow">CONSTRAINT PARSER</span><h2>题面解析</h2></div></div><div class="research-spec-form"><textarea id="algorithmSpecInput" rows="5" placeholder="粘贴题目，自动提取 Input / Output / Constraints / Examples…"></textarea><button class="research-spec-button" id="parseAlgorithmSpecButton" type="button">解析约束</button><div class="research-spec-output" id="algorithmSpecOutput">解析结果仅用于生成测试建议，不替代人工审阅。</div></div><div class="research-panel-heading research-panel-heading-next"><div><span class="eyebrow">NEXT STEPS</span><h2>实验提示</h2></div></div><ol><li><strong>先准备候选与 Oracle</strong><span>候选命令和 Oracle 命令由按钮直接执行，不经过模型多轮编排。</span></li><li><strong>选择档位</strong><span>Quick、Standard、Full 分别控制用例数量、Shrink 和性能采样预算。</span></li><li><strong>最后复核</strong><span>失败反例是确定性证据，但通过用例不等同于形式化证明。</span></li></ol><div class="research-disclaimer">直接实验默认 0 次模型请求；事件、缓存和报告均保留可追踪证据。</div></aside>
+        </div>
+      </section>
 
       <section class="settings-page hidden" id="settingsPage" aria-labelledby="settingsPageTitle">
         <aside class="settings-sidebar">
@@ -203,6 +217,6 @@
       <div class="restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restoreTitle"><header><div><span class="eyebrow">CHECKPOINT RESTORE</span><h2 id="restoreTitle">选择要恢复的文件</h2></div><button class="icon-button" id="closeRestoreButton" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header><div class="restore-body"><div class="restore-file-list" id="restoreFileList"></div><pre class="restore-preview" id="restorePreviewDiff">选择文件查看恢复差异。</pre></div><footer><span>外部修改会要求二次确认</span><div><button class="dialog-secondary" id="cancelRestoreButton" type="button">取消</button><button class="dialog-primary" id="confirmRestoreButton" type="button">恢复选中文件</button></div></footer></div>
     </div>
     <div class="toast hidden" id="toast" role="status"></div>
-    <script src="/assets/app.bundle.js?v=20260831.7" defer></script>
+    <script src="/assets/app.bundle.js?v=20260901.14" defer></script>
   </body>
 </html>

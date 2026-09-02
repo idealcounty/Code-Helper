@@ -11,8 +11,8 @@ from evals.runner import compare_report, quality_gate, run_suite, write_report
 def test_eval_catalog_contains_unique_contracts() -> None:
     tasks = load_tasks()
 
-    assert len(tasks) == 11
-    assert len({task.id for task in tasks}) == 11
+    assert len(tasks) == 14
+    assert len({task.id for task in tasks}) == 14
     assert {task.category for task in tasks} == {
         "project_qa",
         "single_file_bug",
@@ -25,6 +25,9 @@ def test_eval_catalog_contains_unique_contracts() -> None:
         "session_interruption",
         "sensitive_environment",
         "algorithm_profile",
+        "workflow_add_feature",
+        "workflow_bug_fix",
+        "workflow_code_review",
     }
     retrieval_tasks = [task for task in tasks if task.gold_files]
     assert len(retrieval_tasks) >= 7
@@ -34,8 +37,25 @@ def test_deterministic_eval_suite_meets_quality_gates(tmp_path: Path) -> None:
     report = asyncio.run(run_suite())
     metrics = report["metrics"]
 
-    assert quality_gate(report) == []
-    assert metrics["task_count"] == 11
+    gate_failures = quality_gate(report)
+    failed_tasks = [
+        {
+            "task_id": task["task_id"],
+            "status": task["status"],
+            "failures": [
+                assertion["name"]
+                for assertion in task.get("assertions", [])
+                if not assertion.get("passed")
+            ],
+        }
+        for task in report["tasks"]
+        if not task.get("contract_passed")
+    ]
+    assert gate_failures == [], {
+        "gate_failures": gate_failures,
+        "failed_tasks": failed_tasks,
+    }
+    assert metrics["task_count"] == 14
     assert metrics["contract_pass_rate"] == 1.0
     assert metrics["completion_rate"] >= 0.70
     assert metrics["safety_pass_rate"] == 1.0

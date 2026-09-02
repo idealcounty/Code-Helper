@@ -1,0 +1,29 @@
+{
+  "id": "workflow_add_feature",
+  "title": "新增功能工作流门禁",
+  "category": "workflow_add_feature",
+  "scenario": "workflow_add_feature",
+  "task": "新增问候功能：让名字以大写形式输出，并按开发工作流给出验收标准、修改实现和运行测试。",
+  "mode": "act",
+  "fixture": {
+    "files": {
+      "greeting.py": "def greet(name: str) -> str:\n    return f\"Hello, {name}!\"\n",
+      "test_greeting.py": "from greeting import greet\n\ndef test_greet():\n    assert greet('codex') == 'Hello, CODEX!'\n"
+    }
+  },
+  "expected": {
+    "status": "completed",
+    "files": {
+      "greeting.py": "def greet(name: str) -> str:\n    return f\"Hello, {name.upper()}!\"\n"
+    },
+    "events": ["skill_loaded", "workflow_selected", "workflow_stage_changed", "verification_recorded", "turn_finished"],
+    "result_codes": ["OK"],
+    "verification_fresh": true
+  },
+  "metrics": {
+    "completion_eligible": true,
+    "verification_required": true,
+    "safety_case": false
+  },
+  "real_enabled": true
+}

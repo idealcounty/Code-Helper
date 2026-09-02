@@ -164,3 +164,132 @@ def test_git_metadata_is_reserved(
 
     assert result.ok is False
     assert result.code == "RESERVED_PATH"
+
+
+def test_list_files_respects_depth_and_filters_sensitive_runtime_entries(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    (tmp_path / "top.txt").write_text("top", encoding="utf-8")
+    nested = tmp_path / "src" / "deep"
+    nested.mkdir(parents=True)
+    (nested / "code.py").write_text("print(1)\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("SECRET=hidden", encoding="utf-8")
+    (tmp_path / ".code-helper").mkdir()
+    (tmp_path / ".code-helper" / "state.json").write_text("{}", encoding="utf-8")
+
+    result = asyncio.run(
+        executor.execute("list_files", {"path": ".", "max_depth": 1})
+    )
+
+    assert result.ok is True
+    assert result.data["entries"] == ["src/", "top.txt"]
+    assert result.data["truncated"] is False
+
+
+def test_list_and_read_tools_normalize_ranges_and_directory_errors(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    (tmp_path / "sample.txt").write_text("first\nsecond\n", encoding="utf-8")
+
+    listed = asyncio.run(executor.execute("list_files", {"path": "sample.txt"}))
+    read = asyncio.run(
+        executor.execute(
+            "read_file", {"path": "sample.txt", "start_line": 0, "end_line": 99}
+        )
+    )
+
+    assert listed.ok is False and listed.code == "NOT_A_DIRECTORY"
+    assert read.ok is True
+    assert read.data["start_line"] == 1
+    assert read.data["end_line"] == 2
+    assert read.data["content"] == "first\nsecond\n"
+
+
+def test_read_file_rejects_binary_and_oversized_content(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor], monkeypatch: object
+) -> None:
+    _, executor = file_tools
+    binary = tmp_path / "binary.dat"
+    binary.write_bytes(b"\xff\xfe")
+    binary_result = asyncio.run(executor.execute("read_file", {"path": "binary.dat"}))
+
+    import coding_agent.tools.filesystem as filesystem
+
+    large = tmp_path / "large.txt"
+    large.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(filesystem, "MAX_FILE_BYTES", 0)
+    large_result = asyncio.run(executor.execute("read_file", {"path": "large.txt"}))
+
+    assert binary_result.ok is False and binary_result.code == "BINARY_FILE"
+    assert large_result.ok is False and large_result.code == "FILE_TOO_LARGE"
+
+
+def test_search_files_and_text_support_globs_case_and_truncation(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    (tmp_path / "one.py").write_text("Needle here\nneedle again\n", encoding="utf-8")
+    (tmp_path / "two.txt").write_text("needle third\n", encoding="utf-8")
+    (tmp_path / "credentials.json").write_text("needle secret", encoding="utf-8")
+
+    files = asyncio.run(executor.execute("search_files", {"pattern": "*.py"}))
+    insensitive = asyncio.run(
+        executor.execute("search_text", {"query": "NEEDLE", "max_results": 1})
+    )
+    sensitive = asyncio.run(
+        executor.execute(
+            "search_text", {"query": "Needle", "case_sensitive": True}
+        )
+    )
+
+    assert files.ok and files.data["matches"] == ["one.py"]
+    assert insensitive.ok and insensitive.data["truncated"] is True
+    assert len(insensitive.data["matches"]) == 1
+    assert sensitive.ok and len(sensitive.data["matches"]) == 1
+    assert all(item["path"] != "credentials.json" for item in sensitive.data["matches"])
+
+
+def test_apply_patch_and_write_file_success_and_existing_file_guard(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    path = tmp_path / "sample.txt"
+    path.write_text("before\n", encoding="utf-8")
+    asyncio.run(executor.execute("read_file", {"path": "sample.txt"}))
+
+    patched = asyncio.run(
+        executor.execute(
+            "apply_patch",
+            {"path": "sample.txt", "old_text": "before", "new_text": "after"},
+        )
+    )
+    created = asyncio.run(
+        executor.execute("write_file", {"path": "new.txt", "content": "created"})
+    )
+    duplicate = asyncio.run(
+        executor.execute("write_file", {"path": "new.txt", "content": "again"})
+    )
+
+    assert patched.ok and patched.data["path"] == "sample.txt"
+    assert path.read_text(encoding="utf-8") == "after\n"
+    assert created.ok and created.data["path"] == "new.txt"
+    assert duplicate.ok is False and duplicate.code == "FILE_EXISTS"
+
+
+def test_apply_patch_reports_missing_old_text(
+    tmp_path: Path, file_tools: tuple[Workspace, ToolExecutor]
+) -> None:
+    _, executor = file_tools
+    (tmp_path / "sample.txt").write_text("value = 1\n", encoding="utf-8")
+    asyncio.run(executor.execute("read_file", {"path": "sample.txt"}))
+
+    result = asyncio.run(
+        executor.execute(
+            "apply_patch",
+            {"path": "sample.txt", "old_text": "absent", "new_text": "new"},
+        )
+    )
+
+    assert result.ok is False and result.code == "EDIT_NOT_FOUND"

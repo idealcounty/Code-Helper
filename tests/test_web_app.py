@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -16,8 +17,27 @@ from coding_agent.config import AppConfig
 from coding_agent.events import AgentEvent
 from coding_agent.model import ModelResponse, ToolCall
 from coding_agent.web.app import (
+    ApprovalBroker,
+    _budget_view,
+    _compact_ui_history_from_file,
     _compact_ui_history_event,
+    _directory_entries,
+    _event_timestamp,
+    _language_from_path,
+    _load_replay_bookmarks,
+    _load_session_archive,
+    _observability_presentation,
+    _percentile,
+    _profile_from_effort,
+    _reasoning_profile,
+    _require_workspace_scope,
+    _save_replay_bookmarks,
+    _save_session_archive,
     _session_summary_from_file,
+    _server_host,
+    _server_port,
+    _storage_usage,
+    _token_similarity,
     create_app,
 )
 from coding_agent.session import AgentStatus
@@ -25,6 +45,61 @@ from coding_agent.session import AgentStatus
 
 def _config() -> AppConfig:
     return AppConfig(api_key="test-key", base_url="https://example.invalid/v1")
+
+
+def test_approval_broker_consumes_early_decision() -> None:
+    broker = ApprovalBroker()
+    broker.resolve("early", True)
+
+    result = asyncio.run(
+        broker.request(ToolCall("early", "write_file", {}), None)  # type: ignore[arg-type]
+    )
+
+    assert result is True
+    assert broker._early_decisions == {}
+
+
+def test_approval_broker_reject_all_unblocks_pending_request() -> None:
+    async def scenario() -> bool:
+        broker = ApprovalBroker()
+        task = asyncio.create_task(
+            broker.request(ToolCall("pending", "write_file", {}), None)  # type: ignore[arg-type]
+        )
+        for _ in range(20):
+            if "pending" in broker._pending:
+                break
+            await asyncio.sleep(0)
+        broker.reject_all()
+        return await task
+
+    assert asyncio.run(scenario()) is False
+
+
+def test_approval_broker_rejects_duplicate_and_resolve_after_completion() -> None:
+    async def scenario() -> tuple[bool, bool]:
+        broker = ApprovalBroker()
+        task = asyncio.create_task(
+            broker.request(ToolCall("duplicate", "write_file", {}), None)  # type: ignore[arg-type]
+        )
+        for _ in range(20):
+            if "duplicate" in broker._pending:
+                break
+            await asyncio.sleep(0)
+        duplicate = False
+        try:
+            await broker.request(ToolCall("duplicate", "write_file", {}), None)  # type: ignore[arg-type]
+        except RuntimeError:
+            duplicate = True
+        broker.resolve("duplicate", True)
+        resolved_again = False
+        try:
+            broker.resolve("duplicate", False)
+        except KeyError:
+            resolved_again = True
+        completed = await task
+        return duplicate, completed and resolved_again
+
+    assert asyncio.run(scenario()) == (True, True)
 
 
 def test_ui_history_compaction_drops_stream_chunks_and_large_tool_data() -> None:
@@ -81,6 +156,218 @@ def test_session_summary_reads_only_stable_events_from_file(tmp_path: Path) -> N
     assert summary["status"] == "completed"
 
 
+def test_web_helpers_validate_environment_profiles_and_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("CODE_HELPER_HOST", raising=False)
+    monkeypatch.delenv("CODE_HELPER_PORT", raising=False)
+    assert _server_host() == "127.0.0.1"
+    assert _server_port() == 8765
+
+    monkeypatch.setenv("CODE_HELPER_HOST", " 0.0.0.0 ")
+    monkeypatch.setenv("CODE_HELPER_PORT", "9001")
+    assert _server_host() == "0.0.0.0"
+    assert _server_port() == 9001
+    for value, message in (("abc", "integer"), ("0", "between"), ("65536", "between")):
+        monkeypatch.setenv("CODE_HELPER_PORT", value)
+        with pytest.raises(ValueError, match=message):
+            _server_port()
+
+    assert _reasoning_profile(None) == ("auto", None)
+    assert _reasoning_profile(" DEEP ") == ("deep", "high")
+    with pytest.raises(ValueError, match="Unknown reasoning profile"):
+        _reasoning_profile("turbo")
+    assert _profile_from_effort(None) == "auto"
+    assert _profile_from_effort("low") == "fast"
+    assert _profile_from_effort("medium") == "balanced"
+    assert _profile_from_effort("high") == "deep"
+    assert _profile_from_effort("custom") == "custom"
+
+    assert _language_from_path(Path("main.CPP")) == "cpp"
+    assert _language_from_path(Path("README.md")) == "markdown"
+    assert _language_from_path(Path("unknown.bin")) == "plaintext"
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    _require_workspace_scope(AppConfig(api_key="test-key", server_workspace_root=None), tmp_path / "outside")
+    _require_workspace_scope(AppConfig(api_key="test-key", server_workspace_root=allowed), allowed / "file.txt")
+    with pytest.raises(ValueError, match="server workspace root"):
+        _require_workspace_scope(AppConfig(api_key="test-key", server_workspace_root=allowed), tmp_path / "outside")
+
+
+def test_web_helpers_metrics_and_budget_boundaries() -> None:
+    assert _event_timestamp({}) is None
+    assert _event_timestamp({"timestamp": ""}) is None
+    assert _event_timestamp({"timestamp": 123}) is None
+    assert _event_timestamp({"timestamp": "not-a-date"}) is None
+    assert _event_timestamp({"timestamp": "2026-01-01T00:00:00"}).tzinfo is not None
+    assert _event_timestamp({"timestamp": "2026-01-01T00:00:00Z"}).tzinfo is not None
+    assert _percentile([], 0.5) == 0.0
+    assert _percentile([3, 1, 2], -1) == 1.0
+    assert _percentile([3, 1, 2], 2) == 3.0
+    assert _percentile([1, 3], 0.5) == 2.0
+    assert _token_similarity(set(), set()) == 1.0
+    assert _token_similarity(set(), {"x"}) == 0.0
+    assert _token_similarity({"x", "y"}, {"y", "z"}) == pytest.approx(1 / 3)
+
+    runtime = SimpleNamespace(
+        state=SimpleNamespace(run_budget={"used_steps": 2}, max_steps=20),
+        run_budget=SimpleNamespace(snapshot=lambda: {"used_steps": 0}),
+        config=SimpleNamespace(max_output_tokens=4096),
+        runner=SimpleNamespace(model_client=SimpleNamespace(effective_max_output_tokens=8192)),
+    )
+    budget = _budget_view(runtime)
+    assert budget["used_steps"] == 2
+    assert budget["max_steps"] == 20
+    assert budget["effective_max_output_tokens"] == 8192
+    runtime.runner.model_client.effective_max_output_tokens = True
+    assert _budget_view(runtime)["effective_max_output_tokens"] is None
+
+
+def test_observability_presentation_explains_replay_context_and_memory() -> None:
+    empty = _observability_presentation("replay", {"steps": [], "events": []})
+    assert empty["summary"]["status"] == "empty"
+    replay = _observability_presentation(
+        "replay",
+        {
+            "steps": [
+                {"step": 1, "turn_id": "t1", "errors": [{"message": "bad"}], "events": []},
+                {"step": 2, "turn_id": "t1", "tool_calls": [{"arguments": {"path": "b.py"}}], "tool_results": [{"ok": True}], "events": [1]},
+                {"step": 3, "turn_id": "t1", "events": [1]},
+            ],
+            "error_sequences": [1],
+        },
+    )
+    assert replay["summary"]["status"] == "attention"
+    assert [item["status"] for item in replay["steps"]] == ["error", "done", "info"]
+    assert replay["steps"][1]["files"] == ["b.py"]
+
+    for score, expected in ((90, "healthy"), (60, "organized"), (10, "near_limit")):
+        context = _observability_presentation(
+            "context",
+            {
+                "quality_score": score,
+                "sources": [
+                    {"id": "repo_map", "chars": 10, "enabled": True},
+                    {"id": "history", "chars": 0, "enabled": True},
+                    {"id": "tools", "chars": 0, "enabled": False},
+                ],
+                "actual_context_chars": 10,
+                "max_chars": 100,
+                "quality_issues": [{"kind": "duplicate"}],
+            },
+        )
+        assert context["budget"]["state"] == expected
+        assert context["sources"][0]["status"] == "used"
+        assert context["sources"][2]["status"] == "disabled"
+
+    memory = _observability_presentation(
+        "memory",
+        {
+            "memories": [
+                {"id": "m1", "content": "kept", "category": "decision", "verification_status": "verified", "pinned": True},
+                {"id": "m2", "content": "old", "category": "unknown", "archived": True},
+            ],
+            "pending_candidates": [{
+                "id": "c1",
+                "content": "用户经常使用 C++ 完成算法问题求解。",
+                "category": "preference",
+                "keywords": ["C++", "算法"],
+                "prompt": "我们检测到你经常使用 C++ 完成算法问题求解，是否存入记忆区？",
+                "occurrence_count": 2,
+                "work_type": "算法问题求解",
+            }],
+            "recall_audit": [{"memory": {"content": "kept"}, "score": 0.9}, {"memory": "bad"}],
+            "conflicts": [{"subject": "mode", "memories": [1, 2]}],
+            "duplicates": [1],
+            "candidate_duplicates": [2],
+        },
+    )
+    assert memory["summary"]["status"] == "attention"
+    assert memory["summary"]["title"] == "记忆治理"
+    assert memory["candidates"][0]["keywords"] == ["C++", "算法"]
+    assert memory["candidates"][0]["occurrence_count"] == 2
+    assert memory["candidates"][0]["prompt"].startswith("我们检测到")
+    assert memory["memories"][0]["verified"] is True
+    assert memory["memories"][0]["state"] == "active"
+    assert memory["memories"][0]["action_label"] == "取消记忆"
+    assert memory["memories"][1]["state"] == "cancelled"
+    assert memory["memories"][1]["action_label"] == "重新启用"
+    assert memory["memories"][1]["category_label"] == "项目记忆"
+    assert memory["recalls"] == [{"content": "kept", "reason": "与当前任务相关，因此被带入本轮", "score": 0.9}]
+    assert memory["duplicate_count"] == 2
+
+
+def test_web_history_archive_and_directory_helpers_cover_corrupt_storage(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "normal").mkdir()
+    (workspace / "$Recycle.Bin").mkdir()
+    (workspace / "System Volume Information").mkdir()
+    assert [path.name for path in _directory_entries(workspace)] == ["normal"]
+    (workspace / "a.log").write_text("abc", encoding="utf-8")
+    assert _storage_usage(workspace, "*.log") == {"files": 1, "bytes": 3}
+    assert _storage_usage(workspace / "missing", "*") == {"files": 0, "bytes": 0}
+
+    archive_file = workspace / ".code-helper" / "session-archive.json"
+    assert _load_session_archive(workspace) == {}
+    archive_file.parent.mkdir(parents=True)
+    archive_file.write_text("[]", encoding="utf-8")
+    assert _load_session_archive(workspace) == {}
+    archive_file.write_text(json.dumps({"sessions": {"s1": "now", "": "ignored", "s2": ""}}), encoding="utf-8")
+    assert _load_session_archive(workspace) == {"s1": "now"}
+    _save_session_archive(workspace, {"s3": "later"})
+    assert _load_session_archive(workspace) == {"s3": "later"}
+    archive_file.write_text("not-json", encoding="utf-8")
+    assert _load_session_archive(workspace) == {}
+
+    assert _load_replay_bookmarks(workspace) == []
+    bookmark_file = workspace / ".code-helper" / "replay-bookmarks.json"
+    bookmark_file.write_text(json.dumps({"bad": True}), encoding="utf-8")
+    assert _load_replay_bookmarks(workspace) == []
+    _save_replay_bookmarks(workspace, [{"step": 1}, "bad", {"step": 2}])
+    assert _load_replay_bookmarks(workspace) == [{"step": 1}, {"step": 2}]
+    bookmark_file.write_text("not-json", encoding="utf-8")
+    assert _load_replay_bookmarks(workspace) == []
+
+    history_file = workspace / "events.jsonl"
+    history_file.write_text(
+        "not-json\n"
+        + json.dumps({"type": "ignored", "payload": {}})
+        + "\n"
+        + json.dumps({"type": "turn_started", "payload": {"message": "hello"}})
+        + "\n",
+        encoding="utf-8",
+    )
+    stat = history_file.stat()
+    compact = _compact_ui_history_from_file(str(history_file), stat.st_mtime_ns, stat.st_size)
+    assert [item["type"] for item in compact] == ["turn_started"]
+    assert _compact_ui_history_from_file(str(workspace / "missing.jsonl"), 0, 0) == ()
+
+
+def test_compact_history_supports_every_stable_event_family() -> None:
+    events = [
+        {"type": event_type, "payload": {"message": "m", "step": 1, "profile": "p", "reason": "r", "plan": [], "name": "tool", "path": "x", "summary": "s", "evidence": {}}}
+        for event_type in (
+            "turn_started", "run_cancel_requested", "run_cancelled", "run_budget_exhausted", "run_failed",
+            "approval_policy_changed", "step_started", "task_profile_selected", "context_compacted", "model_started",
+        "stuck_recovery", "duplicate_write_satisfied", "stuck_terminal", "plan_updated", "approval_requested",
+            "skill_loaded", "workflow_selected", "workflow_stage_changed",
+            "verification_required", "repair_attempt", "algorithm_report_ready", "algorithm_report_failed",
+            "algorithm_run_progress", "algorithm_run_completed", "algorithm_run_cancelled", "algorithm_run_failed",
+            "checkpoint_created", "checkpoint_tracking_failed", "checkpoint_restored", "turn_finished",
+        )
+    ]
+    events.extend(
+        [
+            {"type": "assistant_response", "payload": {"content": "answer", "tool_calls": [{"name": "read_file"}, "bad"]}},
+            {"type": "tool_started", "payload": {"name": "read_file", "arguments": {"path": "a.py", "command": "cat", "query": "q", "pattern": "p"}}},
+            {"type": "tool_result", "payload": {"name": "read_file", "result": {"ok": True, "code": "OK", "message": "done"}}},
+            {"type": "context_built", "payload": {"repo_map": {"selected": [1]}, "source_manifest": [{"kind": "repo_map"}]}},
+            {"type": "verification_recorded", "payload": {"evidence": {"accepted": True, "kind": "test", "reason": "ok"}}},
+        ]
+    )
+    assert all(_compact_ui_history_event(event) is not None for event in events)
+    assert _compact_ui_history_event({"type": "unknown", "payload": {}}) is None
+
+
 def test_health_and_static_index() -> None:
     with TestClient(create_app(_config())) as client:
         health = client.get("/api/health")
@@ -97,6 +384,13 @@ def test_health_and_static_index() -> None:
     assert "Code Helper" in index.text
     assert 'href="/static/modern.css?v=' in index.text
     assert 'rel="icon" type="image/png" href="/static/code-helper-logo.png?v=' in index.text
+    assert 'data-research-view="replay"' not in index.text
+    assert '>运行回放</button>' not in index.text
+    assert '>上下文编译</button>' in index.text
+    assert '>记忆治理</button>' in index.text
+    assert '>做了什么</button>' not in index.text
+    assert '>参考了什么</button>' not in index.text
+    assert '>记住了什么</button>' not in index.text
     assert 'src="/assets/app.bundle.js?v=' in index.text
     assert 'class="brand-copy"' in index.text
     assert 'class="editor-brand-mark"' in index.text
@@ -563,6 +857,63 @@ def test_directory_browser_and_workspace_session_listing(tmp_path: Path) -> None
     assert restored_sessions.json()["archived_sessions"] == []
 
 
+def test_websocket_history_start_preserves_workflow_details_after_refresh(
+    tmp_path: Path,
+) -> None:
+    application = create_app(_config())
+    with TestClient(application) as client:
+        created = client.post(
+            "/api/sessions", json={"workspace": str(tmp_path), "mode": "act"}
+        )
+        session_id = created.json()["session_id"]
+        session = application.state.session_manager.get(session_id)
+        state = session.runtime.state
+
+        async def publish_events() -> None:
+            for event_type, payload in (
+                ("turn_started", {"message": "实现功能"}),
+                ("skill_loaded", {"name": "add-feature"}),
+                (
+                    "workflow_selected",
+                    {"name": "add-feature", "stage": "plan"},
+                ),
+                (
+                    "plan_updated",
+                    {
+                        "plan": [
+                            {
+                                "step": "实现页面",
+                                "status": "in_progress",
+                                "acceptance": "页面测试通过",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                event = await session.runtime.event_bus.publish(
+                    AgentEvent(
+                        type=event_type,
+                        session_id=session_id,
+                        turn_id=state.turn_id,
+                        payload=payload,
+                    )
+                )
+                state.apply_event(event.to_dict())
+
+        asyncio.run(publish_events())
+        with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
+            history_start = websocket.receive_json()
+
+    assert history_start["type"] == "history_start"
+    assert history_start["payload"]["workflow"] == {
+        "name": "add-feature",
+        "stage": "plan",
+        "loaded_skills": ["add-feature"],
+        "acceptance": ["页面测试通过"],
+        "active_steps": ["实现页面"],
+    }
+
+
 def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_bytes(b"def main():\n    return 1\n")
     (tmp_path / "test_app.py").write_bytes(b"def test_main():\n    assert True\n")
@@ -587,7 +938,8 @@ def test_reasoning_profile_and_intelligence_endpoint(tmp_path: Path) -> None:
     assert created.json()["reasoning_profile"] == "deep"
     assert intelligence.status_code == 200
     assert intelligence.json()["repo_map"]["totals"]["files_seen"] == 2
-    assert len(intelligence.json()["skills"]["available"]) == 3
+    available_skills = {item["name"] for item in intelligence.json()["skills"]["available"]}
+    assert {"add-feature", "bug-fix", "code-review"}.issubset(available_skills)
     assert intelligence.json()["hooks"]["pipeline_enabled"] is True
     assert intelligence.json()["budget"]["max_seconds"] == 4800.0
     assert intelligence.json()["budget"]["max_steps"] == 160

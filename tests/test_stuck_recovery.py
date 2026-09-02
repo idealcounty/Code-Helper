@@ -47,6 +47,25 @@ def test_repeated_edit_failure_gets_one_recovery_turn(tmp_path: Path) -> None:
     )
 
 
+def test_stuck_detector_returns_no_recovery_for_short_or_non_write_actions() -> None:
+    detector = StuckDetector()
+    assert detector.recovery_hint([]) is None
+    assert detector.is_successful_write_loop([]) is False
+    signature = json.dumps({"name": "read_file"}, sort_keys=True)
+    actions = [{"signature": signature, "result_code": "OK", "result_fingerprint": "same"}] * 3
+    assert detector.recovery_hint(actions) is None
+    assert detector.is_successful_write_loop(actions) is False
+
+
+def test_stuck_detector_handles_invalid_signatures_and_non_terminal_results() -> None:
+    detector = StuckDetector()
+    invalid = [{"signature": "not-json", "result_code": "NO_CHANGES"}] * 3
+    assert detector.recovery_hint(invalid) is None
+    assert detector.is_successful_write_loop(invalid) is False
+    non_terminal = [{"signature": json.dumps({"name": "apply_patch"}), "result_code": "FAILED"}] * 3
+    assert detector.is_successful_write_loop(non_terminal) is False
+
+
 def test_repeated_successful_action_gets_bounded_recovery_turn(tmp_path: Path) -> None:
     signature = json.dumps(
         {"name": "apply_patch", "arguments": {"path": "sample.py"}},

@@ -29,3 +29,8 @@ tmp-repro*/
 build-*/
 dist-*/
 *.spec.bak
+
+# Local test evidence; commit only the redacted summaries under docs/test-reports/.
+test-results/*
+!test-results/.gitignore
+!test-results/README.md

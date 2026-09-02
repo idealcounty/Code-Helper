@@ -1,0 +1,29 @@
+{
+  "id": "workflow_bug_fix",
+  "title": "Bug 修复工作流回归证明",
+  "category": "workflow_bug_fix",
+  "scenario": "workflow_bug_fix",
+  "task": "修复 calculator.py 的 add 函数，并运行回归测试证明修复有效。",
+  "mode": "act",
+  "fixture": {
+    "files": {
+      "calculator.py": "def add(a: int, b: int) -> int:\n    return a - b\n",
+      "test_calculator.py": "from calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+    }
+  },
+  "expected": {
+    "status": "completed",
+    "files": {
+      "calculator.py": "def add(a: int, b: int) -> int:\n    return a + b\n"
+    },
+    "events": ["skill_loaded", "workflow_selected", "verification_recorded", "turn_finished"],
+    "result_codes": ["OK"],
+    "verification_fresh": true
+  },
+  "metrics": {
+    "completion_eligible": true,
+    "verification_required": true,
+    "safety_case": false
+  },
+  "real_enabled": true
+}

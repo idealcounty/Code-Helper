@@ -24,6 +24,7 @@ from .redaction import Redactor
 from .session import AgentState
 from .skills import SkillLibrary
 from .tool_executor import ToolExecutor
+from .tools.base import ToolRisk
 from .tools import (
     ToolRegistry,
     Workspace,
@@ -81,6 +82,73 @@ async def _task_end_evidence_hook(summary: dict[str, object]) -> HookDecision | 
             additional_context="Task-end hook: completion was reported without fresh verification evidence."
         )
     return None
+
+
+def create_workflow_guard(state: AgentState, registry: ToolRegistry | None = None):
+    """Create a state-aware pre-tool guard that can only deny workflow violations.
+
+    The normal PermissionPolicy remains authoritative.  When no registry is
+    supplied (for small unit tests), a conservative name list identifies the
+    known mutating tools; Runtime always supplies the registry so new command or
+    destructive tools are classified by their declared risk.
+    """
+
+    known_mutating = {
+        "write_file",
+        "apply_patch",
+        "run_command",
+        "remember_project_memory",
+        "forget_project_memory",
+        "confirm_memory_candidate",
+        "reject_memory_candidate",
+        "set_user_memory_enabled",
+        "remember_user_memory",
+        "clear_user_memory",
+    }
+
+    def is_mutating(name: str) -> bool:
+        if registry is not None:
+            try:
+                return registry.get(name).risk is not ToolRisk.READ
+            except Exception:
+                return name in known_mutating
+        return name in known_mutating
+
+    async def guard(name: str, _arguments: dict[str, object]) -> HookDecision | None:
+        if not is_mutating(name) or not state.workflow_name:
+            return None
+        if state.workflow_stage == "finish":
+            return HookDecision(
+                allow=False,
+                code="WORKFLOW_FINISHED",
+                reason="The workflow is finished; start a new turn before modifying files.",
+                hook="workflow-guard",
+            )
+        if state.workflow_name == "code-review":
+            return HookDecision(
+                allow=False,
+                code="WORKFLOW_DENIED",
+                reason="Code review workflow is read-only; start a new fix turn to modify files.",
+                hook="workflow-guard",
+            )
+        if state.workflow_name == "add-feature":
+            if not state.plan:
+                return HookDecision(
+                    allow=False,
+                    code="WORKFLOW_PLAN_REQUIRED",
+                    reason="Add-feature must create a plan before the first write.",
+                    hook="workflow-guard",
+                )
+            if not any(item.get("status") == "in_progress" for item in state.plan):
+                return HookDecision(
+                    allow=False,
+                    code="WORKFLOW_STEP_REQUIRED",
+                    reason="Add-feature must mark exactly one plan step as in_progress before writing.",
+                    hook="workflow-guard",
+                )
+        return None
+
+    return guard
 
 
 def _skills_root(
@@ -192,6 +260,7 @@ def create_runtime(
         verification_config=verification_config,
     )
     hooks = HookManager(
+        pre=[create_workflow_guard(state, registry)],
         verification=[_verification_context_hook],
         task_end=[_task_end_evidence_hook],
         external=list(hook_config.hooks),
@@ -220,6 +289,7 @@ def create_runtime(
         run_budget=run_budget,
         project_verification_commands=verification_config.commands,
         verification_config=verification_config,
+        workspace=workspace,
     )
     return AgentRuntime(
         config=config,

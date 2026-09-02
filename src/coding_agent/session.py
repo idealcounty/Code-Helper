@@ -21,6 +21,10 @@ class AgentStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+WORKFLOW_NAMES = frozenset({"add-feature", "bug-fix", "code-review"})
+WORKFLOW_STAGES = frozenset({"idle", "inspect", "plan", "implement", "verify", "finish"})
+
+
 @dataclass(slots=True)
 class AgentState:
     session_id: str
@@ -29,6 +33,9 @@ class AgentState:
     reasoning_mode: str | None = None
     requested_task_profile: str = "auto"
     task_profile: str = "project"
+    workflow_name: str | None = None
+    workflow_stage: str = "idle"
+    loaded_skills: set[str] = field(default_factory=set)
     status: AgentStatus = AgentStatus.READY
     step: int = 0
     max_steps: int = 160
@@ -100,6 +107,9 @@ class AgentState:
         self.recalled_user_memories.clear()
         self.current_objective = ""
         self.task_profile = "project"
+        self.workflow_name = None
+        self.workflow_stage = "idle"
+        self.loaded_skills.clear()
         self.repair_attempts = 0
         self.run_budget.clear()
         self.verification_evidence.clear()
@@ -141,6 +151,9 @@ class AgentState:
         self.recalled_user_memories.clear()
         self.current_objective = ""
         self.task_profile = "project"
+        self.workflow_name = None
+        self.workflow_stage = "idle"
+        self.loaded_skills.clear()
         self.repair_attempts = 0
         self.run_budget.clear()
         self.verification_evidence.clear()

@@ -24,8 +24,20 @@ def register_plan_tools(registry: ToolRegistry, state: AgentState) -> None:
                 raise ToolError("INVALID_ARGUMENTS", "Each step must have 1-240 characters")
             if status not in {"pending", "in_progress", "completed"}:
                 raise ToolError("INVALID_ARGUMENTS", "Invalid plan step status")
+            raw_acceptance = item.get("acceptance")
+            if raw_acceptance is not None:
+                if not isinstance(raw_acceptance, str):
+                    raise ToolError("INVALID_ARGUMENTS", "acceptance must be a string")
+                acceptance = raw_acceptance.strip()
+                if not acceptance or len(acceptance) > 300:
+                    raise ToolError("INVALID_ARGUMENTS", "acceptance must have 1-300 characters")
+            else:
+                acceptance = None
             in_progress += status == "in_progress"
-            normalized.append({"step": text, "status": status})
+            normalized_item = {"step": text, "status": status}
+            if acceptance is not None:
+                normalized_item["acceptance"] = acceptance
+            normalized.append(normalized_item)
         if in_progress > 1:
             raise ToolError("INVALID_ARGUMENTS", "Only one plan step may be in_progress")
         state.plan = normalized
@@ -41,7 +53,20 @@ def register_plan_tools(registry: ToolRegistry, state: AgentState) -> None:
         parameters={
             "type": "object",
             "properties": {
-                "steps": {"type": "array", "description": "Ordered plan steps with step and status fields."},
+                "steps": {
+                    "type": "array",
+                    "description": "Ordered plan steps with step, status, and optional acceptance criteria.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {"type": "string", "minLength": 1, "maxLength": 240},
+                            "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                            "acceptance": {"type": "string", "minLength": 1, "maxLength": 300},
+                        },
+                        "required": ["step"],
+                        "additionalProperties": False,
+                    },
+                },
                 "reason": {"type": "string"},
             },
             "required": ["steps"],

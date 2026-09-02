@@ -7,7 +7,7 @@ from coding_agent.agent_loop import AgentRunner
 from coding_agent.context import ContextManager
 from coding_agent.events import EventBus, EventStore
 from coding_agent.permissions import PermissionPolicy
-from coding_agent.profiles import classify_task, resolve_profile
+from coding_agent.profiles import PROJECT_PROFILE, classify_task, get_profile, resolve_profile
 from coding_agent.session import AgentState
 from coding_agent.tool_executor import ToolExecutor
 from coding_agent.tools import ToolRegistry
@@ -19,6 +19,11 @@ def test_profile_classifier_is_conservative() -> None:
     assert classify_task("修复项目中的读取 bug") == "project"
     assert classify_task("LeetCode 输入输出，分析时间复杂度并做随机测试") == "algorithm"
     assert resolve_profile("algorithm", "任何内容").name == "algorithm"
+    assert resolve_profile("unknown", "任何内容") is PROJECT_PROFILE
+    assert get_profile(None) is PROJECT_PROFILE
+    assert get_profile("unknown") is PROJECT_PROFILE
+    assert "allowed_tools" in resolve_profile("algorithm", "").to_dict()
+    assert PROJECT_PROFILE.to_dict()["allowed_tools"] is None
 
 
 def test_algorithm_profile_narrows_tools_and_disables_repo_map(tmp_path: Path) -> None:

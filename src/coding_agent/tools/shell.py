@@ -56,8 +56,12 @@ def register_shell_tools(
             process = await asyncio.create_subprocess_shell(command, **process_kwargs)
         windows_job = _create_windows_kill_job(process.pid)
         output_callback = arguments.get("_output_callback")
+        partial_output: dict[str, bytearray] = {
+            "stdout": bytearray(),
+            "stderr": bytearray(),
+        }
         communicate_task = asyncio.create_task(
-            _communicate_with_deltas(process, output_callback)
+            _communicate_with_deltas(process, output_callback, partial_output)
         )
         cancel_task = (
             asyncio.create_task(cancellation.wait()) if cancellation is not None else None
@@ -75,7 +79,7 @@ def register_shell_tools(
                 terminated = await _terminate_process_tree(process, windows_job)
                 windows_job = None
                 stdout_bytes, stderr_bytes = await _finish_communication(
-                    communicate_task, timeout=1.0
+                    communicate_task, partial_output=partial_output, timeout=1.0
                 )
                 data, output_metadata = _command_output(
                     display_command, stdout_bytes, stderr_bytes, process.returncode
@@ -96,7 +100,7 @@ def register_shell_tools(
                 terminated = await _terminate_process_tree(process, windows_job)
                 windows_job = None
                 stdout_bytes, stderr_bytes = await _finish_communication(
-                    communicate_task
+                    communicate_task, partial_output=partial_output
                 )
                 data, output_metadata = _command_output(
                     display_command, stdout_bytes, stderr_bytes, process.returncode
@@ -214,6 +218,7 @@ def _display_command(command: str, argv: list[str] | None) -> str:
 async def _finish_communication(
     task: asyncio.Task[tuple[bytes, bytes]],
     *,
+    partial_output: dict[str, bytearray] | None = None,
     timeout: float = 5.0,
 ) -> tuple[bytes, bytes]:
     try:
@@ -222,12 +227,22 @@ async def _finish_communication(
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        return b"", b""
+        # A killed process can briefly keep inherited pipe handles open.  Do
+        # not throw away bytes already consumed by the reader: preserving the
+        # partial output lets ToolExecutor persist a complete-result reference
+        # even when cancellation races with process-tree cleanup.
+        if partial_output is None:
+            return b"", b""
+        return (
+            bytes(partial_output.get("stdout", bytearray())),
+            bytes(partial_output.get("stderr", bytearray())),
+        )
 
 
 async def _communicate_with_deltas(
     process: asyncio.subprocess.Process,
     callback: Callable[[str, str], Awaitable[None] | None] | None,
+    partial_output: dict[str, bytearray] | None = None,
 ) -> tuple[bytes, bytes]:
     """Read both streams incrementally while retaining bytes for the final result."""
     async def read_stream(stream: asyncio.StreamReader | None, name: str) -> bytes:
@@ -239,6 +254,8 @@ async def _communicate_with_deltas(
             if not chunk:
                 break
             chunks.append(chunk)
+            if partial_output is not None:
+                partial_output.setdefault(name, bytearray()).extend(chunk)
             if callback is not None:
                 try:
                     value = callback(name, chunk.decode(errors="replace"))

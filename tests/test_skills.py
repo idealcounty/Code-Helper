@@ -29,6 +29,21 @@ def test_skill_library_lists_and_loads_safely(tmp_path: Path) -> None:
     assert library.load("../bug-fix") is None
 
 
+def test_development_workflow_routes_to_concrete_skill(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "development-workflow"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "description: Route development work\n"
+        "when_to_use: When a task modifies code\n\n"
+        "Route to add-feature, bug-fix, or code-review.\n",
+        encoding="utf-8",
+    )
+    library = SkillLibrary(tmp_path)
+    loaded = library.load("development-workflow")
+    assert loaded is not None
+    assert "add-feature" in loaded[1]
+
+
 def test_skill_library_can_disable_unselected_skills(tmp_path: Path) -> None:
     for name in ("bug-fix", "code-review"):
         directory = tmp_path / name
@@ -42,6 +57,27 @@ def test_skill_library_can_disable_unselected_skills(tmp_path: Path) -> None:
     assert [item.name for item in library.list_summaries()] == ["code-review"]
     assert library.load("code-review") is not None
     assert library.load("bug-fix") is None
+
+
+def test_skill_library_handles_missing_roots_hidden_entries_and_invalid_names(tmp_path: Path) -> None:
+    missing_root = SkillLibrary(tmp_path / "does-not-exist")
+    assert missing_root.list_summaries() == []
+    hidden = tmp_path / ".hidden"
+    hidden.mkdir()
+    (hidden / "SKILL.md").write_text("description: hidden\n", encoding="utf-8")
+    no_skill = tmp_path / "without-file"
+    no_skill.mkdir()
+    disabled = tmp_path / "disabled"
+    disabled.mkdir()
+    (disabled / "SKILL.md").write_text("description: disabled\n", encoding="utf-8")
+    enabled = tmp_path / "enabled"
+    enabled.mkdir()
+    (enabled / "SKILL.md").write_text("description: enabled\n", encoding="utf-8")
+
+    library = SkillLibrary(tmp_path, enabled={"enabled"})
+    assert [item.name for item in library.list_summaries()] == ["enabled"]
+    for name in ("", ".", "..", "../enabled", "disabled", "missing"):
+        assert library.load(name) is None
 
 
 def test_packaged_skill_root_uses_pyinstaller_internal_directory(tmp_path: Path) -> None:
@@ -80,6 +116,17 @@ def test_skill_tools_are_read_only_and_load_content(tmp_path: Path) -> None:
     executor = ToolExecutor(registry)
     result = asyncio.run(executor.execute("load_skill", {"name": "review"}))
     assert result.ok and result.data["content"]
+
+
+def test_skill_tools_list_empty_library_and_report_missing_skill(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_skill_tools(registry, SkillLibrary(tmp_path))
+    executor = ToolExecutor(registry)
+    listed = asyncio.run(executor.execute("list_skills", {}))
+    missing = asyncio.run(executor.execute("load_skill", {"name": "missing"}))
+    assert listed.ok and listed.data["skills"] == []
+    assert missing.ok is False
+    assert missing.code == "SKILL_NOT_FOUND"
 
 
 def test_tool_executor_runs_pre_and_post_hooks() -> None:

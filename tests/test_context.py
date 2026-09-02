@@ -240,3 +240,29 @@ def test_context_only_injects_verification_commands_for_observed_scope() -> None
     assert "python -m pytest -q" in system
     assert "python scripts/check_api.py" in system
     assert "python scripts/check_ui.py" not in system
+
+
+def test_context_injects_bounded_workflow_state_and_manifest() -> None:
+    state = AgentState.create()
+    state.messages = [{"role": "user", "content": "implement the feature"}]
+    state.workflow_name = "add-feature"
+    state.workflow_stage = "implement"
+    state.loaded_skills.update({"development-workflow", "add-feature"})
+
+    context = ContextManager(max_context_chars=20_000).build(state, [])
+    system = context.messages[0]["content"]
+
+    assert "Current development workflow:" in system
+    assert "name: add-feature" in system
+    assert "stage: implement" in system
+    assert any(item["kind"] == "workflow_state" for item in context.source_manifest)
+
+
+def test_context_does_not_inject_workflow_block_when_idle() -> None:
+    state = AgentState.create()
+    state.messages = [{"role": "user", "content": "explain this"}]
+
+    context = ContextManager().build(state, [])
+
+    assert "Current development workflow:" not in context.messages[0]["content"]
+    assert not any(item["kind"] == "workflow_state" for item in context.source_manifest)

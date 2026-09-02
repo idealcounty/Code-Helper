@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock, RLock
@@ -33,6 +33,15 @@ class ProjectMemory:
     file_paths: list[str] = field(default_factory=list)
     symbols: list[str] = field(default_factory=list)
     scope: str = "project"
+    pinned: bool = False
+    archived: bool = False
+    expires_at: str | None = None
+    last_recalled_at: str | None = None
+    recall_count: int = 0
+    last_verified_at: str | None = None
+    verification_status: str = "not_applicable"
+    duplicate_of: str | None = None
+    supersedes: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -122,6 +131,15 @@ class MemoryStore:
                 file_paths=normalized_paths,
                 symbols=normalized_symbols,
                 scope=scope,
+                pinned=existing.pinned if existing else False,
+                archived=existing.archived if existing else False,
+                expires_at=existing.expires_at if existing else None,
+                last_recalled_at=existing.last_recalled_at if existing else None,
+                recall_count=existing.recall_count if existing else 0,
+                last_verified_at=existing.last_verified_at if existing else None,
+                verification_status=existing.verification_status if existing else "not_applicable",
+                duplicate_of=existing.duplicate_of if existing else None,
+                supersedes=existing.supersedes if existing else None,
             )
             self._append({"operation": "upsert", **memory.to_dict()})
             return memory
@@ -140,6 +158,42 @@ class MemoryStore:
                 }
             )
             return True
+
+    def update_metadata(self, memory_id: str, **changes: Any) -> ProjectMemory | None:
+        """Append a lifecycle update while preserving the audit history."""
+        allowed = {
+            "pinned", "archived", "expires_at", "last_verified_at",
+            "verification_status", "duplicate_of", "supersedes", "importance",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"Unknown memory metadata: {', '.join(sorted(unknown))}")
+        with self._lock:
+            active, _, _ = self._load()
+            existing = active.get(memory_id)
+            if existing is None:
+                return None
+            normalized: dict[str, Any] = {}
+            for key, value in changes.items():
+                if key in {"pinned", "archived"}:
+                    if not isinstance(value, bool):
+                        raise ValueError(f"Memory metadata {key} must be boolean")
+                elif key == "importance":
+                    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 5:
+                        raise ValueError("Memory importance must be an integer from 1 to 5")
+                elif key == "verification_status":
+                    if str(value) not in {"verified", "partial", "missing", "stale", "not_applicable"}:
+                        raise ValueError("Invalid verification status")
+                    value = str(value)
+                elif key == "expires_at" and value is not None:
+                    value = str(value)
+                    datetime.fromisoformat(value.replace("Z", "+00:00"))
+                elif value is not None:
+                    value = str(value)[:300]
+                normalized[key] = value
+            updated = replace(existing, **normalized, updated_at=datetime.now(UTC).isoformat())
+            self._append({"operation": "upsert", **updated.to_dict()})
+            return updated
 
     def clear(self) -> int:
         """Deactivate every active memory while preserving the audit log."""
@@ -217,13 +271,15 @@ class MemoryStore:
             candidates = [
                 item
                 for item in candidates
-                if any(needle == value.casefold() for value in item.file_paths)
+                if not item.archived and not _is_expired(item)
+                and any(needle == value.casefold() for value in item.file_paths)
             ]
         if symbol:
             needle = symbol.casefold()
-            candidates = [item for item in candidates if any(needle == value.casefold() for value in item.symbols)]
+            candidates = [item for item in candidates if not item.archived and not _is_expired(item) and any(needle == value.casefold() for value in item.symbols)]
         if source_session_id:
-            candidates = [item for item in candidates if item.source_session_id == source_session_id]
+            candidates = [item for item in candidates if not item.archived and not _is_expired(item) and item.source_session_id == source_session_id]
+        candidates = [item for item in candidates if not item.archived and not _is_expired(item)]
         query = query.strip()
         result_limit = max(0, min(limit, 50))
         if not query:
@@ -343,6 +399,8 @@ class MemoryStore:
             "audit_records": record_count,
             "invalid_records": invalid_records,
             "recent": [item.to_dict() for item in sorted(memories, key=lambda item: item.updated_at, reverse=True)[:5]],
+            "archived": sum(item.archived for item in memories),
+            "expired": sum(_is_expired(item) for item in memories),
         }
 
     def _append(self, record: dict[str, Any]) -> None:
@@ -440,6 +498,20 @@ def _memory_from_record(memory_id: str, record: dict[str, Any]) -> ProjectMemory
         raise ValueError("Invalid stored memory timestamp")
     datetime.fromisoformat(created_at)
     datetime.fromisoformat(updated_at)
+    lifecycle_bool = {"pinned": record.get("pinned", False), "archived": record.get("archived", False)}
+    if any(not isinstance(value, bool) for value in lifecycle_bool.values()):
+        raise ValueError("Invalid stored memory lifecycle flag")
+    recall_count = record.get("recall_count", 0)
+    if not isinstance(recall_count, int) or isinstance(recall_count, bool) or recall_count < 0:
+        raise ValueError("Invalid stored memory recall count")
+    verification_status = str(record.get("verification_status", "not_applicable"))
+    if verification_status not in {"verified", "partial", "missing", "stale", "not_applicable"}:
+        raise ValueError("Invalid stored memory verification status")
+    expires_at = record.get("expires_at")
+    if expires_at is not None:
+        if not isinstance(expires_at, str) or len(expires_at) > 100:
+            raise ValueError("Invalid stored memory expiry")
+        datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
     return ProjectMemory(
         id=memory_id,
         category=category,
@@ -454,6 +526,15 @@ def _memory_from_record(memory_id: str, record: dict[str, Any]) -> ProjectMemory
         file_paths=file_paths,
         symbols=symbols,
         scope=scope,
+        pinned=lifecycle_bool["pinned"],
+        archived=lifecycle_bool["archived"],
+        expires_at=expires_at,
+        last_recalled_at=record.get("last_recalled_at"),
+        recall_count=recall_count,
+        last_verified_at=record.get("last_verified_at"),
+        verification_status=verification_status,
+        duplicate_of=record.get("duplicate_of"),
+        supersedes=record.get("supersedes"),
     )
 
 
@@ -504,6 +585,18 @@ def _recency_score(value: str) -> float:
     except (TypeError, ValueError, OverflowError):
         return 0.0
     return 1.5 / (1.0 + age_days / 30.0)
+
+
+def _is_expired(memory: ProjectMemory) -> bool:
+    if not memory.expires_at:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(str(memory.expires_at).replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return timestamp <= datetime.now(UTC)
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def _cosine(left: list[float] | None, right: list[float] | None) -> float:
